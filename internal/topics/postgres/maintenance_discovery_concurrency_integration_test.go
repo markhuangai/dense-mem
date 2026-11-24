@@ -14,7 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -24,7 +24,7 @@ type pausedDiscovery struct {
 	release  func()
 	cancel   context.CancelFunc
 	done     <-chan error
-	result   <-chan ontology.MaintenanceDiscoveryResult
+	result   <-chan topiccontract.MaintenanceDiscoveryResult
 }
 
 func pauseDiscovery(t *testing.T, x *discoveryFixture, phase string, limit int) pausedDiscovery {
@@ -33,7 +33,7 @@ func pauseDiscovery(t *testing.T, x *discoveryFixture, phase string, limit int) 
 	store, ctx, recorder := x.recorder(ctx, true)
 	arrived, resume, stopped := make(chan maintenanceDiscoveryEvent, 1), make(chan struct{}), make(chan struct{})
 	finished := make(chan error, 1)
-	outcomes := make(chan ontology.MaintenanceDiscoveryResult, 1)
+	outcomes := make(chan topiccontract.MaintenanceDiscoveryResult, 1)
 	var reached atomic.Bool
 	release := sync.OnceFunc(func() { close(resume) })
 	recorder.after = func(event maintenanceDiscoveryEvent) {
@@ -111,11 +111,11 @@ func TestOntologyMaintenanceRevalidationDiscoveryConcurrency(t *testing.T) {
 			writerParent := f.actor(0, "manager")
 			switch change {
 			case "definition", "new_vocabulary", "unrelated_vocabulary", "override":
-				var changes []ontology.Change
+				var changes []topiccontract.Change
 				if change == "definition" {
 					topic := x.topic
-					topic.Definition = &ontology.Definition{Key: topic.Definition.Key, Label: topic.Definition.Label, Description: "A revised required PostgreSQL definition"}
-					changes = []ontology.Change{{ExpectedVersion: 1, Record: topic}}
+					topic.Definition = &topiccontract.Definition{Key: topic.Definition.Key, Label: topic.Definition.Label, Description: "A revised required PostgreSQL definition"}
+					changes = []topiccontract.Change{{ExpectedVersion: 1, Record: topic}}
 				} else {
 					topic := testTopic("postgresql-concurrent-alternative")
 					if change == "new_vocabulary" {
@@ -124,19 +124,19 @@ func TestOntologyMaintenanceRevalidationDiscoveryConcurrency(t *testing.T) {
 					if change == "unrelated_vocabulary" {
 						topic = testTopic("sailboat")
 					}
-					changes = []ontology.Change{{Record: topic}}
+					changes = []topiccontract.Change{{Record: topic}}
 					if change == "override" {
-						override := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind,
-							Override: &ontology.Override{Action: ontology.SetClassification, DefinitionID: topic.ID, Members: []ontology.SourceHandle{x.sources[0]}},
-							Sources:  []ontology.SourceDependency{f.source(t, x.sources[0])}}
-						changes = append(changes, ontology.Change{Record: override})
+						override := topiccontract.Record{ID: uuid.NewString(), Kind: topiccontract.OverrideKind,
+							Override: &topiccontract.Override{Action: topiccontract.SetClassification, DefinitionID: topic.ID, Members: []topiccontract.SourceHandle{x.sources[0]}},
+							Sources:  []topiccontract.SourceDependency{f.source(t, x.sources[0])}}
+						changes = append(changes, topiccontract.Change{Record: override})
 					}
 				}
 				input := testPublication("concurrent-"+change, page.Revision, changes...)
 				write = func(ctx context.Context) error {
 					_, err := f.store.PublishManager(ctx, f.team, input)
 					if change == "override" {
-						if errors.Is(err, ontology.ErrOverride) {
+						if errors.Is(err, topiccontract.ErrOverride) {
 							return nil
 						}
 						return fmt.Errorf("retired override unexpectedly accepted: %v", err)
@@ -194,7 +194,7 @@ func TestOntologyMaintenanceRevalidationDiscoveryConcurrency(t *testing.T) {
 				require.Equal(t, afterWriter, schedulerCanonical(t, f), "discovery must not add canonical writes")
 			}
 			if change == "generation" {
-				require.ErrorIs(t, f.store.discoverMaintenanceError(context.Background(), x.turn, 100), ontology.ErrLeaseLost)
+				require.ErrorIs(t, f.store.discoverMaintenanceError(context.Background(), x.turn, 100), topiccontract.ErrLeaseLost)
 				var visible int
 				require.NoError(t, f.rls.WithTeamTx(context.Background(), f.app, f.team, func(tx *gorm.DB) error {
 					return tx.Raw(`SELECT count(*) FROM topic_maintenance_sources WHERE team_id=?::uuid AND space_generation=?`, f.team, f.generation).Row().Scan(&visible)
@@ -238,7 +238,7 @@ func TestOntologyMaintenanceRevalidationDiscoveryCancellation(t *testing.T) {
 			err := <-paused.done
 			result := <-paused.result
 			require.False(t, result.Committed)
-			require.Equal(t, ontology.MaintenanceDiscoveryCounts{}, result.Counts)
+			require.Equal(t, topiccontract.MaintenanceDiscoveryCounts{}, result.Counts)
 			require.Positive(t, result.Attempted.EnumeratedMatches)
 			require.Error(t, err)
 			require.True(t, errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded), fmt.Sprintf("unexpected cancellation error: %v", err))

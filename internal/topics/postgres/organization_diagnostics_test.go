@@ -21,7 +21,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/provider/structured"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -149,7 +149,7 @@ func TestOrganizationDiagnosticCaptureUsesRealProviderValidation(t *testing.T) {
 	provider := assessment.NewProvider(structured.NewOpenAI(&cfg, server.Client()), cfg.AIVerifierModel, limits, 300000)
 	directory := t.TempDir()
 	recorder := newOrganizationDiagnosticRecorder(t, directory, "manager-separation", cfg)
-	request := assessment.Request{RequestID: "diagnostic-fixture", Definitions: []assessment.Definition{}, Items: []assessment.Item{{Ref: "a", Kind: ontology.EvidenceSource, Text: "Atlas uses PostgreSQL."}, {Ref: "b", Kind: ontology.EvidenceSource, Text: "Atlas uses PostgreSQL."}}, Pairs: []assessment.Pair{{Ref: "pair", LeftRef: "a", RightRef: "b", RequiredRelation: "distinct"}}}
+	request := assessment.Request{RequestID: "diagnostic-fixture", Definitions: []assessment.Definition{}, Items: []assessment.Item{{Ref: "a", Kind: topic.EvidenceSource, Text: "Atlas uses PostgreSQL."}, {Ref: "b", Kind: topic.EvidenceSource, Text: "Atlas uses PostgreSQL."}}, Pairs: []assessment.Pair{{Ref: "pair", LeftRef: "a", RightRef: "b", RequiredRelation: "distinct"}}}
 	expectedValidation := assessor.SemanticValidationError{
 		Field:   "equivalence[0].ref",
 		Message: `pair ref "pair" is outside the requested pair allowlist`,

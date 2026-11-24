@@ -15,7 +15,7 @@ import (
 	assignment "github.com/markhuangai/dense-mem/internal/topicassignment/contract"
 	"gorm.io/gorm"
 
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -129,16 +129,16 @@ func incrementalDiscovery(t *testing.T, count int, supported bool) *discoveryFix
 	f := x.f
 	if supported {
 		x.support = discoveryEvidence(t, f, 9999)
-		x.topic.Sources = []ontology.SourceDependency{f.source(t, x.support)}
+		x.topic.Sources = []topiccontract.SourceDependency{f.source(t, x.support)}
 	}
-	revalidationPublish(t, f, ontology.Change{Record: x.topic})
+	revalidationPublish(t, f, topiccontract.Change{Record: x.topic})
 	x.addSources(t, count)
 	x.claimTurn(t)
 	ctx := context.Background()
 	for _, handle := range x.sources {
-		snapshots, err := f.store.ReadSources(ctx, f.team, []ontology.SourceHandle{handle})
+		snapshots, err := f.store.ReadSources(ctx, f.team, []topiccontract.SourceHandle{handle})
 		require.NoError(t, err)
-		text := ontology.SourceDisplayText(snapshots[0])
+		text := topiccontract.SourceDisplayText(snapshots[0])
 		input := assignment.Scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation, OperationID: uuid.NewString()}
 		item := assignment.Publication{EvidenceID: handle.ID, Outcome: assignment.Outcome{Method: "generation", InputHash: testHash(text), Text: text,
 			Matches: []assignment.Match{{ID: x.topic.ID, Version: 1, Quote: text}}}}

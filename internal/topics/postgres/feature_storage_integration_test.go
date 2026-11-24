@@ -14,7 +14,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -32,26 +32,26 @@ func TestFeatureStoragePostgresPreservesOrganizationDraftsAndIsolation(t *testin
 	b := f.organizationEvidence(t, 0, "Exact storage Evidence A. café 🧭", nil)
 	otherOwner := f.organizationEvidence(t, 1, "Exact storage Evidence B. 🧭", nil)
 	topic := testTopic("feature-storage")
-	assignment := func(source ontology.SourceHandle) ontology.Record {
-		return ontology.Record{ID: uuid.NewString(), Kind: ontology.AssignmentKind, Assignment: &ontology.Assignment{Source: source, DefinitionID: topic.ID}, Sources: []ontology.SourceDependency{f.source(t, source)}}
+	assignment := func(source topiccontract.SourceHandle) topiccontract.Record {
+		return topiccontract.Record{ID: uuid.NewString(), Kind: topiccontract.AssignmentKind, Assignment: &topiccontract.Assignment{Source: source, DefinitionID: topic.ID}, Sources: []topiccontract.SourceDependency{f.source(t, source)}}
 	}
 	left, right, peer := assignment(a), assignment(b), assignment(otherOwner)
-	group := ontology.Record{ID: uuid.NewString(), Kind: ontology.EvidenceGroup, Group: &ontology.Group{Members: []ontology.SourceHandle{a, b}}, Sources: []ontology.SourceDependency{f.source(t, a), f.source(t, b)}}
+	group := topiccontract.Record{ID: uuid.NewString(), Kind: topiccontract.EvidenceGroup, Group: &topiccontract.Group{Members: []topiccontract.SourceHandle{a, b}}, Sources: []topiccontract.SourceDependency{f.source(t, a), f.source(t, b)}}
 	seedHistoricalRecords(t, f, "all-features", topic, left, right, peer, group)
-	pin := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.PinDefinition, TargetID: topic.ID}}
+	pin := topiccontract.Record{ID: uuid.NewString(), Kind: topiccontract.OverrideKind, Override: &topiccontract.Override{Action: topiccontract.PinDefinition, TargetID: topic.ID}}
 	original := seedHistoricalRecords(t, f, "pin", pin)
 	originalReceipt := seedHistoricalAssessment(t, f, a)
 	manager := managementService(f)
 	input := managementInput(2,
-		ontology.ManagementEdit{Action: "define", Kind: ontology.Topic, Definition: &ontology.Definition{Key: "draft-feature", Label: "Exact draft label"}},
-		ontology.ManagementEdit{Action: "group_together", Members: []ontology.SourceHandle{a, b}})
-	draft := ontology.ManagementDraft{ID: uuid.NewString(), Version: 1, State: "open", BaseRevision: input.ExpectedRevision, Reason: input.Reason, Edits: input.Edits, UpdatedAt: time.Now().UTC().Truncate(time.Microsecond)}
-	hash, err := ontology.ManagementRequestHash("save", "", input)
+		topiccontract.ManagementEdit{Action: "define", Kind: topiccontract.Topic, Definition: &topiccontract.Definition{Key: "draft-feature", Label: "Exact draft label"}},
+		topiccontract.ManagementEdit{Action: "group_together", Members: []topiccontract.SourceHandle{a, b}})
+	draft := topiccontract.ManagementDraft{ID: uuid.NewString(), Version: 1, State: "open", BaseRevision: input.ExpectedRevision, Reason: input.Reason, Edits: input.Edits, UpdatedAt: time.Now().UTC().Truncate(time.Microsecond)}
+	hash, err := topiccontract.ManagementRequestHash("save", "", input)
 	require.NoError(t, err)
 	draftTopic := testTopic("draft-feature")
 	draftTopic.Definition = input.Edits[0].Definition
-	draftGroup := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.GroupTogether, Members: []ontology.SourceHandle{a, b}}}
-	body, err := json.Marshal(storedManagementDraft{Draft: draft, Prepared: testPublication(input.OperationKey, input.ExpectedRevision, ontology.Change{Record: draftTopic}, ontology.Change{Record: draftGroup})})
+	draftGroup := topiccontract.Record{ID: uuid.NewString(), Kind: topiccontract.OverrideKind, Override: &topiccontract.Override{Action: topiccontract.GroupTogether, Members: []topiccontract.SourceHandle{a, b}}}
+	body, err := json.Marshal(storedManagementDraft{Draft: draft, Prepared: testPublication(input.OperationKey, input.ExpectedRevision, topiccontract.Change{Record: draftTopic}, topiccontract.Change{Record: draftGroup})})
 	require.NoError(t, err)
 	require.NoError(t, f.rls.WithTeamProfileTx(f.actor(0, "manager"), f.app, f.team, f.owners[0], func(tx *gorm.DB) error {
 		var stored bool
@@ -72,9 +72,9 @@ func TestFeatureStoragePostgresPreservesOrganizationDraftsAndIsolation(t *testin
 	}))
 	ids := []string{topic.ID, left.ID, right.ID, peer.ID, group.ID, pin.ID}
 	historical := true
-	readTopics := func() ontology.TopicReadResult {
+	readTopics := func() topiccontract.TopicReadResult {
 		t.Helper()
-		var result ontology.TopicReadResult
+		var result topiccontract.TopicReadResult
 		ctx := f.actor(2, "member")
 		if historical {
 			require.NoError(t, f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
@@ -86,7 +86,7 @@ func TestFeatureStoragePostgresPreservesOrganizationDraftsAndIsolation(t *testin
 					return err
 				}
 				var err error
-				result, err = f.store.ReadEvidenceTopics(ctx, tx, f.team, ontology.TopicReadInput{TopicIDs: []string{topic.ID}})
+				result, err = f.store.ReadEvidenceTopics(ctx, tx, f.team, topiccontract.TopicReadInput{TopicIDs: []string{topic.ID}})
 				if err != nil {
 					return err
 				}
@@ -95,7 +95,7 @@ func TestFeatureStoragePostgresPreservesOrganizationDraftsAndIsolation(t *testin
 		} else {
 			require.NoError(t, f.rls.WithTeamReadOnlyRepeatableTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
 				var err error
-				result, err = f.store.ReadEvidenceTopics(ctx, tx, f.team, ontology.TopicReadInput{TopicIDs: []string{topic.ID}})
+				result, err = f.store.ReadEvidenceTopics(ctx, tx, f.team, topiccontract.TopicReadInput{TopicIDs: []string{topic.ID}})
 				return err
 			}))
 		}
@@ -119,7 +119,7 @@ func TestFeatureStoragePostgresPreservesOrganizationDraftsAndIsolation(t *testin
 	require.NoError(t, migrator.RunUp(context.Background()))
 	historical = false
 	organizer, calls := organizationFixtureServiceWithIdentity(t, f, nil, nil, "historical-fixture-model", assessor.DefaultSemanticAssessmentLimits())
-	recalled, err := organizer.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: originalReceipt.OperationKey, Sources: []ontology.SourceHandle{a}})
+	recalled, err := organizer.Organize(context.Background(), f.team, topiccontract.OrganizationInput{OperationKey: originalReceipt.OperationKey, Sources: []topiccontract.SourceHandle{a}})
 	require.NoError(t, err)
 	require.True(t, recalled.Existing)
 	require.Equal(t, originalReceipt.ID, recalled.AssessmentID)
@@ -139,14 +139,14 @@ func TestFeatureStoragePostgresPreservesOrganizationDraftsAndIsolation(t *testin
 	require.Equal(t, draft, replay)
 	for _, owner := range []int{1, 2} {
 		_, err = manager.Draft(f.actor(owner, "manager"), draft.ID)
-		require.ErrorIs(t, err, ontology.ErrNotFound)
+		require.ErrorIs(t, err, topiccontract.ErrNotFound)
 	}
 	measure("after")
-	catalogPage, err := manager.Records(f.actor(0, "manager"), ontology.Topic, "", 20)
+	catalogPage, err := manager.Records(f.actor(0, "manager"), topiccontract.Topic, "", 20)
 	require.NoError(t, err)
 	renamed := *topic.Definition
 	renamed.Label = "Editable after historic pin"
-	edit, err := manager.SaveDraft(f.actor(0, "manager"), "", managementInput(catalogPage.Revision, ontology.ManagementEdit{Action: "define", RecordID: topic.ID, ExpectedVersion: 1, Kind: ontology.Topic, Definition: &renamed}))
+	edit, err := manager.SaveDraft(f.actor(0, "manager"), "", managementInput(catalogPage.Revision, topiccontract.ManagementEdit{Action: "define", RecordID: topic.ID, ExpectedVersion: 1, Kind: topiccontract.Topic, Definition: &renamed}))
 	require.NoError(t, err)
 	_, err = manager.CommandDraft(f.actor(0, "manager"), edit.ID, "publish", managementCommand(edit))
 	require.NoError(t, err)

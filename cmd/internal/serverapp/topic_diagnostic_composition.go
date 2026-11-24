@@ -11,11 +11,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	ontology "github.com/markhuangai/dense-mem/internal/topics"
+	topics "github.com/markhuangai/dense-mem/internal/topics"
 	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
 )
 
-func ontologyPublicationDiagnostics(logger *slog.Logger, protector observability.DiagnosticProtector) contract.PublicationObserver {
+func topicPublicationDiagnostics(logger *slog.Logger, protector observability.DiagnosticProtector) contract.PublicationObserver {
 	if logger == nil {
 		return nil
 	}
@@ -174,9 +174,9 @@ func ontologyPublicationDiagnostics(logger *slog.Logger, protector observability
 	}
 }
 
-func ontologyDiagnosticCapture(sink observability.LogSink, protector observability.DiagnosticProtector, logger *slog.Logger) ontology.MaintenanceDiagnosticCapture {
-	return ontology.MaintenanceDiagnosticCapture{
-		Observe:     ontologyAssessmentDiagnostics(logger, protector),
+func topicMaintenanceDiagnostics(sink observability.LogSink, protector observability.DiagnosticProtector, logger *slog.Logger) topics.MaintenanceDiagnosticCapture {
+	return topics.MaintenanceDiagnosticCapture{
+		Observe:     organizationAssessmentDiagnostics(logger, protector),
 		NewRecorder: func() modelprovider.SnapshotRecorder { return observability.NewProviderExchangeRecorder(protector) },
 		RecordFailure: func(ctx context.Context, claim contract.MaintenanceClaim, result contract.OrganizationResult, exchanges []modelprovider.ProviderExchange) error {
 			if sink == nil || protector == nil {

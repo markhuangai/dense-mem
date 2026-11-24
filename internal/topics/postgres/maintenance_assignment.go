@@ -6,12 +6,12 @@ import (
 	"time"
 
 	assignment "github.com/markhuangai/dense-mem/internal/topicassignment/contract"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 )
 
-func (s *Store) CommitMaintenanceAssignments(ctx context.Context, claim ontology.MaintenanceClaim, publications []assignment.Publication) ([]ontology.OrganizationOutcome, error) {
-	var outcomes []ontology.OrganizationOutcome
+func (s *Store) CommitMaintenanceAssignments(ctx context.Context, claim topic.MaintenanceClaim, publications []assignment.Publication) ([]topic.OrganizationOutcome, error) {
+	var outcomes []topic.OrganizationOutcome
 	err := s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
 		if _, err := maintenanceState(tx); err != nil {
 			return err
@@ -21,7 +21,7 @@ func (s *Store) CommitMaintenanceAssignments(ctx context.Context, claim ontology
 			return err
 		}
 		if fence.SpaceID != claim.SpaceID || fence.Generation != claim.Generation {
-			return ontology.ErrLeaseLost
+			return topic.ErrLeaseLost
 		}
 		if err := maintenancePublicationFence(ctx, tx, fence); err != nil {
 			return err
@@ -48,7 +48,7 @@ func (s *Store) CommitMaintenanceAssignments(ctx context.Context, claim ontology
 			if err != nil {
 				return err
 			}
-			outcome := ontology.OrganizationOutcome{Source: source, Status: "organized"}
+			outcome := topic.OrganizationOutcome{Source: source, Status: "organized"}
 			if status == "uncategorized" || status == "ambiguous" {
 				outcome.Status, outcome.Reason = status, status
 			} else if status != "assigned" {
@@ -56,17 +56,17 @@ func (s *Store) CommitMaintenanceAssignments(ctx context.Context, claim ontology
 			}
 			update := tx.Exec(`UPDATE topic_maintenance_sources SET last_assignment_input_hash=? WHERE team_id=?::uuid AND shared_space_id=?::uuid
 				AND space_generation=? AND source_kind=? AND source_id=? AND revision=?`, inputHash, fence.TeamID, fence.SpaceID,
-				fence.Generation, source.Kind, source.ID, claim.Revisions[ontology.SourceKey(source)])
+				fence.Generation, source.Kind, source.ID, claim.Revisions[topic.SourceKey(source)])
 			if update.Error != nil {
 				return update.Error
 			}
 			if update.RowsAffected != 1 {
-				return ontology.ErrSourceStale
+				return topic.ErrSourceStale
 			}
 			outcomes = append(outcomes, outcome)
 		}
 		phase := "batch_fence"
-		result := ontology.OrganizationResult{Current: true, Outcomes: outcomes}
+		result := topic.OrganizationResult{Current: true, Outcomes: outcomes}
 		return completeMaintenanceBatch(tx, claim, result, "", time.Now(), &phase)
 	})
 	return outcomes, err

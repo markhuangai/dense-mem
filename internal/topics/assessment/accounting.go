@@ -8,12 +8,12 @@ import (
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/service/generation"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 )
 
 type AttemptAccounting interface {
 	BeforeAttempt(context.Context, string, int, int, int) (context.Context, error)
-	AfterAttempt(context.Context, string, ontology.AssessmentAttempt, bool) error
+	AfterAttempt(context.Context, string, topic.AssessmentAttempt, bool) error
 }
 
 func AccountGeneration[T any](task *generation.Task[T], accounting AttemptAccounting, id string, output int) {
@@ -24,7 +24,7 @@ func AccountGeneration[T any](task *generation.Task[T], accounting AttemptAccoun
 		return accounting.BeforeAttempt(ctx, id, n, input, output)
 	}
 	task.AfterTransport = func(ctx context.Context, attempt *generation.Attempt, err error) error {
-		record := ontology.AssessmentAttempt{
+		record := topic.AssessmentAttempt{
 			Number: attempt.Number, ReportedInputTokens: attempt.Provider.PromptTokens,
 			ReportedOutputTokens: attempt.Provider.CompletionTokens, ReportedTotalTokens: attempt.Provider.TotalTokens,
 			ReportedUsageAvailable: attempt.Provider.UsageAvailable, Diagnostics: attempt.Provider.Diagnostics,
@@ -40,7 +40,7 @@ func AccountDecisions(ctx context.Context, accounting AttemptAccounting, id stri
 	return modelprovider.WithDecisionExchangeAccounting(ctx, decisionAccounting{accounting, id, output})
 }
 
-func reconcileAttempt(ctx context.Context, accounting AttemptAccounting, id string, record ontology.AssessmentAttempt, success bool) error {
+func reconcileAttempt(ctx context.Context, accounting AttemptAccounting, id string, record topic.AssessmentAttempt, success bool) error {
 	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	return accounting.AfterAttempt(recordCtx, id, record, success)
@@ -57,7 +57,7 @@ func (d decisionAccounting) BeforeDecisionExchange(ctx context.Context, r modelp
 }
 
 func (d decisionAccounting) AfterDecisionExchange(ctx context.Context, r modelprovider.DecisionReceipt, success bool) error {
-	record := ontology.AssessmentAttempt{Number: r.Attempt, Diagnostics: r.Diagnostics, EstimatedInputTokens: r.EstimatedInputTokens, EstimatedOutputTokens: d.output}
+	record := topic.AssessmentAttempt{Number: r.Attempt, Diagnostics: r.Diagnostics, EstimatedInputTokens: r.EstimatedInputTokens, EstimatedOutputTokens: d.output}
 	if r.Usage != nil {
 		record.ReportedUsageAvailable = true
 		record.ReportedInputTokens = r.Usage.InputTokens

@@ -10,18 +10,18 @@ import (
 	auditpg "github.com/markhuangai/dense-mem/internal/audit/postgres"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	application "github.com/markhuangai/dense-mem/internal/topics"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
 func managementService(f *ontologyFixture) *application.ManagementService {
 	return application.NewManagementService(f.store, auditapp.New(auditpg.NewStore(f.app, f.rls)))
 }
-func managementInput(revision int64, edits ...ontology.ManagementEdit) ontology.SaveDraftInput {
-	return ontology.SaveDraftInput{OperationKey: uuid.NewString(), ExpectedRevision: revision, Reason: "Correct shared ontology organization", Edits: edits}
+func managementInput(revision int64, edits ...topic.ManagementEdit) topic.SaveDraftInput {
+	return topic.SaveDraftInput{OperationKey: uuid.NewString(), ExpectedRevision: revision, Reason: "Correct shared ontology organization", Edits: edits}
 }
-func managementCommand(draft ontology.ManagementDraft) ontology.DraftCommand {
-	return ontology.DraftCommand{OperationKey: uuid.NewString(), ExpectedVersion: draft.Version, ExpectedRevision: draft.BaseRevision, Reason: draft.Reason}
+func managementCommand(draft topic.ManagementDraft) topic.DraftCommand {
+	return topic.DraftCommand{OperationKey: uuid.NewString(), ExpectedVersion: draft.Version, ExpectedRevision: draft.BaseRevision, Reason: draft.Reason}
 }
 func managementOwnerC(t *testing.T, f *ontologyFixture) {
 	t.Helper()

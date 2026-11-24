@@ -7,15 +7,15 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 )
 
-func (s *Store) History(ctx context.Context, teamID string, after int64, limit int) ([]ontology.PublicationHistory, error) {
-	if after < 0 || limit < 1 || limit > ontology.MaxPageSize {
-		return nil, ontology.ErrInvalid
+func (s *Store) History(ctx context.Context, teamID string, after int64, limit int) ([]topic.PublicationHistory, error) {
+	if after < 0 || limit < 1 || limit > topic.MaxPageSize {
+		return nil, topic.ErrInvalid
 	}
-	result := []ontology.PublicationHistory{}
+	result := []topic.PublicationHistory{}
 	err := s.withScope(ctx, teamID, true, func(tx *gorm.DB, fence scope) error {
 		rows, err := tx.Raw(`SELECT result,origin,COALESCE(actor_id::text,''),reason,created_at
 			FROM topic_publications WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?
@@ -25,7 +25,7 @@ func (s *Store) History(ctx context.Context, teamID string, after int64, limit i
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var item ontology.PublicationHistory
+			var item topic.PublicationHistory
 			var encoded []byte
 			if err := rows.Scan(&encoded, &item.Origin, &item.ActorID, &item.Reason, &item.CreatedAt); err != nil {
 				return err
@@ -40,30 +40,30 @@ func (s *Store) History(ctx context.Context, teamID string, after int64, limit i
 	return result, err
 }
 
-func (s *Store) Rollback(ctx context.Context, teamID, targetID, key string, expected int64, reason string) (result ontology.PublicationResult, err error) {
+func (s *Store) Rollback(ctx context.Context, teamID, targetID, key string, expected int64, reason string) (result topic.PublicationResult, err error) {
 	actor, err := managerActor(ctx, teamID)
 	if err != nil {
-		return ontology.PublicationResult{}, err
+		return topic.PublicationResult{}, err
 	}
 	if _, err := uuid.Parse(targetID); err != nil {
-		return ontology.PublicationResult{}, ontology.ErrInvalid
+		return topic.PublicationResult{}, topic.ErrInvalid
 	}
-	if err := ontology.ValidateOperation(key, expected, reason); err != nil {
-		return ontology.PublicationResult{}, err
+	if err := topic.ValidateOperation(key, expected, reason); err != nil {
+		return topic.PublicationResult{}, err
 	}
-	input := ontology.Publication{OperationKey: key, ExpectedRevision: expected, Reason: reason, RollbackOf: targetID}
-	ctx, diagnostic, finish := ontology.ObservePublication(ctx, s.publicationObserver, teamID, "rollback", input)
+	input := topic.Publication{OperationKey: key, ExpectedRevision: expected, Reason: reason, RollbackOf: targetID}
+	ctx, diagnostic, finish := topic.ObservePublication(ctx, s.publicationObserver, teamID, "rollback", input)
 	defer func() {
 		if diagnostic != nil && result.ID != "" {
 			diagnostic.Result = &result
 		}
 		finish(err)
 	}()
-	hash, err := ontology.RequestHash(input, "rollback", actor)
+	hash, err := topic.RequestHash(input, "rollback", actor)
 	if err != nil {
-		return ontology.PublicationResult{}, err
+		return topic.PublicationResult{}, err
 	}
-	var replay ontology.PublicationResult
+	var replay topic.PublicationResult
 	var found bool
 	err = s.withScope(ctx, teamID, true, func(tx *gorm.DB, fence scope) error {
 		var err error
@@ -71,11 +71,11 @@ func (s *Store) Rollback(ctx context.Context, teamID, targetID, key string, expe
 		if err != nil || found {
 			return err
 		}
-		input, err = prepareOntologyRollback(tx, fence, input)
+		input, err = prepareTopicRollback(tx, fence, input)
 		return err
 	})
 	if err != nil {
-		return ontology.PublicationResult{}, err
+		return topic.PublicationResult{}, err
 	}
 	if found {
 		return replay, nil
@@ -83,17 +83,17 @@ func (s *Store) Rollback(ctx context.Context, teamID, targetID, key string, expe
 	return s.commit(ctx, teamID, input, "rollback", actor, hash)
 }
 
-func prepareOntologyRollback(tx *gorm.DB, fence scope, input ontology.Publication) (ontology.Publication, error) {
+func prepareTopicRollback(tx *gorm.DB, fence scope, input topic.Publication) (topic.Publication, error) {
 	var encoded []byte
 	err := tx.Raw(`SELECT result FROM topic_publications WHERE team_id=?::uuid AND shared_space_id=?::uuid
 		AND space_generation=? AND publication_id=?::uuid`, fence.TeamID, fence.SpaceID, fence.Generation, input.RollbackOf).Row().Scan(&encoded)
 	if errors.Is(err, sql.ErrNoRows) {
-		return input, ontology.ErrNotFound
+		return input, topic.ErrNotFound
 	}
 	if err != nil {
 		return input, err
 	}
-	var target ontology.PublicationResult
+	var target topic.PublicationResult
 	if err := json.Unmarshal(encoded, &target); err != nil {
 		return input, err
 	}
@@ -104,7 +104,7 @@ func prepareOntologyRollback(tx *gorm.DB, fence scope, input ontology.Publicatio
 		}
 		head, exists := current[ref.ID]
 		if !exists || head.Version != ref.Version {
-			return input, ontology.PublicationVersionRejection("rollback_revision", ref.ID, ref.Version, head.Version)
+			return input, topic.PublicationVersionRejection("rollback_revision", ref.ID, ref.Version, head.Version)
 		}
 		desired := head
 		if ref.Version == 1 {
@@ -121,9 +121,9 @@ func prepareOntologyRollback(tx *gorm.DB, fence scope, input ontology.Publicatio
 				return input, err
 			}
 		}
-		input.Changes = append(input.Changes, ontology.Change{ExpectedVersion: head.Version, Record: desired})
+		input.Changes = append(input.Changes, topic.Change{ExpectedVersion: head.Version, Record: desired})
 	}
-	records := make([]ontology.Record, 0, len(input.Changes))
+	records := make([]topic.Record, 0, len(input.Changes))
 	for _, change := range input.Changes {
 		records = append(records, change.Record)
 	}
@@ -146,5 +146,5 @@ func prepareOntologyRollback(tx *gorm.DB, fence scope, input ontology.Publicatio
 			}
 		}
 	}
-	return input, ontology.ValidatePublication(input)
+	return input, topic.ValidatePublication(input)
 }

@@ -25,7 +25,7 @@ func RunPrivateMemoryMigration(ctx context.Context, db *gorm.DB, expectedFingerp
 	if err := migratePrivateMemory(ctx, db, expectedFingerprint); err != nil {
 		return fmt.Errorf("migrate private memory: %w", err)
 	}
-	return migrateOntology(ctx, db, migrator, logger)
+	return migrateTopicStorage(ctx, db, migrator, logger)
 }
 
 func migratePrivateMemory(ctx context.Context, db *gorm.DB, expectedFingerprint string) (err error) {

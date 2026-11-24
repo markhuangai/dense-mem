@@ -12,7 +12,7 @@ import (
 	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
 )
 
-func ontologyAssessmentDiagnostics(logger *slog.Logger, protector observability.DiagnosticProtector) assessment.Observer {
+func organizationAssessmentDiagnostics(logger *slog.Logger, protector observability.DiagnosticProtector) assessment.Observer {
 	if logger == nil {
 		return nil
 	}

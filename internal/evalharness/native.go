@@ -108,7 +108,7 @@ type NativeObservation struct {
 	Unreconciled       int                        `json:"unreconciled_attempts"`
 	ForeignWork        int                        `json:"foreign_work"`
 	ProviderAttempts   []NativeAttempt            `json:"provider_attempts"`
-	Ontology           contract.MaintenanceStatus `json:"ontology"`
+	TopicMaintenance   contract.MaintenanceStatus `json:"ontology"`
 	Search             struct {
 		Status   string `json:"status"`
 		Expected int    `json:"expected_documents"`
@@ -134,19 +134,19 @@ func (n *Native) ResolveScope(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback()
-	var topicMaintenance, ontologyMaintenance bool
+	var currentLayout, legacyLayout bool
 	err = tx.QueryRowContext(ctx, `SELECT a.legacy_owner_id::text,m.id::text,m.generation,
 		to_regclass('public.topic_maintenance_batches') IS NOT NULL,
 		to_regclass('public.ontology_maintenance_batches') IS NOT NULL
 		FROM ownership_aliases a JOIN memory_spaces m ON m.team_id=a.team_id AND m.kind='team_shared' AND m.lifecycle_state='active'
-		WHERE a.team_id=$1::uuid AND a.credential_id=$2::uuid`, n.Scope.TeamID, n.Scope.CredentialID).Scan(&n.Scope.OwnerID, &n.Scope.SpaceID, &n.Scope.Generation, &topicMaintenance, &ontologyMaintenance)
+		WHERE a.team_id=$1::uuid AND a.credential_id=$2::uuid`, n.Scope.TeamID, n.Scope.CredentialID).Scan(&n.Scope.OwnerID, &n.Scope.SpaceID, &n.Scope.Generation, &currentLayout, &legacyLayout)
 	if err != nil {
 		return err
 	}
-	if topicMaintenance == ontologyMaintenance {
+	if currentLayout == legacyLayout {
 		return errors.New("dataset runtime maintenance layout is incompatible")
 	}
-	n.legacyMaintenance = ontologyMaintenance
+	n.legacyMaintenance = legacyLayout
 	return nil
 }
 
@@ -277,7 +277,7 @@ func (n *Native) Snapshot(ctx context.Context) (NativeObservation, error) {
 	if err = json.Unmarshal(raw, &observation); err != nil {
 		return observation, err
 	}
-	if err = n.maintenanceControl(ctx, http.MethodGet, "status", nil, &observation.Ontology); err != nil {
+	if err = n.maintenanceControl(ctx, http.MethodGet, "status", nil, &observation.TopicMaintenance); err != nil {
 		return observation, err
 	}
 	if err = n.Control(ctx, http.MethodGet, "/search/convergence", nil, &observation.Search); err != nil {
@@ -286,7 +286,7 @@ func (n *Native) Snapshot(ctx context.Context) (NativeObservation, error) {
 	return observation, nil
 }
 
-func NativeReady(observation NativeObservation, ontologyEnabled, paused bool, manifest Manifest, teamID string) error {
+func NativeReady(observation NativeObservation, topicMaintenanceEnabled, paused bool, manifest Manifest, teamID string) error {
 	if observation.ForeignSources != 0 || observation.ForeignWork != 0 {
 		return errors.New("dataset runtime contains foreign sources or work")
 	}
@@ -294,38 +294,38 @@ func NativeReady(observation NativeObservation, ontologyEnabled, paused bool, ma
 	if search.Contract == nil || search.Contract.Model != manifest.EmbeddingModel || search.Contract.Dimensions != manifest.EmbeddingDimensions || search.Status != "converged" || search.Drifted != 0 || search.Expected != search.Current {
 		return errors.New("search or embedding contract is not converged")
 	}
-	status := observation.Ontology
-	if status.Enabled != ontologyEnabled || status.Paused != paused {
-		return errors.New("unexpected native ontology state")
+	status := observation.TopicMaintenance
+	if status.Enabled != topicMaintenanceEnabled || status.Paused != paused {
+		return errors.New("unexpected native Topic maintenance state")
 	}
 	if err := nativeDrained(observation); err != nil {
 		return err
 	}
-	if !ontologyEnabled {
+	if !topicMaintenanceEnabled {
 		return nil
 	}
-	if err := fullOntologyCoverage(status); err != nil {
+	if err := fullTopicCoverage(status); err != nil {
 		return err
 	}
-	return nativeOntologyPolicy(status, manifest, teamID)
+	return nativeTopicMaintenancePolicy(status, manifest, teamID)
 }
 
-func fullOntologyCoverage(status contract.MaintenanceStatus) error {
+func fullTopicCoverage(status contract.MaintenanceStatus) error {
 	if status.ConfigurationError != "" || !status.DiscoveryComplete || !status.CoverageComplete || status.Counts.Pending != 0 || status.Counts.Failed != 0 || status.Counts.Ambiguous != 0 || status.Counts.Eligible <= 0 || status.Counts.Eligible != status.Counts.Organized {
-		return errors.New("ontology coverage is incomplete")
+		return errors.New("Topic maintenance coverage is incomplete")
 	}
 	return nil
 }
 
-func nativeOntologyPolicy(status contract.MaintenanceStatus, manifest Manifest, teamID string) error {
+func nativeTopicMaintenancePolicy(status contract.MaintenanceStatus, manifest Manifest, teamID string) error {
 	if status.Window == nil || status.Window.Policy.Model != manifest.Model || status.Window.Policy.ContextWindowTokens != int64(manifest.ContextWindowTokens) || status.Window.Policy.MaxConcurrency != 4 || status.Window.Policy.TeamConcurrency(teamID) != 4 {
-		return errors.New("effective ontology capacity differs from campaign settings")
+		return errors.New("effective Topic maintenance capacity differs from evaluation settings")
 	}
 	return nil
 }
 
 func nativeDrained(observation NativeObservation) error {
-	if observation.ActiveBatches != 0 || observation.ActivePreparations != 0 || observation.Unreconciled != 0 || observation.Ontology.ActiveWork != 0 {
+	if observation.ActiveBatches != 0 || observation.ActivePreparations != 0 || observation.Unreconciled != 0 || observation.TopicMaintenance.ActiveWork != 0 {
 		return errors.New("native model work has not drained")
 	}
 	measurement, err := MeasureAttempts(observation.ProviderAttempts)

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/lib/pq"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 )
 
@@ -18,11 +18,11 @@ type maintenanceRecoveryBatch struct {
 	Sources, Revisions, Body                         []byte
 }
 
-func maintenanceFinalizationError(ctx context.Context, claim ontology.MaintenanceClaim, phase string, started time.Time, err error) error {
+func maintenanceFinalizationError(ctx context.Context, claim topic.MaintenanceClaim, phase string, started time.Time, err error) error {
 	if err == nil {
 		return nil
 	}
-	return &ontology.MaintenanceFinalizationError{BatchID: claim.ID, RunID: claim.RunID, Phase: phase,
+	return &topic.MaintenanceFinalizationError{BatchID: claim.ID, RunID: claim.RunID, Phase: phase,
 		Duration: time.Since(started), Cause: errors.Join(err, ctx.Err())}
 }
 
@@ -30,7 +30,7 @@ func (s *Store) recoverMaintenanceBatches(ctx context.Context, now time.Time) er
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	started, phase := time.Now(), "recovery_accounting_lock"
-	var claim ontology.MaintenanceClaim
+	var claim topic.MaintenanceClaim
 	err := s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
 		if _, err := maintenanceState(tx); err != nil {
 			return err
@@ -47,11 +47,11 @@ func (s *Store) recoverMaintenanceBatches(ctx context.Context, now time.Time) er
 		 AND ((COALESCE(assessment.body->'result'->>'failure_code','')='' AND assessment.body->'result'->>'current'='true')
 		 OR (COALESCE(assessment.body->'result'->>'failure_code','')<>'' AND assessment.body->'result'->>'current'='false'))
 		 AND NOT EXISTS(SELECT 1 FROM topic_maintenance_attempts AS attempt WHERE attempt.batch_id=batch.batch_id AND attempt.reconciled_at IS NULL)
-		 ORDER BY batch.created_at,batch.batch_id LIMIT ? FOR UPDATE OF batch SKIP LOCKED`, now, ontology.MaintenancePageSize).Scan(&batches).Error; err != nil {
+		 ORDER BY batch.created_at,batch.batch_id LIMIT ? FOR UPDATE OF batch SKIP LOCKED`, now, topic.MaintenancePageSize).Scan(&batches).Error; err != nil {
 			return err
 		}
 		for _, batch := range batches {
-			claim = ontology.MaintenanceClaim{ID: batch.ID, RunID: batch.RunID, WindowID: batch.WindowID, TeamID: batch.TeamID,
+			claim = topic.MaintenanceClaim{ID: batch.ID, RunID: batch.RunID, WindowID: batch.WindowID, TeamID: batch.TeamID,
 				SpaceID: batch.SpaceID, Generation: batch.Generation, LeaseToken: batch.LeaseToken, LeaseUntil: batch.LeaseUntil}
 			phase = "recovery_receipt"
 			if err := json.Unmarshal(batch.Sources, &claim.Sources); err != nil {
@@ -81,7 +81,7 @@ func (s *Store) recoverMaintenanceBatches(ctx context.Context, now time.Time) er
 				return err
 			}
 			err = completeMaintenanceBatch(tx, claim, receipt.Result, receipt.Result.FailureCode, now, &phase)
-			if err == ontology.ErrLeaseLost {
+			if err == topic.ErrLeaseLost {
 				phase = "recovery_rollback"
 				err = tx.Exec("ROLLBACK TO SAVEPOINT maintenance_recovery_candidate").Error
 			}
@@ -99,28 +99,28 @@ func (s *Store) recoverMaintenanceBatches(ctx context.Context, now time.Time) er
 	return maintenanceFinalizationError(ctx, claim, phase, started, err)
 }
 
-func validateMaintenanceReceipt(claim ontology.MaintenanceClaim, receipt ontology.OrganizationReceipt) error {
-	input, err := ontology.PrepareOrganizationInput(ontology.OrganizationInput{OperationKey: "maintenance:" + claim.ID, Sources: claim.Sources})
+func validateMaintenanceReceipt(claim topic.MaintenanceClaim, receipt topic.OrganizationReceipt) error {
+	input, err := topic.PrepareOrganizationInput(topic.OrganizationInput{OperationKey: "maintenance:" + claim.ID, Sources: claim.Sources})
 	if err != nil {
 		return err
 	}
 	if receipt.OperationKey != input.OperationKey || len(receipt.Sources) != len(input.Sources) || len(claim.Revisions) != len(input.Sources) {
-		return ontology.ErrInvalid
+		return topic.ErrInvalid
 	}
-	versions := map[string]ontology.SourceHandle{}
+	versions := map[string]topic.SourceHandle{}
 	for _, source := range receipt.Sources {
-		versions[ontology.SourceKey(source.SourceHandle)] = source.SourceHandle
+		versions[topic.SourceKey(source.SourceHandle)] = source.SourceHandle
 	}
 	for _, source := range input.Sources {
-		key := ontology.SourceKey(source)
+		key := topic.SourceKey(source)
 		if versions[key] != source || claim.Revisions[key] < 1 {
-			return ontology.ErrInvalid
+			return topic.ErrInvalid
 		}
 	}
 	return nil
 }
 
-func lockMaintenanceRecoveryInputs(tx *gorm.DB, claim ontology.MaintenanceClaim) (bool, error) {
+func lockMaintenanceRecoveryInputs(tx *gorm.DB, claim topic.MaintenanceClaim) (bool, error) {
 	var locked bool
 	// Receipt revalidation takes the catalog lock before any queue-row locks.
 	if err := tx.Raw(`SELECT EXISTS(SELECT 1 FROM topic_catalog_heads
@@ -129,7 +129,7 @@ func lockMaintenanceRecoveryInputs(tx *gorm.DB, claim ontology.MaintenanceClaim)
 	}
 	keys := make([]string, 0, len(claim.Sources))
 	for _, source := range claim.Sources {
-		keys = append(keys, ontology.SourceKey(source))
+		keys = append(keys, topic.SourceKey(source))
 	}
 	err := tx.Raw(`WITH wanted AS MATERIALIZED (
 	 SELECT source_kind,source_id FROM topic_maintenance_sources WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND source_kind||':'||source_id=ANY(?::text[])

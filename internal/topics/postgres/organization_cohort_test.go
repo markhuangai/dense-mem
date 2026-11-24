@@ -27,7 +27,7 @@ import (
 	evalharness "github.com/markhuangai/dense-mem/internal/testfixture/evaluation"
 	organization "github.com/markhuangai/dense-mem/internal/topics"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -83,7 +83,7 @@ func testOntologyCohortWithMatching(t *testing.T, maintenance bool, matching []e
 		require.Equal(t, lock.GeneratorSHA256, "sha256:"+hex.EncodeToString(generatorDigest[:]))
 	}
 	scores := map[string]evalharness.OrganizationScore{}
-	reports := map[string]ontology.OrganizationResult{}
+	reports := map[string]topic.OrganizationResult{}
 	measurements := map[string]map[string]any{}
 	model := "fixture-model"
 	for _, testCase := range cohort {
@@ -101,10 +101,10 @@ func testOntologyCohortWithMatching(t *testing.T, maintenance bool, matching []e
 			logger := slog.New(slog.NewJSONHandler(&maintenanceLog, nil))
 			originals := map[string]evalharness.OrganizationSource{}
 			byText := map[string]string{}
-			handles := []ontology.SourceHandle{}
+			handles := []topic.SourceHandle{}
 			for i, source := range testCase.Sources {
 				owner := i % len(f.owners)
-				var handle ontology.SourceHandle
+				var handle topic.SourceHandle
 				if supplement, ok := followups[testCase.ID]; ok {
 					handle = f.organizationEvidenceAt(t, owner, source.Text, supplement.CreatedAt[i], supplement.Timezone)
 				} else {
@@ -150,8 +150,8 @@ func testOntologyCohortWithMatching(t *testing.T, maintenance bool, matching []e
 					return total
 				}
 			}
-			input := ontology.OrganizationInput{OperationKey: "cohort-" + testCase.ID, Sources: handles}
-			var result ontology.OrganizationResult
+			input := topic.OrganizationInput{OperationKey: "cohort-" + testCase.ID, Sources: handles}
+			var result topic.OrganizationResult
 			started := time.Now()
 			if maintenance {
 				for range 100 {
@@ -172,7 +172,7 @@ func testOntologyCohortWithMatching(t *testing.T, maintenance bool, matching []e
 				for rows.Next() {
 					var body []byte
 					require.NoError(t, rows.Scan(&body))
-					var receipt ontology.OrganizationReceipt
+					var receipt topic.OrganizationReceipt
 					require.NoError(t, json.Unmarshal(body, &receipt))
 					result.Attempts = append(result.Attempts, receipt.Result.Attempts...)
 				}
@@ -203,7 +203,7 @@ func testOntologyCohortWithMatching(t *testing.T, maintenance bool, matching []e
 			measurements[testCase.ID] = measurement
 			require.NoError(t, err)
 			require.Empty(t, result.FailureCode)
-			groups, err := f.store.ListRecords(context.Background(), f.team, ontology.EvidenceGroup, "", ontology.MaxPageSize)
+			groups, err := f.store.ListRecords(context.Background(), f.team, topic.EvidenceGroup, "", topic.MaxPageSize)
 			require.NoError(t, err)
 			items := []evalharness.OrganizationItem{}
 			grouped := map[string]bool{}
@@ -237,7 +237,7 @@ func testOntologyCohortWithMatching(t *testing.T, maintenance bool, matching []e
 			require.Equal(t, 1.0, score.SourcePreservation)
 			require.Zero(t, score.RepeatedSlots)
 			if vocabularyID != "" {
-				assignments, err := f.store.ListRecords(context.Background(), f.team, ontology.AssignmentKind, "", ontology.MaxPageSize)
+				assignments, err := f.store.ListRecords(context.Background(), f.team, topic.AssignmentKind, "", topic.MaxPageSize)
 				require.NoError(t, err)
 				for _, assignment := range assignments.Records {
 					if _, ok := originals[assignment.Assignment.Source.ID]; ok {
@@ -272,17 +272,17 @@ func testHistoricalCohortOverride(t *testing.T, testCase evalharness.Organizatio
 	migrator, err := storage.NewMigrator(f.admin)
 	require.NoError(t, err)
 	require.NoError(t, migrator.RunUpThroughEvidenceOnly(ctx))
-	var handles []ontology.SourceHandle
-	var dependencies []ontology.SourceDependency
+	var handles []topic.SourceHandle
+	var dependencies []topic.SourceDependency
 	for _, source := range testCase.Sources {
 		handle := f.organizationEvidence(t, 0, source.Text, nil)
 		handles = append(handles, handle)
 		dependencies = append(dependencies, f.source(t, handle))
 	}
-	override := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.OverrideAction(testCase.Override), Members: handles}, Sources: dependencies}
-	records := []ontology.Record{override}
+	override := topic.Record{ID: uuid.NewString(), Kind: topic.OverrideKind, Override: &topic.Override{Action: topic.OverrideAction(testCase.Override), Members: handles}, Sources: dependencies}
+	records := []topic.Record{override}
 	if testCase.Override == "group_together" {
-		records = append(records, ontology.Record{ID: uuid.NewString(), Kind: ontology.EvidenceGroup, Group: &ontology.Group{Members: handles}, Sources: dependencies})
+		records = append(records, topic.Record{ID: uuid.NewString(), Kind: topic.EvidenceGroup, Group: &topic.Group{Members: handles}, Sources: dependencies})
 	}
 	original := seedHistoricalRecords(t, f, "historic-cohort-"+testCase.ID, records...)
 	before := f.canonicalSnapshot(t)
@@ -290,7 +290,7 @@ func testHistoricalCohortOverride(t *testing.T, testCase evalharness.Organizatio
 	retained, err := f.store.GetRecord(f.actor(0, "manager"), f.team, override.ID, 1)
 	require.NoError(t, err)
 	require.Equal(t, original[override.ID], retained.Record)
-	groups, err := f.store.ListRecords(ctx, f.team, ontology.EvidenceGroup, "", ontology.MaxPageSize)
+	groups, err := f.store.ListRecords(ctx, f.team, topic.EvidenceGroup, "", topic.MaxPageSize)
 	require.NoError(t, err)
 	items := evalharness.UnorganizedItems(testCase)
 	if len(records) > 1 {

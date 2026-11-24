@@ -16,7 +16,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/provider/structured"
 	organization "github.com/markhuangai/dense-mem/internal/topics"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -38,15 +38,15 @@ func testOntologyOrganizationAmbiguousComparisonReceipt(t *testing.T) {
 	service, calls := organizationFixtureService(t, f, nil, func(_ assessment.Request, response *assessment.Response) {
 		response.Equivalence[0].Relation = "ambiguous"
 	})
-	input := ontology.OrganizationInput{OperationKey: "uncertain-pair", Sources: []ontology.SourceHandle{a, b}}
+	input := topiccontract.OrganizationInput{OperationKey: "uncertain-pair", Sources: []topiccontract.SourceHandle{a, b}}
 	result, err := service.Organize(context.Background(), f.team, input)
 	require.NoError(t, err)
 	require.True(t, result.Current)
 	require.Len(t, result.AmbiguousComparisons, 1)
 	comparison := result.AmbiguousComparisons[0]
-	require.ElementsMatch(t, []ontology.SourceHandle{a, b}, []ontology.SourceHandle{comparison.Left, comparison.Right})
+	require.ElementsMatch(t, []topiccontract.SourceHandle{a, b}, []topiccontract.SourceHandle{comparison.Left, comparison.Right})
 	require.Equal(t, "equivalence_ambiguous", comparison.Reason)
-	groups, err := f.store.ListRecords(context.Background(), f.team, ontology.EvidenceGroup, "", 20)
+	groups, err := f.store.ListRecords(context.Background(), f.team, topiccontract.EvidenceGroup, "", 20)
 	require.NoError(t, err)
 	require.Empty(t, groups.Records)
 	for _, key := range []string{input.OperationKey, "uncertain-pair-new-key"} {
@@ -69,19 +69,19 @@ func testOntologyOrganizationCompletedReceiptInvalidation(t *testing.T) {
 			if len(request.Items) == 2 {
 				require.Empty(t, request.Definitions)
 				response.Definitions = []assessment.Definition{
-					{Ref: "first", Kind: ontology.Topic, Key: "postgresql", Label: "First storage proposal", Aliases: []string{}},
-					{Ref: "second", Kind: ontology.Topic, Key: "pg", Label: "Second storage proposal", Aliases: []string{}},
+					{Ref: "first", Kind: topiccontract.Topic, Key: "postgresql", Label: "First storage proposal", Aliases: []string{}},
+					{Ref: "second", Kind: topiccontract.Topic, Key: "pg", Label: "Second storage proposal", Aliases: []string{}},
 				}
 				response.Items[0].DefinitionRef, response.Items[1].DefinitionRef = "first", "second"
 			}
 		})
-		original, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "original-definition", Sources: []ontology.SourceHandle{oldSource}})
+		original, err := service.Organize(context.Background(), f.team, topiccontract.OrganizationInput{OperationKey: "original-definition", Sources: []topiccontract.SourceHandle{oldSource}})
 		require.NoError(t, err)
-		id := ontology.OrganizationRecordID(f.team, ontology.Topic, "postgresql")
+		id := topiccontract.OrganizationRecordID(f.team, topiccontract.Topic, "postgresql")
 		old, err := f.store.GetRecord(context.Background(), f.team, id, 0)
 		require.NoError(t, err)
 		old.Definition.Aliases = []string{"pg"}
-		_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("definition-alias", original.Publication.Revision, ontology.Change{ExpectedVersion: old.Version, Record: old.Record}))
+		_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("definition-alias", original.Publication.Revision, topiccontract.Change{ExpectedVersion: old.Version, Record: old.Record}))
 		require.NoError(t, err)
 		_, err = f.knowledge.RetractEvidence(f.actor(0, "member"), knowledge.RetractEvidenceInput{TeamID: f.team, OwnerProfileID: f.owners[0], EvidenceIDs: []string{oldSource.ID}, Reason: "withdraw definition support", IdempotencyKey: "withdraw-old-support", RequestHash: testHash("withdraw-old-support")})
 		require.NoError(t, err)
@@ -90,9 +90,9 @@ func testOntologyOrganizationCompletedReceiptInvalidation(t *testing.T) {
 		before := f.canonicalSnapshot(t)
 		heads, err := f.store.ListRecords(context.Background(), f.team, "", "", 20)
 		require.NoError(t, err)
-		input := ontology.OrganizationInput{OperationKey: "conflicting-proposals", Sources: []ontology.SourceHandle{a, b}}
+		input := topiccontract.OrganizationInput{OperationKey: "conflicting-proposals", Sources: []topiccontract.SourceHandle{a, b}}
 		result, err := service.Organize(context.Background(), f.team, input)
-		require.ErrorIs(t, err, ontology.ErrConflict)
+		require.ErrorIs(t, err, topiccontract.ErrConflict)
 		require.Equal(t, "commit_conflict", result.FailureCode)
 		require.Nil(t, result.Publication)
 		require.Equal(t, int32(2), calls.Load())
@@ -117,9 +117,9 @@ func testOntologyOrganizationCompletedReceiptInvalidation(t *testing.T) {
 					response.Definitions[0].Aliases = []string{" POSTGRESQL "}
 				}
 			})
-			_, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "old-definition", Sources: []ontology.SourceHandle{oldSource}})
+			_, err := service.Organize(context.Background(), f.team, topiccontract.OrganizationInput{OperationKey: "old-definition", Sources: []topiccontract.SourceHandle{oldSource}})
 			require.NoError(t, err)
-			id := ontology.OrganizationRecordID(f.team, ontology.Topic, "postgresql")
+			id := topiccontract.OrganizationRecordID(f.team, topiccontract.Topic, "postgresql")
 			oldDefinition, err := f.store.GetRecord(context.Background(), f.team, id, 0)
 			require.NoError(t, err)
 			require.True(t, oldDefinition.Current)
@@ -127,10 +127,10 @@ func testOntologyOrganizationCompletedReceiptInvalidation(t *testing.T) {
 			require.NoError(t, err)
 			newSource := f.organizationEvidence(t, 1, "Beacon uses PostgreSQL.", nil)
 			before := f.canonicalSnapshot(t)
-			contextData, err := f.store.ReadOrganization(context.Background(), f.team, []ontology.SourceHandle{newSource})
+			contextData, err := f.store.ReadOrganization(context.Background(), f.team, []topiccontract.SourceHandle{newSource})
 			require.NoError(t, err)
 			require.Empty(t, contextData.Candidates)
-			input := ontology.OrganizationInput{OperationKey: "replacement-definition", Sources: []ontology.SourceHandle{newSource}}
+			input := topiccontract.OrganizationInput{OperationKey: "replacement-definition", Sources: []topiccontract.SourceHandle{newSource}}
 			result, err := service.Organize(context.Background(), f.team, input)
 			require.NoError(t, err)
 			require.NotNil(t, result.Publication)
@@ -158,11 +158,11 @@ func testOntologyOrganizationCompletedReceiptInvalidation(t *testing.T) {
 		source := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
 		before := f.canonicalSnapshot(t)
 		service, calls := organizationFixtureService(t, f, nil, ambiguousClassification)
-		input := ontology.OrganizationInput{OperationKey: "original-empty-context", Sources: []ontology.SourceHandle{source}}
+		input := topiccontract.OrganizationInput{OperationKey: "original-empty-context", Sources: []topiccontract.SourceHandle{source}}
 		original, err := service.Organize(context.Background(), f.team, input)
 		require.NoError(t, err)
 		topic := testTopic("postgresql")
-		publication, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("add-unused-topic", 0, ontology.Change{Record: topic}))
+		publication, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("add-unused-topic", 0, topiccontract.Change{Record: topic}))
 		require.NoError(t, err)
 		input.OperationKey = "context-with-topic"
 		newer, err := service.Organize(context.Background(), f.team, input)
@@ -173,7 +173,7 @@ func testOntologyOrganizationCompletedReceiptInvalidation(t *testing.T) {
 		view, err := f.store.GetRecord(context.Background(), f.team, topic.ID, 0)
 		require.NoError(t, err)
 		view.Record.Retired = true
-		_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("retire-unused-topic", publication.Revision, ontology.Change{ExpectedVersion: view.Version, Record: view.Record}))
+		_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("retire-unused-topic", publication.Revision, topiccontract.Change{ExpectedVersion: view.Version, Record: view.Record}))
 		require.NoError(t, err)
 		stale, err := service.Organize(context.Background(), f.team, input)
 		require.NoError(t, err)
@@ -195,10 +195,10 @@ func testOntologyOrganizationCompletedReceiptInvalidation(t *testing.T) {
 		source := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
 		before := f.canonicalSnapshot(t)
 		service, calls := organizationFixtureService(t, f, nil, ambiguousClassification)
-		input := ontology.OrganizationInput{OperationKey: "completed-before-failure", Sources: []ontology.SourceHandle{source}}
+		input := topiccontract.OrganizationInput{OperationKey: "completed-before-failure", Sources: []topiccontract.SourceHandle{source}}
 		original, err := service.Organize(context.Background(), f.team, input)
 		require.NoError(t, err)
-		var failed ontology.OrganizationReceipt
+		var failed topiccontract.OrganizationReceipt
 		require.NoError(t, f.store.withScope(context.Background(), f.team, true, func(tx *gorm.DB, fence scope) error {
 			var found bool
 			failed, found, err = organizationByKey(tx, fence, input.OperationKey, false)
@@ -212,7 +212,7 @@ func testOntologyOrganizationCompletedReceiptInvalidation(t *testing.T) {
 		failed.Result.FailureCode = "provider_unavailable"
 		failed.Result.Outcomes[0].Status = "failed"
 		failed.Result.Outcomes[0].Reason = failed.Result.FailureCode
-		_, err = f.store.CommitOrganization(context.Background(), f.team, failed, ontology.Publication{})
+		_, err = f.store.CommitOrganization(context.Background(), f.team, failed, topiccontract.Publication{})
 		require.NoError(t, err)
 		input.OperationKey = "reuse-older-success"
 		replay, err := service.Organize(context.Background(), f.team, input)
@@ -234,7 +234,7 @@ func testOntologyOrganizationCompletedReceiptInvalidation(t *testing.T) {
 		f := newOrganizationFixture(t)
 		source := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
 		service, calls := organizationFixtureService(t, f, nil, nil)
-		input := ontology.OrganizationInput{OperationKey: "before-withdrawal", Sources: []ontology.SourceHandle{source}}
+		input := topiccontract.OrganizationInput{OperationKey: "before-withdrawal", Sources: []topiccontract.SourceHandle{source}}
 		original, err := service.Organize(context.Background(), f.team, input)
 		require.NoError(t, err)
 		_, err = f.knowledge.RetractEvidence(f.actor(0, "member"), knowledge.RetractEvidenceInput{TeamID: f.team, OwnerProfileID: f.owners[0], EvidenceIDs: []string{source.ID}, Reason: "withdraw completed source", IdempotencyKey: "withdraw-completed", RequestHash: testHash("withdraw-completed")})
@@ -262,10 +262,10 @@ func testOntologyOrganizationCompletedReceiptInvalidation(t *testing.T) {
 		source := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
 		before := f.canonicalSnapshot(t)
 		service, calls := organizationFixtureService(t, f, nil, nil)
-		input := ontology.OrganizationInput{OperationKey: "before-definition", Sources: []ontology.SourceHandle{source}}
+		input := topiccontract.OrganizationInput{OperationKey: "before-definition", Sources: []topiccontract.SourceHandle{source}}
 		original, err := service.Organize(context.Background(), f.team, input)
 		require.NoError(t, err)
-		unrelated, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("unrelated-definition", original.Publication.Revision, ontology.Change{Record: testTopic("gardening")}))
+		unrelated, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("unrelated-definition", original.Publication.Revision, topiccontract.Change{Record: testTopic("gardening")}))
 		require.NoError(t, err)
 		input.OperationKey = "after-unrelated"
 		reused, err := service.Organize(context.Background(), f.team, input)
@@ -274,9 +274,9 @@ func testOntologyOrganizationCompletedReceiptInvalidation(t *testing.T) {
 		require.True(t, reused.Current)
 		require.Equal(t, original.AssessmentID, reused.AssessmentID)
 		require.Equal(t, int32(1), calls.Load())
-		page, err := f.store.ListRecords(context.Background(), f.team, ontology.Topic, "", 20)
+		page, err := f.store.ListRecords(context.Background(), f.team, topiccontract.Topic, "", 20)
 		require.NoError(t, err)
-		var topic ontology.Record
+		var topic topiccontract.Record
 		for _, view := range page.Records {
 			if view.Definition.Key == "postgresql" {
 				topic = view.Record
@@ -284,7 +284,7 @@ func testOntologyOrganizationCompletedReceiptInvalidation(t *testing.T) {
 		}
 		require.NotEmpty(t, topic.ID)
 		topic.Definition.Description = "PostgreSQL durable database storage"
-		_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("revised-definition", unrelated.Revision, ontology.Change{ExpectedVersion: topic.Version, Record: topic}))
+		_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("revised-definition", unrelated.Revision, topiccontract.Change{ExpectedVersion: topic.Version, Record: topic}))
 		require.NoError(t, err)
 		historical, err := service.Organize(context.Background(), f.team, input)
 		require.NoError(t, err)
@@ -302,7 +302,7 @@ func testOntologyOrganizationCompletedReceiptInvalidation(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, assignment.Current)
 		require.Equal(t, topic.ID, assignment.Assignment.DefinitionID)
-		require.Contains(t, assignment.Dependencies, ontology.RevisionRef{ID: topic.ID, Version: 2})
+		require.Contains(t, assignment.Dependencies, topiccontract.RevisionRef{ID: topic.ID, Version: 2})
 		require.Equal(t, before, f.canonicalSnapshot(t))
 	})
 	t.Run("new candidate after ambiguous receipt", func(t *testing.T) {
@@ -314,13 +314,13 @@ func testOntologyOrganizationCompletedReceiptInvalidation(t *testing.T) {
 				ambiguousClassification(request, response)
 			}
 		})
-		input := ontology.OrganizationInput{OperationKey: "before-candidate", Sources: []ontology.SourceHandle{source}}
+		input := topiccontract.OrganizationInput{OperationKey: "before-candidate", Sources: []topiccontract.SourceHandle{source}}
 		original, err := service.Organize(context.Background(), f.team, input)
 		require.NoError(t, err)
 		require.Nil(t, original.Publication)
 		require.Equal(t, "ambiguous", original.Outcomes[0].Status)
 		topic := testTopic("postgresql")
-		_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("new-candidate", 0, ontology.Change{Record: topic}))
+		_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("new-candidate", 0, topiccontract.Change{Record: topic}))
 		require.NoError(t, err)
 		historical, err := service.Organize(context.Background(), f.team, input)
 		require.NoError(t, err)
@@ -348,13 +348,13 @@ func testOntologyOrganizationCompletedReceiptInvalidation(t *testing.T) {
 		before := f.canonicalSnapshot(t)
 		limits := assessor.DefaultSemanticAssessmentLimits()
 		service, firstCalls := organizationFixtureService(t, f, nil, ambiguousClassification)
-		input := ontology.OrganizationInput{OperationKey: "identity-original", Sources: []ontology.SourceHandle{source}}
+		input := topiccontract.OrganizationInput{OperationKey: "identity-original", Sources: []topiccontract.SourceHandle{source}}
 		original, err := service.Organize(context.Background(), f.team, input)
 		require.NoError(t, err)
 		limits.MaxOutputTokens--
 		changed, changedCalls := organizationFixtureServiceWithIdentity(t, f, nil, ambiguousClassification, "new-model", limits)
 		_, err = changed.Organize(context.Background(), f.team, input)
-		require.ErrorIs(t, err, ontology.ErrConflict)
+		require.ErrorIs(t, err, topiccontract.ErrConflict)
 		input.OperationKey = "identity-changed"
 		result, err := changed.Organize(context.Background(), f.team, input)
 		require.NoError(t, err)
@@ -387,11 +387,11 @@ func testOntologyOrganizationCancellationReceipt(t *testing.T) {
 				<-release
 			}
 		})
-		input := ontology.OrganizationInput{OperationKey: "concurrent-cancelled-success", Sources: []ontology.SourceHandle{source}}
+		input := topiccontract.OrganizationInput{OperationKey: "concurrent-cancelled-success", Sources: []topiccontract.SourceHandle{source}}
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		type completion struct {
-			result ontology.OrganizationResult
+			result topiccontract.OrganizationResult
 			err    error
 		}
 		done := make(chan completion, 1)
@@ -454,9 +454,9 @@ func testOntologyOrganizationCancellationReceipt(t *testing.T) {
 				ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
 			}
 			defer cancel()
-			input := ontology.OrganizationInput{OperationKey: name, Sources: []ontology.SourceHandle{source}}
+			input := topiccontract.OrganizationInput{OperationKey: name, Sources: []topiccontract.SourceHandle{source}}
 			type completion struct {
-				result ontology.OrganizationResult
+				result topiccontract.OrganizationResult
 				err    error
 			}
 			done := make(chan completion, 1)

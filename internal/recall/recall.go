@@ -29,33 +29,33 @@ var ErrTopicUnavailable = recallcontract.ErrTopicUnavailable
 
 type RecallService = recallcontract.Service
 type RecallSearchRepository = recallcontract.SearchRepository
-type RecallOntologyConfigProvider interface {
+type TopicMaintenanceConfigProvider interface {
 	TopicMaintenanceRuntimeConfig(context.Context) (domain.TopicMaintenanceConfig, error)
 }
 type RecallDependencies struct {
-	ExpansionEnabled      bool
-	DisableQueryEmbedding bool
-	Decisions             modelprovider.DecisionProvider
-	DecisionSettings      modelprovider.DecisionSettings
-	Logger                observability.LogProvider
-	DiagnosticProtector   observability.DiagnosticProtector
-	Search                RecallSearchRepository
-	Provider              embeddingcontract.EmbeddingProviderInterface
-	OntologyConfig        RecallOntologyConfigProvider
-	Metrics               observability.DiscoverabilityMetrics
+	ExpansionEnabled       bool
+	DisableQueryEmbedding  bool
+	Decisions              modelprovider.DecisionProvider
+	DecisionSettings       modelprovider.DecisionSettings
+	Logger                 observability.LogProvider
+	DiagnosticProtector    observability.DiagnosticProtector
+	Search                 RecallSearchRepository
+	Provider               embeddingcontract.EmbeddingProviderInterface
+	TopicMaintenanceConfig TopicMaintenanceConfigProvider
+	Metrics                observability.DiscoverabilityMetrics
 }
 type recallService struct {
-	expansionEnabled      bool
-	disableQueryEmbedding bool
-	decisions             modelprovider.DecisionProvider
-	decisionSettings      modelprovider.DecisionSettings
-	logger                observability.LogProvider
-	diagnosticProtector   observability.DiagnosticProtector
-	search                RecallSearchRepository
-	retrieval             *Retrieval
-	provider              embeddingcontract.EmbeddingProviderInterface
-	ontologyConfig        RecallOntologyConfigProvider
-	metrics               observability.DiscoverabilityMetrics
+	expansionEnabled       bool
+	disableQueryEmbedding  bool
+	decisions              modelprovider.DecisionProvider
+	decisionSettings       modelprovider.DecisionSettings
+	logger                 observability.LogProvider
+	diagnosticProtector    observability.DiagnosticProtector
+	search                 RecallSearchRepository
+	retrieval              *Retrieval
+	provider               embeddingcontract.EmbeddingProviderInterface
+	topicMaintenanceConfig TopicMaintenanceConfigProvider
+	metrics                observability.DiscoverabilityMetrics
 }
 
 func NewRecallService(deps RecallDependencies) RecallService {
@@ -64,7 +64,7 @@ func NewRecallService(deps RecallDependencies) RecallService {
 		metrics = observability.NoopDiscoverabilityMetrics()
 	}
 	return &recallService{expansionEnabled: deps.ExpansionEnabled, disableQueryEmbedding: deps.DisableQueryEmbedding, decisions: deps.Decisions, decisionSettings: deps.DecisionSettings, logger: deps.Logger, diagnosticProtector: deps.DiagnosticProtector, search: deps.Search,
-		retrieval: &Retrieval{repository: deps.Search, decisions: deps.Decisions, logger: deps.Logger, protector: deps.DiagnosticProtector}, provider: deps.Provider, ontologyConfig: deps.OntologyConfig, metrics: metrics}
+		retrieval: &Retrieval{repository: deps.Search, decisions: deps.Decisions, logger: deps.Logger, protector: deps.DiagnosticProtector}, provider: deps.Provider, topicMaintenanceConfig: deps.TopicMaintenanceConfig, metrics: metrics}
 }
 
 type RecallRequest = recallcontract.Request
@@ -137,8 +137,8 @@ func (s *recallService) recallWithExecution(ctx context.Context, req recallExecu
 	}
 	if !req.organizationReady {
 		req.organizationReady = true
-		if s.ontologyConfig != nil {
-			config, configErr := s.ontologyConfig.TopicMaintenanceRuntimeConfig(ctx)
+		if s.topicMaintenanceConfig != nil {
+			config, configErr := s.topicMaintenanceConfig.TopicMaintenanceRuntimeConfig(ctx)
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}

@@ -113,14 +113,14 @@ func testRunnerOffCampaign(t *testing.T, scenario string) {
 	require.NotContains(t, logs.String(), f.native.ControlToken)
 	switch scenario {
 	case "active ontology at restore":
-		require.ErrorContains(t, err, "unexpected native ontology state")
+		require.ErrorContains(t, err, "unexpected native Topic maintenance state")
 		require.Zero(t, calls.Load())
 		require.Zero(t, report.CompletedAnswers)
 		require.False(t, report.Complete)
 		require.Contains(t, logs.String(), `"kind":"seed_verification_failed"`)
 		return
 	case "ontology changed during scoring":
-		require.ErrorContains(t, err, "unexpected native ontology state")
+		require.ErrorContains(t, err, "unexpected native Topic maintenance state")
 		require.False(t, report.ModelVerified)
 		require.False(t, report.Complete)
 	case "terminal capture failed":

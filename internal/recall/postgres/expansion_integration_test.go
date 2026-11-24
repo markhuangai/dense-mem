@@ -13,7 +13,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,7 +26,7 @@ func testScopedEvidenceExpansion(t *testing.T) {
 		f.evidence(t, 2, fmt.Sprintf("Hyperthermia also occurs in unrelated work %d.", i), nil)
 	}
 	topicPeer := f.evidence(t, 2, "Independent trial observation.", nil)
-	def := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "clinical trial", Label: "Clinical trial"}}
+	def := topic.Record{ID: uuid.NewString(), Kind: topic.Topic, Definition: &topic.Definition{Key: "clinical trial", Label: "Clinical trial"}}
 	f.publication(t, def, f.assignment(t, def.ID, seed), f.assignment(t, def.ID, topicPeer))
 	private := &domain.Credential{
 		ID: uuid.New(), TeamID: uuid.MustParse(f.team), Name: "private bridge fixture",

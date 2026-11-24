@@ -12,7 +12,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -43,10 +43,10 @@ func TestOntologyMaintenanceRevalidationDiscoveryIsolation(t *testing.T) {
 			return nil
 		}))
 	}
-	require.ErrorIs(t, f.store.discoverMaintenanceError(other.actor(0, "manager"), x.turn, 100), ontology.ErrUnauthorized)
+	require.ErrorIs(t, f.store.discoverMaintenanceError(other.actor(0, "manager"), x.turn, 100), topiccontract.ErrUnauthorized)
 	wrong := x.turn
 	wrong.TeamID, wrong.SpaceID, wrong.Generation = other.team, other.space, other.generation
-	require.ErrorIs(t, f.store.discoverMaintenanceError(context.Background(), wrong, 100), ontology.ErrLeaseLost)
+	require.ErrorIs(t, f.store.discoverMaintenanceError(context.Background(), wrong, 100), topiccontract.ErrLeaseLost)
 	require.Equal(t, marker, discoveryMarkerState(t, x))
 	var leaked int
 	require.NoError(t, f.rls.WithTeamProfileTx(other.actor(0, "member"), f.app, other.team, other.owners[0], func(tx *gorm.DB) error {
@@ -61,7 +61,7 @@ func TestOntologyMaintenanceRevalidationDiscoveryIsolation(t *testing.T) {
 	require.Zero(t, first.Counts.FreshnessInvocations)
 	afterFirst := discoveryMarkerState(t, x)
 	require.EqualValues(t, 3, afterFirst["markers"])
-	require.Equal(t, ontology.SourceKey(ordered[0]), afterFirst["cursor"])
+	require.Equal(t, topiccontract.SourceKey(ordered[0]), afterFirst["cursor"])
 	second, err := store.DiscoverMaintenance(ctx, x.turn, 1)
 	require.NoError(t, err)
 	require.Equal(t, 1, second.Counts.RefreshedSources)

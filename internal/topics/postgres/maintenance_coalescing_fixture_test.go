@@ -8,16 +8,16 @@ import (
 	"strings"
 	"testing"
 
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
-func coalescingDefinitions(t *testing.T, x *discoveryFixture, count int, shape string) []ontology.Record {
+func coalescingDefinitions(t *testing.T, x *discoveryFixture, count int, shape string) []topic.Record {
 	t.Helper()
 	before := x.queue(t)
-	definitions := make([]ontology.Record, count)
-	changes := make([]ontology.Change, count)
+	definitions := make([]topic.Record, count)
+	changes := make([]topic.Change, count)
 	for i := range definitions {
 		definitions[i] = testTopic(fmt.Sprintf("coalescing-bucket-%02d", i))
 		switch shape {
@@ -33,7 +33,7 @@ func coalescingDefinitions(t *testing.T, x *discoveryFixture, count int, shape s
 		default:
 			t.Fatalf("unknown marker shape %s", shape)
 		}
-		changes[i] = ontology.Change{Record: definitions[i]}
+		changes[i] = topic.Change{Record: definitions[i]}
 	}
 	revalidationPublish(t, x.f, changes...)
 	for i, definition := range definitions {
@@ -45,7 +45,7 @@ func coalescingDefinitions(t *testing.T, x *discoveryFixture, count int, shape s
 			expected = nil
 		}
 		require.NoError(t, x.f.store.withScope(context.Background(), x.f.team, false, func(tx *gorm.DB, fence scope) error {
-			handles, err := maintenanceMarkerSources(tx, fence, maintenanceMarker{AnchorKind: "topic_record_heads", AnchorID: definition.ID, TargetKind: "definition", TargetID: definition.ID}, ontology.MaintenancePageSize+1)
+			handles, err := maintenanceMarkerSources(tx, fence, maintenanceMarker{AnchorKind: "topic_record_heads", AnchorID: definition.ID, TargetKind: "definition", TargetID: definition.ID}, topic.MaintenancePageSize+1)
 			require.NoError(t, err)
 			require.ElementsMatch(t, expected, handles, "effective marker selection must match the declared workload")
 			return nil
@@ -64,7 +64,7 @@ func coalescingDefinitions(t *testing.T, x *discoveryFixture, count int, shape s
 	return definitions
 }
 
-func enqueueCoalescingMarkers(t *testing.T, x *discoveryFixture, definitions []ontology.Record) {
+func enqueueCoalescingMarkers(t *testing.T, x *discoveryFixture, definitions []topic.Record) {
 	t.Helper()
 	require.NoError(t, x.f.rls.WithTeamTx(context.Background(), x.f.app, x.f.team, func(tx *gorm.DB) error {
 		for _, definition := range definitions {
@@ -100,7 +100,7 @@ func coalescingMarkerCursors(t *testing.T, x *discoveryFixture) map[string]strin
 	return cursors
 }
 
-func coalescingPage(t *testing.T, x *discoveryFixture, limit int) ontology.MaintenanceDiscoveryResult {
+func coalescingPage(t *testing.T, x *discoveryFixture, limit int) topic.MaintenanceDiscoveryResult {
 	t.Helper()
 	result, err := x.f.store.DiscoverMaintenance(context.Background(), x.turn, limit)
 	require.NoError(t, err)

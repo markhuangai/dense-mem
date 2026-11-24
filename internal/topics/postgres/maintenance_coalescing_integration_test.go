@@ -6,7 +6,7 @@ import (
 	"context"
 	"testing"
 
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,7 +45,7 @@ func TestOntologyMaintenanceCoalescingCursorAndGroupBounds(t *testing.T) {
 	canonical, history, queue := schedulerCanonical(t, x.f), assignmentHistory(t, x.f), x.queue(t)
 	enqueueCoalescingMarkers(t, x, definitions)
 	ordered := discoverySortedSources(x.sources)
-	ahead := ontology.SourceKey(ordered[49])
+	ahead := topic.SourceKey(ordered[49])
 	require.NoError(t, x.f.admin.Exec(`UPDATE topic_maintenance_markers SET cursor=? WHERE team_id=?::uuid AND anchor_id=?`, ahead, x.f.team, definitions[0].ID).Error)
 	first := coalescingPage(t, x, 25)
 	require.Equal(t, 25, first.Counts.RefreshedSources)
@@ -54,7 +54,7 @@ func TestOntologyMaintenanceCoalescingCursorAndGroupBounds(t *testing.T) {
 	require.Len(t, cursors, 21)
 	require.Equal(t, ahead, cursors[definitions[0].ID], "a marker beyond the covered prefix cannot move backward")
 	for _, definition := range definitions[1:20] {
-		require.Equal(t, ontology.SourceKey(ordered[24]), cursors[definition.ID])
+		require.Equal(t, topic.SourceKey(ordered[24]), cursors[definition.ID])
 	}
 	require.Empty(t, cursors[definitions[20].ID], "the twenty-first marker is outside this group")
 	restarted := NewStore(x.f.app, x.f.rls)

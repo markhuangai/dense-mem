@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 )
 
@@ -25,11 +25,11 @@ const communityWorkReady = `work.ready_at<=statement_timestamp() AND NOT EXISTS(
 	AND batch.community_topic_id=work.topic_id AND batch.status='running' AND batch.lease_until>statement_timestamp()
 )`
 
-func (s *Store) ClaimCommunity(ctx context.Context, turn ontology.MaintenanceTurn, windowID string, now time.Time) (*ontology.CommunityInput, *ontology.MaintenanceClaim, error) {
-	var input *ontology.CommunityInput
+func (s *Store) ClaimCommunity(ctx context.Context, turn topic.MaintenanceTurn, windowID string, now time.Time) (*topic.CommunityInput, *topic.MaintenanceClaim, error) {
+	var input *topic.CommunityInput
 	err := s.withScope(ctx, turn.TeamID, true, func(tx *gorm.DB, fence scope) error {
 		if fence.SpaceID != turn.SpaceID || fence.Generation != turn.Generation {
-			return ontology.ErrLeaseLost
+			return topic.ErrLeaseLost
 		}
 		if err := checkMaintenanceTurn(tx, turn); err != nil {
 			return err
@@ -61,12 +61,12 @@ func (s *Store) ClaimCommunity(ctx context.Context, turn ontology.MaintenanceTur
 		if err != nil {
 			return err
 		}
-		input = &ontology.CommunityInput{Topic: communityCandidate(record), Current: record.Definition.ParentID, WorkID: workID}
+		input = &topic.CommunityInput{Topic: communityCandidate(record), Current: record.Definition.ParentID, WorkID: workID}
 		if input.Current == "" {
 			input.Current = priorParent
 		}
 		text := record.Definition.Label + " " + record.Definition.Description
-		words := []ontology.SourceSnapshot{{State: map[string]string{"content": text}}}
+		words := []topic.SourceSnapshot{{State: map[string]string{"content": text}}}
 		var forced []string
 		if input.Current != "" {
 			forced = []string{input.Current}
@@ -85,9 +85,9 @@ func (s *Store) ClaimCommunity(ctx context.Context, turn ontology.MaintenanceTur
 	if err != nil || input == nil {
 		return nil, nil, err
 	}
-	claim := &ontology.MaintenanceClaim{ID: uuid.NewString(), WindowID: windowID, TeamID: turn.TeamID,
+	claim := &topic.MaintenanceClaim{ID: uuid.NewString(), WindowID: windowID, TeamID: turn.TeamID,
 		SpaceID: turn.SpaceID, Generation: turn.Generation, LeaseToken: turn.LeaseToken, LeaseUntil: turn.LeaseUntil,
-		Sources: []ontology.SourceHandle{}, Revisions: map[string]int64{input.Topic.ID: input.Topic.Version}}
+		Sources: []topic.SourceHandle{}, Revisions: map[string]int64{input.Topic.ID: input.Topic.Version}}
 	claim, err = s.admitMaintenanceBatch(ctx, turn, claim, input, now)
 	if err != nil || claim == nil {
 		return nil, nil, err
@@ -95,11 +95,11 @@ func (s *Store) ClaimCommunity(ctx context.Context, turn ontology.MaintenanceTur
 	return input, claim, nil
 }
 
-func communityCandidate(record ontology.Record) ontology.CommunityCandidate {
-	return ontology.CommunityCandidate{ID: record.ID, Version: record.Version, Name: record.Definition.Label, Description: record.Definition.Description}
+func communityCandidate(record topic.Record) topic.CommunityCandidate {
+	return topic.CommunityCandidate{ID: record.ID, Version: record.Version, Name: record.Definition.Label, Description: record.Definition.Description}
 }
 
-func (s *Store) CompleteCommunity(ctx context.Context, claim ontology.MaintenanceClaim, input ontology.CommunityInput, outcome ontology.CommunityOutcome, failure string, now time.Time) error {
+func (s *Store) CompleteCommunity(ctx context.Context, claim topic.MaintenanceClaim, input topic.CommunityInput, outcome topic.CommunityOutcome, failure string, now time.Time) error {
 	return s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
 		if _, err := maintenanceState(tx); err != nil {
 			return err
@@ -109,12 +109,12 @@ func (s *Store) CompleteCommunity(ctx context.Context, claim ontology.Maintenanc
 			return err
 		}
 		if fence.SpaceID != claim.SpaceID || fence.Generation != claim.Generation {
-			return ontology.ErrLeaseLost
+			return topic.ErrLeaseLost
 		}
 		if claim.Revisions[input.Topic.ID] != input.Topic.Version {
-			return ontology.ErrInvalid
+			return topic.ErrInvalid
 		}
-		if err := maintenancePublicationFence(ontology.WithMaintenanceClaim(ctx, claim), tx, fence); err != nil {
+		if err := maintenancePublicationFence(topic.WithMaintenanceClaim(ctx, claim), tx, fence); err != nil {
 			return err
 		}
 		// Serialize hierarchy changes with catalog publication and rollback.
@@ -134,7 +134,7 @@ func (s *Store) CompleteCommunity(ctx context.Context, claim ontology.Maintenanc
 				}
 			}
 			if versions[outcome.ParentID] == 0 || outcome.ParentID == input.Topic.ID {
-				return ontology.ErrInvalid
+				return topic.ErrInvalid
 			}
 			parentVersion = versions[outcome.ParentID]
 			ids = append(ids, outcome.ParentID)
@@ -154,7 +154,7 @@ func (s *Store) CompleteCommunity(ctx context.Context, claim ontology.Maintenanc
 			}
 			if versions[id] != version {
 				rows.Close()
-				return ontology.ErrSourceStale
+				return topic.ErrSourceStale
 			}
 			delete(versions, id)
 		}
@@ -164,7 +164,7 @@ func (s *Store) CompleteCommunity(ctx context.Context, claim ontology.Maintenanc
 			return err
 		}
 		if len(versions) != 0 {
-			return ontology.ErrSourceStale
+			return topic.ErrSourceStale
 		}
 		if outcome.ParentID != "" {
 			edge := communityEdge{topicID: input.Topic.ID, parentID: outcome.ParentID}
@@ -173,7 +173,7 @@ func (s *Store) CompleteCommunity(ctx context.Context, claim ontology.Maintenanc
 				return err
 			}
 			if conflict != nil {
-				return ontology.ErrConflict
+				return topic.ErrConflict
 			}
 		}
 		settled := outcome.Status == "placed" || outcome.Status == "standalone"
@@ -188,7 +188,7 @@ func (s *Store) CompleteCommunity(ctx context.Context, claim ontology.Maintenanc
 			return updated.Error
 		}
 		if updated.RowsAffected != 1 {
-			return ontology.ErrSourceStale
+			return topic.ErrSourceStale
 		}
 		if err := tx.Exec(`INSERT INTO community_placement_outcomes(team_id,shared_space_id,space_generation,topic_id,topic_version,input_hash,method,status,parent_topic_id,parent_topic_version,operation_id)
 			VALUES(?::uuid,?::uuid,?,?::uuid,?,?,?,?,NULLIF(?,'')::uuid,?::bigint,?::uuid)`, fence.TeamID, fence.SpaceID, fence.Generation,
@@ -196,7 +196,7 @@ func (s *Store) CompleteCommunity(ctx context.Context, claim ontology.Maintenanc
 			return err
 		}
 		phase := "batch_fence"
-		if err := completeMaintenanceBatch(tx, claim, ontology.OrganizationResult{}, failure, now, &phase); err != nil {
+		if err := completeMaintenanceBatch(tx, claim, topic.OrganizationResult{}, failure, now, &phase); err != nil {
 			return err
 		}
 		if failure == "" {
@@ -235,18 +235,18 @@ func conflictingCommunityEdge(tx *gorm.DB, fence scope, edges []communityEdge) (
 		AND chain.depth<=?
 	) SELECT COALESCE(min(ordinal),0) FROM chain WHERE id=topic_id OR (id IS NOT NULL AND depth>?)`,
 		pq.Array(topics), pq.Array(parents), fence.TeamID, fence.SpaceID, fence.Generation,
-		ontology.MaxParentDepth, ontology.MaxParentDepth).Row().Scan(&ordinal)
+		topic.MaxParentDepth, topic.MaxParentDepth).Row().Scan(&ordinal)
 	if err != nil || ordinal == 0 {
 		return nil, err
 	}
 	return &edges[ordinal-1], nil
 }
 
-func attachCommunityPlacement(tx *gorm.DB, fence scope, views []ontology.RecordView) error {
+func attachCommunityPlacement(tx *gorm.DB, fence scope, views []topic.RecordView) error {
 	var ids []string
 	positions := make(map[string]int, len(views))
 	for i, view := range views {
-		if view.Kind == ontology.Topic && view.Current && !view.Retired {
+		if view.Kind == topic.Topic && view.Current && !view.Retired {
 			ids = append(ids, view.ID)
 			positions[view.ID] = i
 		}

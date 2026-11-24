@@ -11,7 +11,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/settings"
 	settingspostgres "github.com/markhuangai/dense-mem/internal/settings/postgres"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -30,7 +30,7 @@ func maintenanceOtherTeam(t *testing.T, parent *ontologyFixture) *ontologyFixtur
 	return f
 }
 
-func maintenanceEvidence(t *testing.T, f *ontologyFixture, text string) ontology.SourceHandle {
+func maintenanceEvidence(t *testing.T, f *ontologyFixture, text string) topic.SourceHandle {
 	t.Helper()
 	return f.organizationEvidence(t, 0, text, nil)
 }
@@ -45,7 +45,7 @@ func maintenanceSettings(t *testing.T, f *ontologyFixture) *settings.AppConfigSe
 	return service
 }
 
-func maintenanceWindow(t *testing.T, f *ontologyFixture, config *settings.AppConfigServiceImpl) *ontology.MaintenanceWindow {
+func maintenanceWindow(t *testing.T, f *ontologyFixture, config *settings.AppConfigServiceImpl) *topic.MaintenanceWindow {
 	t.Helper()
 	policy, err := config.TopicMaintenanceRuntimeConfig(context.Background())
 	require.NoError(t, err)
@@ -55,13 +55,13 @@ func maintenanceWindow(t *testing.T, f *ontologyFixture, config *settings.AppCon
 	return window
 }
 
-func maintenanceClaim(t *testing.T, f *ontologyFixture, window *ontology.MaintenanceWindow) (*ontology.MaintenanceTurn, *ontology.MaintenanceClaim) {
+func maintenanceClaim(t *testing.T, f *ontologyFixture, window *topic.MaintenanceWindow) (*topic.MaintenanceTurn, *topic.MaintenanceClaim) {
 	t.Helper()
 	turn, err := f.store.ClaimMaintenanceTurn(context.Background(), window.ID, time.Now().UTC(), time.Minute)
 	require.NoError(t, err)
 	require.NotNil(t, turn)
 	for range 8 {
-		require.NoError(t, f.store.discoverMaintenanceError(context.Background(), *turn, ontology.MaintenancePageSize))
+		require.NoError(t, f.store.discoverMaintenanceError(context.Background(), *turn, topic.MaintenancePageSize))
 	}
 	claim, err := f.store.ClaimMaintenanceBatch(context.Background(), *turn, window.ID, time.Now().UTC())
 	require.NoError(t, err)
@@ -69,12 +69,12 @@ func maintenanceClaim(t *testing.T, f *ontologyFixture, window *ontology.Mainten
 	return turn, claim
 }
 
-func (s *Store) discoverMaintenanceError(ctx context.Context, turn ontology.MaintenanceTurn, limit int) error {
+func (s *Store) discoverMaintenanceError(ctx context.Context, turn topic.MaintenanceTurn, limit int) error {
 	_, err := s.DiscoverMaintenance(ctx, turn, limit)
 	return err
 }
 
-func appendMaintenanceOccurrence(tx *gorm.DB, f *ontologyFixture, source ontology.SourceHandle) error {
+func appendMaintenanceOccurrence(tx *gorm.DB, f *ontologyFixture, source topic.SourceHandle) error {
 	ingestID := uuid.NewString()
 	if err := tx.Exec(`INSERT INTO knowledge_ingests
  SELECT (jsonb_populate_record(NULL::knowledge_ingests,to_jsonb(ingest)||jsonb_build_object('ingest_id',?::uuid,'idempotency_key',?::text))).*

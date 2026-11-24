@@ -100,7 +100,7 @@ func TestOntologySemanticPublicationRealLoggerLevelsAndProtection(t *testing.T) 
 				root := observability.NewWithProtector(level, protector)
 				require.NoError(t, root.AttachSink(sink))
 				root.ContextSlog().LogAttrs(ctx, observability.LevelTrace, "semantic-trace-filter")
-				ctx, observation, finish := contract.ObservePublication(ctx, ontologyPublicationDiagnostics(root.ContextSlog(), protector), team.String(), "manager", input)
+				ctx, observation, finish := contract.ObservePublication(ctx, topicPublicationDiagnostics(root.ContextSlog(), protector), team.String(), "manager", input)
 				_ = ctx
 				observation.Rejection = &contract.PublicationRejection{Cause: contract.ErrInvalid, Reason: "hierarchy_cycle", RecordID: uuid.NewString()}
 				finish(observation.Rejection)
@@ -144,7 +144,7 @@ func TestOntologySemanticPublicationExhaustionIsExplicit(t *testing.T) {
 	console, _ := captureOntologyPublicationConsole(t, func() {
 		protector := observability.NewCredentialProtector()
 		root := observability.NewWithProtector(slog.LevelDebug, protector)
-		_, _, finish := contract.ObservePublication(context.Background(), ontologyPublicationDiagnostics(root.ContextSlog(), protector), uuid.NewString(), "manager", strings.Repeat("x", contract.MaxPublicationBytes+1))
+		_, _, finish := contract.ObservePublication(context.Background(), topicPublicationDiagnostics(root.ContextSlog(), protector), uuid.NewString(), "manager", strings.Repeat("x", contract.MaxPublicationBytes+1))
 		finish(contract.ErrInvalid)
 	})
 	require.Contains(t, console, "publication_bound")
@@ -167,7 +167,7 @@ func TestOntologySemanticManagerRealLoggerCommandsAndProtection(t *testing.T) {
 					protector := observability.NewCredentialProtector(secret)
 					root := observability.NewWithProtector(level, protector)
 					require.NoError(t, root.AttachSink(sink))
-					_, diagnostic, finish := contract.ObservePublication(ctx, ontologyPublicationDiagnostics(root.ContextSlog(), protector), team.String(), action, input)
+					_, diagnostic, finish := contract.ObservePublication(ctx, topicPublicationDiagnostics(root.ContextSlog(), protector), team.String(), action, input)
 					diagnostic.Management, diagnostic.DraftID = true, draftID
 					diagnostic.Draft = &contract.ManagementDraft{ID: draftID, Version: 2, BaseRevision: 2, State: "open", Edits: input.Edits}
 					switch action {

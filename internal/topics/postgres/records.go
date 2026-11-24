@@ -11,13 +11,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 )
 
-const maxValidationRecords = ontology.MaxDependencyRecords
+const maxValidationRecords = topic.MaxDependencyRecords
 
-func decodeRecord(body []byte) (ontology.Record, error) {
+func decodeRecord(body []byte) (topic.Record, error) {
 	return newStoredRecordDecoder().decode(body)
 }
 
@@ -33,24 +33,24 @@ func newStoredRecordDecoder() *storedRecordDecoder {
 	return &storedRecordDecoder{reader: reader, decoder: decoder}
 }
 
-func (d *storedRecordDecoder) decode(body []byte) (ontology.Record, error) {
-	var record ontology.Record
+func (d *storedRecordDecoder) decode(body []byte) (topic.Record, error) {
+	var record topic.Record
 	if len(body) > 65536 {
-		return record, fmt.Errorf("ontology: stored record exceeds byte bound")
+		return record, fmt.Errorf("topics: stored record exceeds byte bound")
 	}
 	// JSONB has already normalized duplicate keys in stored record bodies.
 	d.reader.Reset(body)
 	if err := d.decoder.Decode(&record); err != nil {
-		return record, fmt.Errorf("ontology: decode stored record: %w", err)
+		return record, fmt.Errorf("topics: decode stored record: %w", err)
 	}
 	trailing, err := io.ReadAll(d.decoder.Buffered())
 	if err != nil {
-		return record, fmt.Errorf("ontology: decode stored record: %w", err)
+		return record, fmt.Errorf("topics: decode stored record: %w", err)
 	}
 	if len(bytes.Trim(trailing, " \t\r\n")) != 0 || len(bytes.Trim(body[len(body)-d.reader.Len():], " \t\r\n")) != 0 {
-		return record, fmt.Errorf("ontology: stored body must contain one JSON record")
+		return record, fmt.Errorf("topics: stored body must contain one JSON record")
 	}
-	return record, ontology.ValidateRecord(record)
+	return record, topic.ValidateRecord(record)
 }
 
 func catalogRevision(tx *gorm.DB, fence scope) (int64, error) {
@@ -66,7 +66,7 @@ func catalogRevision(tx *gorm.DB, fence scope) (int64, error) {
 	return revision, err
 }
 
-func loadHeads(tx *gorm.DB, fence scope, ids, names []string) (map[string]ontology.Record, error) {
+func loadHeads(tx *gorm.DB, fence scope, ids, names []string) (map[string]topic.Record, error) {
 	rows, err := tx.Raw(`SELECT revision.body
 		FROM topic_record_heads AS head JOIN topic_revision_records AS revision
 		  USING (team_id,shared_space_id,space_generation,record_id,version)
@@ -78,7 +78,7 @@ func loadHeads(tx *gorm.DB, fence scope, ids, names []string) (map[string]ontolo
 		return nil, err
 	}
 	defer rows.Close()
-	result := map[string]ontology.Record{}
+	result := map[string]topic.Record{}
 	for rows.Next() {
 		var body []byte
 		if err := rows.Scan(&body); err != nil {
@@ -91,20 +91,20 @@ func loadHeads(tx *gorm.DB, fence scope, ids, names []string) (map[string]ontolo
 		result[record.ID] = record
 	}
 	if len(result) > maxValidationRecords {
-		return nil, fmt.Errorf("%w: affected validation context exceeds its bound", ontology.ErrContextBound)
+		return nil, fmt.Errorf("%w: affected validation context exceeds its bound", topic.ErrContextBound)
 	}
 	return result, rows.Err()
 }
 
-func validationCatalog(tx *gorm.DB, fence scope, records []ontology.Record, changedDefinitions []string) (map[string]ontology.Record, error) {
-	return validationCatalogWithLoader(tx, fence, records, changedDefinitions, func(ids, names []string) (map[string]ontology.Record, error) {
+func validationCatalog(tx *gorm.DB, fence scope, records []topic.Record, changedDefinitions []string) (map[string]topic.Record, error) {
+	return validationCatalogWithLoader(tx, fence, records, changedDefinitions, func(ids, names []string) (map[string]topic.Record, error) {
 		loaded, err := loadHeads(tx, fence, ids, names)
 		notePublicationDefinitions(tx, loaded)
 		return loaded, err
 	})
 }
 
-func validationCatalogWithLoader(tx *gorm.DB, fence scope, records []ontology.Record, changedDefinitions []string, load func([]string, []string) (map[string]ontology.Record, error)) (map[string]ontology.Record, error) {
+func validationCatalogWithLoader(tx *gorm.DB, fence scope, records []topic.Record, changedDefinitions []string, load func([]string, []string) (map[string]topic.Record, error)) (map[string]topic.Record, error) {
 	var ids, names []string
 	if len(changedDefinitions) > 0 {
 		var children []string
@@ -127,14 +127,14 @@ func validationCatalogWithLoader(tx *gorm.DB, fence scope, records []ontology.Re
 			return nil, err
 		}
 		if len(children) > maxValidationRecords {
-			return nil, fmt.Errorf("%w: affected children exceed validation bound", ontology.ErrContextBound)
+			return nil, fmt.Errorf("%w: affected children exceed validation bound", topic.ErrContextBound)
 		}
 		ids = append(ids, children...)
 	}
 	for _, record := range records {
 		ids = append(ids, record.ID)
-		ids = append(ids, ontology.ReferenceIDs(record)...)
-		names = append(names, ontology.DefinitionNames(record)...)
+		ids = append(ids, topic.ReferenceIDs(record)...)
+		names = append(names, topic.DefinitionNames(record)...)
 
 	}
 	catalog, err := load(ids, names)
@@ -146,14 +146,14 @@ func validationCatalogWithLoader(tx *gorm.DB, fence scope, records []ontology.Re
 		requested[id] = true
 	}
 
-	for depth := 0; depth <= ontology.MaxParentDepth; depth++ {
+	for depth := 0; depth <= topic.MaxParentDepth; depth++ {
 		pending := []string{}
-		candidates := append([]ontology.Record(nil), records...)
+		candidates := append([]topic.Record(nil), records...)
 		for _, record := range catalog {
 			candidates = append(candidates, record)
 		}
 		for _, record := range candidates {
-			for _, id := range ontology.ReferenceIDs(record) {
+			for _, id := range topic.ReferenceIDs(record) {
 				if !requested[id] {
 					requested[id] = true
 					pending = append(pending, id)
@@ -171,17 +171,17 @@ func validationCatalogWithLoader(tx *gorm.DB, fence scope, records []ontology.Re
 			catalog[id] = record
 		}
 		if len(catalog) > maxValidationRecords {
-			return nil, fmt.Errorf("%w: dependency context exceeds its bound", ontology.ErrContextBound)
+			return nil, fmt.Errorf("%w: dependency context exceeds its bound", topic.ErrContextBound)
 		}
 	}
-	return nil, &ontology.PublicationRejection{Cause: fmt.Errorf("%w: dependency depth exceeds its bound", ontology.ErrContextBound), Reason: "hierarchy_depth"}
+	return nil, &topic.PublicationRejection{Cause: fmt.Errorf("%w: dependency depth exceeds its bound", topic.ErrContextBound), Reason: "hierarchy_depth"}
 }
 
-func (s *Store) GetRecord(ctx context.Context, teamID, recordID string, version int64) (ontology.RecordView, error) {
+func (s *Store) GetRecord(ctx context.Context, teamID, recordID string, version int64) (topic.RecordView, error) {
 	if _, err := uuid.Parse(recordID); err != nil || version < 0 {
-		return ontology.RecordView{}, ontology.ErrInvalid
+		return topic.RecordView{}, topic.ErrInvalid
 	}
-	var result ontology.RecordView
+	var result topic.RecordView
 	err := s.withScope(ctx, teamID, true, func(tx *gorm.DB, fence scope) error {
 		var body []byte
 		err := tx.Raw(`SELECT revision.body FROM topic_revision_records AS revision
@@ -189,7 +189,7 @@ func (s *Store) GetRecord(ctx context.Context, teamID, recordID string, version 
 			WHERE revision.team_id=?::uuid AND revision.shared_space_id=?::uuid AND revision.space_generation=?
 			  AND revision.record_id=?::uuid AND revision.version=CASE WHEN ?=0 THEN head.version ELSE ? END`, fence.TeamID, fence.SpaceID, fence.Generation, recordID, version, version).Row().Scan(&body)
 		if errors.Is(err, sql.ErrNoRows) {
-			return ontology.ErrNotFound
+			return topic.ErrNotFound
 		}
 		if err != nil {
 			return err
@@ -202,7 +202,7 @@ func (s *Store) GetRecord(ctx context.Context, teamID, recordID string, version 
 		if err != nil || version != 0 {
 			return err
 		}
-		views := []ontology.RecordView{result}
+		views := []topic.RecordView{result}
 		if err := attachCommunityPlacement(tx, fence, views); err != nil {
 			return err
 		}
@@ -212,22 +212,22 @@ func (s *Store) GetRecord(ctx context.Context, teamID, recordID string, version 
 	return result, err
 }
 
-func (s *Store) currentView(tx *gorm.DB, fence scope, record ontology.Record) (ontology.RecordView, error) {
-	views, err := s.currentViews(tx, fence, []ontology.Record{record})
+func (s *Store) currentView(tx *gorm.DB, fence scope, record topic.Record) (topic.RecordView, error) {
+	views, err := s.currentViews(tx, fence, []topic.Record{record})
 	if err != nil {
-		return ontology.RecordView{Record: record}, err
+		return topic.RecordView{Record: record}, err
 	}
 	return views[0], nil
 }
 
-func (s *Store) organizationViews(tx *gorm.DB, fence scope, records []ontology.Record) ([]ontology.RecordView, error) {
-	var result []ontology.RecordView
+func (s *Store) organizationViews(tx *gorm.DB, fence scope, records []topic.Record) ([]topic.RecordView, error) {
+	var result []topic.RecordView
 	for len(records) > 0 {
-		count := min(ontology.MaxOrganizationSources, len(records))
+		count := min(topic.MaxOrganizationSources, len(records))
 		for {
 			views, err := s.currentViews(tx, fence, records[:count])
 			// Combined closures can exceed the bound while each record remains valid.
-			if errors.Is(err, ontology.ErrContextBound) && count > 1 {
+			if errors.Is(err, topic.ErrContextBound) && count > 1 {
 				count /= 2
 				continue
 			}
@@ -242,11 +242,11 @@ func (s *Store) organizationViews(tx *gorm.DB, fence scope, records []ontology.R
 	return result, nil
 }
 
-func (s *Store) currentViews(tx *gorm.DB, fence scope, records []ontology.Record) ([]ontology.RecordView, error) {
+func (s *Store) currentViews(tx *gorm.DB, fence scope, records []topic.Record) ([]topic.RecordView, error) {
 	if len(records) == 0 {
-		return []ontology.RecordView{}, nil
+		return []topic.RecordView{}, nil
 	}
-	load := func(ids, names []string) (map[string]ontology.Record, error) {
+	load := func(ids, names []string) (map[string]topic.Record, error) {
 		return loadHeads(tx, fence, ids, names)
 	}
 	if s.recallCache != nil {
@@ -255,7 +255,7 @@ func (s *Store) currentViews(tx *gorm.DB, fence scope, records []ontology.Record
 			s.recallCache.ids[record.ID] = true
 		}
 		// Discovery resolves name ambiguity before revision-bound hydration.
-		load = func(ids, _ []string) (map[string]ontology.Record, error) {
+		load = func(ids, _ []string) (map[string]topic.Record, error) {
 			return s.recallCache.loadHeads(tx, fence, ids)
 		}
 	}
@@ -263,8 +263,8 @@ func (s *Store) currentViews(tx *gorm.DB, fence scope, records []ontology.Record
 	if err != nil {
 		return nil, err
 	}
-	handles := []ontology.SourceHandle{}
-	seen := map[ontology.SourceHandle]bool{}
+	handles := []topic.SourceHandle{}
+	seen := map[topic.SourceHandle]bool{}
 	for _, record := range catalog {
 		for _, dependency := range record.Sources {
 			if !seen[dependency.SourceHandle] {
@@ -273,11 +273,11 @@ func (s *Store) currentViews(tx *gorm.DB, fence scope, records []ontology.Record
 			}
 		}
 	}
-	var snapshots map[ontology.SourceHandle]ontology.SourceSnapshot
+	var snapshots map[topic.SourceHandle]topic.SourceSnapshot
 	if s.recallCache == nil {
-		snapshots = make(map[ontology.SourceHandle]ontology.SourceSnapshot, len(handles))
-		for offset := 0; offset < len(handles); offset += ontology.MaxDependencyRecords {
-			batch, readErr := readSources(tx, fence, handles[offset:min(offset+ontology.MaxDependencyRecords, len(handles))])
+		snapshots = make(map[topic.SourceHandle]topic.SourceSnapshot, len(handles))
+		for offset := 0; offset < len(handles); offset += topic.MaxDependencyRecords {
+			batch, readErr := readSources(tx, fence, handles[offset:min(offset+topic.MaxDependencyRecords, len(handles))])
 			if readErr != nil {
 				return nil, readErr
 			}
@@ -291,8 +291,8 @@ func (s *Store) currentViews(tx *gorm.DB, fence scope, records []ontology.Record
 	if err != nil {
 		return nil, err
 	}
-	views := make([]ontology.RecordView, 0, len(records))
-	fingerprints := ontology.NewRecordFingerprints(snapshots, catalog)
+	views := make([]topic.RecordView, 0, len(records))
+	fingerprints := topic.NewRecordFingerprints(snapshots, catalog)
 	for _, record := range records {
 		view, err := currentRecordView(record, catalog, snapshots, fingerprints)
 		if err != nil {
@@ -303,8 +303,8 @@ func (s *Store) currentViews(tx *gorm.DB, fence scope, records []ontology.Record
 	return views, nil
 }
 
-func currentRecordView(record ontology.Record, catalog map[string]ontology.Record, available map[ontology.SourceHandle]ontology.SourceSnapshot, fingerprints *ontology.RecordFingerprints) (ontology.RecordView, error) {
-	view := ontology.RecordView{Record: record}
+func currentRecordView(record topic.Record, catalog map[string]topic.Record, available map[topic.SourceHandle]topic.SourceSnapshot, fingerprints *topic.RecordFingerprints) (topic.RecordView, error) {
+	view := topic.RecordView{Record: record}
 	if record.Retired {
 		view.StaleReason = "retired"
 		return view, nil
@@ -313,18 +313,18 @@ func currentRecordView(record ontology.Record, catalog map[string]ontology.Recor
 		view.StaleReason = "historical_revision"
 		return view, nil
 	}
-	dependencies, err := ontology.DependencyRecords([]ontology.Record{record}, catalog)
+	dependencies, err := topic.DependencyRecords([]topic.Record{record}, catalog)
 	if err != nil {
-		if errors.Is(err, ontology.ErrSourceStale) {
+		if errors.Is(err, topic.ErrSourceStale) {
 			view.StaleReason = "dependency_changed"
 			return view, nil
 		}
 		return view, err
 	}
-	sourceVersions := map[string]ontology.SourceHandle{}
+	sourceVersions := map[string]topic.SourceHandle{}
 	for _, dependency := range dependencies {
 		for _, source := range dependency.Sources {
-			key := ontology.SourceKey(source.SourceHandle)
+			key := topic.SourceKey(source.SourceHandle)
 			if previous, exists := sourceVersions[key]; exists && previous != source.SourceHandle {
 				view.StaleReason = "dependency_changed"
 				return view, nil
@@ -333,21 +333,21 @@ func currentRecordView(record ontology.Record, catalog map[string]ontology.Recor
 		}
 	}
 	if err := fingerprints.CheckSourceDependencies(record); err != nil {
-		if errors.Is(err, ontology.ErrSourceStale) {
+		if errors.Is(err, topic.ErrSourceStale) {
 			view.StaleReason = "source_changed"
 			return view, nil
 		}
 		return view, err
 	}
-	if err := fingerprints.CheckDependencies([]ontology.Record{record}); err != nil {
-		if errors.Is(err, ontology.ErrSourceStale) {
+	if err := fingerprints.CheckDependencies([]topic.Record{record}); err != nil {
+		if errors.Is(err, topic.ErrSourceStale) {
 			view.StaleReason = "dependency_changed"
 			return view, nil
 		}
 		return view, err
 	}
 	fingerprint, err := fingerprints.Fingerprint(record)
-	if errors.Is(err, ontology.ErrSourceStale) {
+	if errors.Is(err, topic.ErrSourceStale) {
 		view.StaleReason = "source_changed"
 		return view, nil
 	}
@@ -361,16 +361,16 @@ func currentRecordView(record ontology.Record, catalog map[string]ontology.Recor
 	return view, nil
 }
 
-func (s *Store) ListRecords(ctx context.Context, teamID string, kind ontology.Kind, after string, limit int) (ontology.Page, error) {
-	if limit < 1 || limit > ontology.MaxPageSize {
-		return ontology.Page{}, ontology.ErrInvalid
+func (s *Store) ListRecords(ctx context.Context, teamID string, kind topic.Kind, after string, limit int) (topic.Page, error) {
+	if limit < 1 || limit > topic.MaxPageSize {
+		return topic.Page{}, topic.ErrInvalid
 	}
 	if after != "" {
 		if _, err := uuid.Parse(after); err != nil {
-			return ontology.Page{}, ontology.ErrInvalid
+			return topic.Page{}, topic.ErrInvalid
 		}
 	}
-	result := ontology.Page{Records: []ontology.RecordView{}}
+	result := topic.Page{Records: []topic.RecordView{}}
 	err := s.withScope(ctx, teamID, true, func(tx *gorm.DB, fence scope) error {
 		rows, err := tx.Raw(`SELECT revision.body FROM topic_record_heads AS head
 			JOIN topic_revision_records AS revision USING (team_id,shared_space_id,space_generation,record_id,version)
@@ -380,7 +380,7 @@ func (s *Store) ListRecords(ctx context.Context, teamID string, kind ontology.Ki
 		if err != nil {
 			return err
 		}
-		var records []ontology.Record
+		var records []topic.Record
 		for rows.Next() {
 			var body []byte
 			if err := rows.Scan(&body); err != nil {
@@ -421,13 +421,13 @@ func (s *Store) ListRecords(ctx context.Context, teamID string, kind ontology.Ki
 	return result, err
 }
 
-func marshalRecord(record ontology.Record) ([]byte, error) {
+func marshalRecord(record topic.Record) ([]byte, error) {
 	body, err := json.Marshal(record)
 	if err != nil {
 		return nil, err
 	}
 	if len(body) > 65536 {
-		return nil, fmt.Errorf("%w: record exceeds storage bound", ontology.ErrInvalid)
+		return nil, fmt.Errorf("%w: record exceeds storage bound", topic.ErrInvalid)
 	}
 	return body, nil
 }

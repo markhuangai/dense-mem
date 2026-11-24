@@ -15,7 +15,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -24,30 +24,30 @@ func TestOntologyManagementEvidenceLookupBeyondFirstPage(t *testing.T) {
 	f := newOntologyFixture(t)
 	ctx := f.actor(0, "manager")
 	manager := managementService(f)
-	var handles []ontology.SourceHandle
+	var handles []topiccontract.SourceHandle
 	for index := range 51 {
 		handles = append(handles, f.organizationEvidence(t, 0, fmt.Sprintf("ordered_storage_%03d", index), nil))
 	}
-	slices.SortFunc(handles, func(a, b ontology.SourceHandle) int { return strings.Compare(a.ID, b.ID) })
+	slices.SortFunc(handles, func(a, b topiccontract.SourceHandle) int { return strings.Compare(a.ID, b.ID) })
 	last := handles[len(handles)-1]
 	before := f.canonicalSnapshot(t)
-	first, err := manager.Sources(ctx, ontology.EvidenceSource, "", "", 50)
+	first, err := manager.Sources(ctx, topiccontract.EvidenceSource, "", "", 50)
 	require.NoError(t, err)
 	require.Len(t, first.Sources, 50)
 	require.NotEmpty(t, first.NextCursor)
 	for _, source := range first.Sources {
 		require.NotEqual(t, last.ID, source.ID)
 	}
-	found, err := manager.Sources(ctx, ontology.EvidenceSource, "", last.ID, 50)
+	found, err := manager.Sources(ctx, topiccontract.EvidenceSource, "", last.ID, 50)
 	require.NoError(t, err)
 	require.Len(t, found.Sources, 1)
 	require.Equal(t, last, found.Sources[0].SourceHandle)
 	require.Empty(t, found.NextCursor)
-	filtered, err := manager.Sources(ctx, ontology.EvidenceSource, "", "ordered_storage", 50)
+	filtered, err := manager.Sources(ctx, topiccontract.EvidenceSource, "", "ordered_storage", 50)
 	require.NoError(t, err)
 	require.Equal(t, first, filtered)
 	foreign := maintenanceOtherTeam(t, f)
-	denied, err := manager.Sources(foreign.actor(0, "manager"), ontology.EvidenceSource, "", last.ID, 50)
+	denied, err := manager.Sources(foreign.actor(0, "manager"), topiccontract.EvidenceSource, "", last.ID, 50)
 	require.NoError(t, err)
 	require.Empty(t, denied.Sources)
 	require.Equal(t, before, f.canonicalSnapshot(t))
@@ -55,25 +55,25 @@ func TestOntologyManagementEvidenceLookupBeyondFirstPage(t *testing.T) {
 
 func TestOntologyManagementRetiredGroupSplitsIntoDistinctRecords(t *testing.T) {
 	f := newOrganizationFixture(t)
-	handles := []ontology.SourceHandle{}
+	handles := []topiccontract.SourceHandle{}
 	for index := range 6 {
 		handles = append(handles, f.organizationEvidence(t, 0, fmt.Sprintf("Atlas uses PostgreSQL. Occurrence %d.", index), nil))
 	}
-	slices.SortFunc(handles, func(a, b ontology.SourceHandle) int { return strings.Compare(a.ID, b.ID) })
+	slices.SortFunc(handles, func(a, b topiccontract.SourceHandle) int { return strings.Compare(a.ID, b.ID) })
 	before := f.canonicalSnapshot(t)
 	grouped, _ := organizationFixtureService(t, f, func(assessment.Item, assessment.Item) bool { return true }, nil)
-	_, err := grouped.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "later-anchored-group", Sources: handles[4:]})
+	_, err := grouped.Organize(context.Background(), f.team, topiccontract.OrganizationInput{OperationKey: "later-anchored-group", Sources: handles[4:]})
 	require.NoError(t, err)
-	original, err := f.store.ListRecords(context.Background(), f.team, ontology.EvidenceGroup, "", 20)
+	original, err := f.store.ListRecords(context.Background(), f.team, topiccontract.EvidenceGroup, "", 20)
 	require.NoError(t, err)
 	require.Len(t, original.Records, 1)
-	expanded, err := grouped.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "expanded-group", Sources: handles})
+	expanded, err := grouped.Organize(context.Background(), f.team, topiccontract.OrganizationInput{OperationKey: "expanded-group", Sources: handles})
 	require.NoError(t, err)
 	group, err := f.store.GetRecord(context.Background(), f.team, original.Records[0].ID, 0)
 	require.NoError(t, err)
 	retire := group.Record
 	retire.Retired = true
-	_, err = f.store.PublishAutomatic(context.Background(), f.team, testPublication("retire-existing", expanded.Publication.Revision, ontology.Change{Record: retire, ExpectedVersion: group.Version}))
+	_, err = f.store.PublishAutomatic(context.Background(), f.team, testPublication("retire-existing", expanded.Publication.Revision, topiccontract.Change{Record: retire, ExpectedVersion: group.Version}))
 	require.NoError(t, err)
 	retired, err := f.store.GetRecord(context.Background(), f.team, group.ID, 0)
 	require.NoError(t, err)
@@ -82,12 +82,12 @@ func TestOntologyManagementRetiredGroupSplitsIntoDistinctRecords(t *testing.T) {
 	require.NoError(t, err)
 	partition := map[string]int{}
 	for index, snapshot := range snapshots {
-		partition[ontology.SourceDisplayText(snapshot)] = index / 2
+		partition[topiccontract.SourceDisplayText(snapshot)] = index / 2
 	}
 	split, _ := organizationFixtureService(t, f, func(a, b assessment.Item) bool { return partition[a.Text] == partition[b.Text] }, nil)
-	_, err = split.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "split-retired-group", Sources: handles})
+	_, err = split.Organize(context.Background(), f.team, topiccontract.OrganizationInput{OperationKey: "split-retired-group", Sources: handles})
 	require.NoError(t, err)
-	current, err := f.store.ListRecords(context.Background(), f.team, ontology.EvidenceGroup, "", 20)
+	current, err := f.store.ListRecords(context.Background(), f.team, topiccontract.EvidenceGroup, "", 20)
 	require.NoError(t, err)
 	require.Len(t, current.Records, 3)
 	seen := map[string]bool{}
@@ -111,13 +111,13 @@ func TestOntologyManagementEditAndUnpinTogether(t *testing.T) {
 	manager := managementService(f)
 	ctx := f.actor(0, "manager")
 	topic := testTopic("atomic-topic-edit")
-	_, err := f.store.PublishAutomatic(context.Background(), f.team, testPublication("initial", 0, ontology.Change{Record: topic}))
+	_, err := f.store.PublishAutomatic(context.Background(), f.team, testPublication("initial", 0, topiccontract.Change{Record: topic}))
 	require.NoError(t, err)
 	definition := *topic.Definition
 	definition.Label = "Edited definition"
-	edit := ontology.ManagementEdit{Action: "define", RecordID: topic.ID, ExpectedVersion: 1, Kind: ontology.Topic, Definition: &definition}
-	_, err = manager.SaveDraft(ctx, "", managementInput(1, edit, ontology.ManagementEdit{Action: "remove_override", RecordID: uuid.NewString(), ExpectedVersion: 1}))
-	require.ErrorIs(t, err, ontology.ErrInvalid)
+	edit := topiccontract.ManagementEdit{Action: "define", RecordID: topic.ID, ExpectedVersion: 1, Kind: topiccontract.Topic, Definition: &definition}
+	_, err = manager.SaveDraft(ctx, "", managementInput(1, edit, topiccontract.ManagementEdit{Action: "remove_override", RecordID: uuid.NewString(), ExpectedVersion: 1}))
+	require.ErrorIs(t, err, topiccontract.ErrInvalid)
 	drafts, err := manager.Drafts(ctx, "", 20)
 	require.NoError(t, err)
 	require.Empty(t, drafts.Drafts)
@@ -137,15 +137,15 @@ func TestOntologyManagementRemovesWithdrawnCorrection(t *testing.T) {
 	require.NoError(t, migrator.RunUpThroughEvidenceOnly(context.Background()))
 	topic := testTopic("source-lifecycle")
 	handle := f.organizationEvidence(t, 0, "Withdraw this classification source.", nil)
-	override := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.SetClassification, DefinitionID: topic.ID, Members: []ontology.SourceHandle{handle}}, Sources: []ontology.SourceDependency{f.source(t, handle)}}
+	override := topiccontract.Record{ID: uuid.NewString(), Kind: topiccontract.OverrideKind, Override: &topiccontract.Override{Action: topiccontract.SetClassification, DefinitionID: topic.ID, Members: []topiccontract.SourceHandle{handle}}, Sources: []topiccontract.SourceDependency{f.source(t, handle)}}
 	original := seedHistoricalRecords(t, f, "historic-correction", topic, override)
 	require.NoError(t, migrator.RunUp(context.Background()))
 	manager := managementService(f)
 	ctx := f.actor(0, "manager")
 	_, err = f.knowledge.RetractEvidence(ctx, knowledge.RetractEvidenceInput{TeamID: f.team, OwnerProfileID: f.owners[0], EvidenceIDs: []string{handle.ID}, IdempotencyKey: uuid.NewString(), RequestHash: testHash("withdraw-correction-source"), Reason: "Withdraw source"})
 	require.NoError(t, err)
-	_, err = manager.SaveDraft(ctx, "", managementInput(1, ontology.ManagementEdit{Action: "remove_override", RecordID: override.ID, ExpectedVersion: 1}))
-	require.ErrorIs(t, err, ontology.ErrInvalid)
+	_, err = manager.SaveDraft(ctx, "", managementInput(1, topiccontract.ManagementEdit{Action: "remove_override", RecordID: override.ID, ExpectedVersion: 1}))
+	require.ErrorIs(t, err, topiccontract.ErrInvalid)
 	saved, err := manager.Record(ctx, override.ID, 1)
 	require.NoError(t, err)
 	require.Equal(t, original[override.ID], saved.Record)
@@ -156,7 +156,7 @@ func TestOntologyManagementExcludesManagersOwnPrivateSpaces(t *testing.T) {
 	manager := managementService(f)
 	ctx := f.actor(0, "manager")
 	topic := testTopic("private-denial")
-	_, err := f.store.PublishAutomatic(context.Background(), f.team, testPublication("topic", 0, ontology.Change{Record: topic}))
+	_, err := f.store.PublishAutomatic(context.Background(), f.team, testPublication("topic", 0, topiccontract.Change{Record: topic}))
 	require.NoError(t, err)
 	for _, kind := range []domain.MemorySpaceKind{domain.MemorySpacePrivate} {
 		var id string
@@ -174,12 +174,12 @@ func TestOntologyManagementExcludesManagersOwnPrivateSpaces(t *testing.T) {
 		actor, _ := requestctx.ActorFromContext(ctx)
 		actor.AllowedSpaces = append(actor.AllowedSpaces, space)
 		authorized := requestctx.WithActor(context.Background(), actor)
-		handle := ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: ingest.Evidence[0].FragmentID, Version: 1}
-		page, err := manager.Sources(authorized, ontology.EvidenceSource, "", handle.ID, 50)
+		handle := topiccontract.SourceHandle{Kind: topiccontract.EvidenceSource, ID: ingest.Evidence[0].FragmentID, Version: 1}
+		page, err := manager.Sources(authorized, topiccontract.EvidenceSource, "", handle.ID, 50)
 		require.NoError(t, err)
 		require.Empty(t, page.Sources)
-		_, err = manager.SaveDraft(authorized, "", managementInput(1, ontology.ManagementEdit{Action: "classify", Source: &handle, DefinitionID: topic.ID}))
-		require.ErrorIs(t, err, ontology.ErrInvalid)
+		_, err = manager.SaveDraft(authorized, "", managementInput(1, topiccontract.ManagementEdit{Action: "classify", Source: &handle, DefinitionID: topic.ID}))
+		require.ErrorIs(t, err, topiccontract.ErrInvalid)
 		drafts, err := manager.Drafts(authorized, "", 50)
 		require.NoError(t, err)
 		require.Empty(t, drafts.Drafts)
@@ -210,7 +210,7 @@ func TestOntologyManagementStatusCountsOnlyAuthenticatedTeam(t *testing.T) {
 	}
 	status, err := manager.Status(f.actor(0, "manager"))
 	require.NoError(t, err)
-	require.Equal(t, ontology.MaintenanceCounts{Eligible: 5, Organized: 1, Pending: 2, Ambiguous: 1, Failed: 1}, status.Counts)
+	require.Equal(t, topiccontract.MaintenanceCounts{Eligible: 5, Organized: 1, Pending: 2, Ambiguous: 1, Failed: 1}, status.Counts)
 	require.True(t, status.DiscoveryComplete)
 	require.False(t, status.CoverageComplete)
 	foreign, err := manager.Status(other.actor(0, "manager"))
@@ -219,9 +219,9 @@ func TestOntologyManagementStatusCountsOnlyAuthenticatedTeam(t *testing.T) {
 	require.NoError(t, f.admin.Exec(`UPDATE topic_maintenance_sources SET status='organized' WHERE team_id=?::uuid`, f.team).Error)
 	status, err = manager.Status(f.actor(0, "manager"))
 	require.NoError(t, err)
-	require.Equal(t, ontology.MaintenanceCounts{Eligible: 5, Organized: 5}, status.Counts)
+	require.Equal(t, topiccontract.MaintenanceCounts{Eligible: 5, Organized: 5}, status.Counts)
 	require.True(t, status.CoverageComplete)
-	draft, err := manager.SaveDraft(f.actor(0, "manager"), "", managementInput(status.Revision, ontology.ManagementEdit{Action: "define", Kind: ontology.Topic, Definition: &ontology.Definition{Key: "coverage-update", Label: "Coverage update"}}))
+	draft, err := manager.SaveDraft(f.actor(0, "manager"), "", managementInput(status.Revision, topiccontract.ManagementEdit{Action: "define", Kind: topiccontract.Topic, Definition: &topiccontract.Definition{Key: "coverage-update", Label: "Coverage update"}}))
 	require.NoError(t, err)
 	_, err = manager.CommandDraft(f.actor(0, "manager"), draft.ID, "publish", managementCommand(draft))
 	require.NoError(t, err)
@@ -229,5 +229,5 @@ func TestOntologyManagementStatusCountsOnlyAuthenticatedTeam(t *testing.T) {
 	require.NoError(t, err)
 	require.Positive(t, status.PendingMarkers)
 	require.False(t, status.CoverageComplete)
-	require.Equal(t, ontology.MaintenanceCounts{Eligible: 5, Organized: 5}, status.Counts)
+	require.Equal(t, topiccontract.MaintenanceCounts{Eligible: 5, Organized: 5}, status.Counts)
 }

@@ -12,14 +12,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
-func maintenanceRunByID(t *testing.T, f *ontologyFixture, id string) ontology.MaintenanceRun {
+func maintenanceRunByID(t *testing.T, f *ontologyFixture, id string) topic.MaintenanceRun {
 	t.Helper()
-	page, err := f.store.ListMaintenanceRuns(context.Background(), "", ontology.MaxPageSize)
+	page, err := f.store.ListMaintenanceRuns(context.Background(), "", topic.MaxPageSize)
 	require.NoError(t, err)
 	for _, run := range page.Runs {
 		if run.ID == id {
@@ -27,7 +27,7 @@ func maintenanceRunByID(t *testing.T, f *ontologyFixture, id string) ontology.Ma
 		}
 	}
 	t.Fatalf("run %s missing", id)
-	return ontology.MaintenanceRun{}
+	return topic.MaintenanceRun{}
 }
 
 func TestOntologyMaintenanceBoundedCompletionUsesPersistedOutcomes(t *testing.T) {
@@ -158,10 +158,10 @@ func TestOntologyMaintenanceConcurrentInterruptionPreservesRunWork(t *testing.T)
 				}))
 			}
 			before, otherBefore := f.canonicalSnapshot(t), other.canonicalSnapshot(t)
-			result := func(claim *ontology.MaintenanceClaim) ontology.OrganizationResult {
-				result := ontology.OrganizationResult{Current: true}
+			result := func(claim *topic.MaintenanceClaim) topic.OrganizationResult {
+				result := topic.OrganizationResult{Current: true}
 				for _, source := range claim.Sources {
-					result.Outcomes = append(result.Outcomes, ontology.OrganizationOutcome{Source: source, Status: "organized"})
+					result.Outcomes = append(result.Outcomes, topic.OrganizationOutcome{Source: source, Status: "organized"})
 				}
 				return result
 			}
@@ -192,7 +192,7 @@ func TestOntologyMaintenanceScheduledRecoveryClearsCurrentReason(t *testing.T) {
 	settings := maintenanceSettings(t, f)
 	window := maintenanceWindow(t, f, settings)
 	turn, claim := maintenanceClaim(t, f, window)
-	require.NoError(t, f.store.CompleteMaintenanceBatch(context.Background(), *claim, ontology.OrganizationResult{}, "maintenance_paused", time.Now().UTC()))
+	require.NoError(t, f.store.CompleteMaintenanceBatch(context.Background(), *claim, topic.OrganizationResult{}, "maintenance_paused", time.Now().UTC()))
 	require.NoError(t, f.store.RecordMaintenanceFailure(context.Background(), turn.RunID, "maintenance_paused", time.Now().UTC()))
 	require.NoError(t, f.store.ReleaseMaintenanceTurn(context.Background(), *turn))
 	before := f.canonicalSnapshot(t)

@@ -124,12 +124,12 @@ func (s *ManagementService) Sources(ctx context.Context, kind contract.SourceKin
 	return s.repository.ListManagementSources(ctx, actor.TeamID.String(), kind, cursor, query, limit)
 }
 
-func (s *ManagementService) Status(ctx context.Context) (contract.TeamOntologyStatus, error) {
+func (s *ManagementService) Status(ctx context.Context) (contract.TeamTopicStatus, error) {
 	actor, err := s.actor(ctx, false)
 	if err != nil {
-		return contract.TeamOntologyStatus{}, err
+		return contract.TeamTopicStatus{}, err
 	}
-	return s.repository.TeamOntologyStatus(ctx, actor.TeamID.String())
+	return s.repository.TeamTopicStatus(ctx, actor.TeamID.String())
 }
 
 func (s *ManagementService) SaveDraft(ctx context.Context, id string, input contract.SaveDraftInput) (result contract.ManagementDraft, err error) {

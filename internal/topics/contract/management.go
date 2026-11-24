@@ -90,7 +90,7 @@ type ImpactPreview struct {
 	Complete             bool               `json:"complete"`
 }
 
-type TeamOntologyStatus struct {
+type TeamTopicStatus struct {
 	ObservedAt        time.Time         `json:"observed_at"`
 	Revision          int64             `json:"revision"`
 	DiscoveryComplete bool              `json:"discovery_complete"`
@@ -129,7 +129,7 @@ type ManagementRepository interface {
 	GetRecord(context.Context, string, string, int64) (RecordView, error)
 	ListRecords(context.Context, string, Kind, string, int) (Page, error)
 	ListManagementSources(context.Context, string, SourceKind, string, string, int) (ManagementSourcePage, error)
-	TeamOntologyStatus(context.Context, string) (TeamOntologyStatus, error)
+	TeamTopicStatus(context.Context, string) (TeamTopicStatus, error)
 	SaveManagementDraft(context.Context, string, string, SaveDraftInput, ManagementPrepare, ManagementAudit) (ManagementDraft, error)
 	GetManagementDraft(context.Context, string, string) (ManagementDraft, error)
 	ListManagementDrafts(context.Context, string, string, int) (DraftPage, error)

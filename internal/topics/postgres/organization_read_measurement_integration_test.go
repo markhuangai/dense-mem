@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -36,33 +36,33 @@ func (c *organizationReadCounter) Trace(ctx context.Context, started time.Time, 
 	c.Interface.Trace(ctx, started, statement, err)
 }
 
-type organizationPreparationReads struct{ ontology.MaintenanceRepository }
+type organizationPreparationReads struct{ topic.MaintenanceRepository }
 
-func (r organizationPreparationReads) ClaimMaintenanceBatch(ctx context.Context, turn ontology.MaintenanceTurn, window string, now time.Time) (*ontology.MaintenanceClaim, error) {
+func (r organizationPreparationReads) ClaimMaintenanceBatch(ctx context.Context, turn topic.MaintenanceTurn, window string, now time.Time) (*topic.MaintenanceClaim, error) {
 	return r.MaintenanceRepository.ClaimMaintenanceBatch(context.WithValue(ctx, organizationPreparationReadKey{}, true), turn, window, now)
 }
 
-func organizationReadFixture(t *testing.T, catalogSize int) (*ontologyFixture, []ontology.SourceHandle, []ontology.Record) {
+func organizationReadFixture(t *testing.T, catalogSize int) (*ontologyFixture, []topic.SourceHandle, []topic.Record) {
 	t.Helper()
 	f := newOrganizationFixture(t)
-	handles := []ontology.SourceHandle{}
-	for i := len(handles); i < ontology.MaxOrganizationSources; i++ {
+	handles := []topic.SourceHandle{}
+	for i := len(handles); i < topic.MaxOrganizationSources; i++ {
 		handles = append(handles, f.organizationEvidence(t, i%len(f.owners), fmt.Sprintf("PostgreSQL read measurement %d.", i), nil))
 	}
-	var sources []ontology.SourceDependency
+	var sources []topic.SourceDependency
 	for _, handle := range handles[:4] {
 		sources = append(sources, f.source(t, handle))
 	}
-	var records []ontology.Record
+	var records []topic.Record
 	revision := int64(0)
-	for offset := 0; offset < catalogSize; offset += ontology.MaxChanges {
-		var changes []ontology.Change
-		for i := offset; i < min(offset+ontology.MaxChanges, catalogSize); i++ {
+	for offset := 0; offset < catalogSize; offset += topic.MaxChanges {
+		var changes []topic.Change
+		for i := offset; i < min(offset+topic.MaxChanges, catalogSize); i++ {
 			record := testTopic(fmt.Sprintf("read-measurement-%03d", i))
 			record.Definition.Description = "PostgreSQL read measurement"
 			record.Sources = sources
 			records = append(records, record)
-			changes = append(changes, ontology.Change{Record: record})
+			changes = append(changes, topic.Change{Record: record})
 		}
 		publication, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication(uuid.NewString(), revision, changes...))
 		require.NoError(t, err)
@@ -85,21 +85,21 @@ func organizationReadFixture(t *testing.T, catalogSize int) (*ontologyFixture, [
 	return f, handles, records
 }
 
-func organizationSingletonSources(t *testing.T, tx *gorm.DB, fence scope, handles []ontology.SourceHandle) []ontology.SourceSnapshot {
+func organizationSingletonSources(t *testing.T, tx *gorm.DB, fence scope, handles []topic.SourceHandle) []topic.SourceSnapshot {
 	t.Helper()
-	result := make([]ontology.SourceSnapshot, 0, len(handles))
+	result := make([]topic.SourceSnapshot, 0, len(handles))
 	for _, handle := range handles {
 		snapshot, err := readSource(tx, fence, handle)
 		if err != nil {
-			require.ErrorIs(t, err, ontology.ErrSourceStale)
-			snapshot = ontology.SourceSnapshot{SourceHandle: handle, TeamID: fence.TeamID, SpaceID: fence.SpaceID, Generation: fence.Generation, State: map[string]string{}}
+			require.ErrorIs(t, err, topic.ErrSourceStale)
+			snapshot = topic.SourceSnapshot{SourceHandle: handle, TeamID: fence.TeamID, SpaceID: fence.SpaceID, Generation: fence.Generation, State: map[string]string{}}
 		}
 		result = append(result, snapshot)
 	}
 	return result
 }
 
-func organizationSingletonContext(t *testing.T, f *ontologyFixture, tx *gorm.DB, fence scope, actual ontology.OrganizationContext, handles []ontology.SourceHandle) ontology.OrganizationContext {
+func organizationSingletonContext(t *testing.T, f *ontologyFixture, tx *gorm.DB, fence scope, actual topic.OrganizationContext, handles []topic.SourceHandle) topic.OrganizationContext {
 	t.Helper()
 	expected := actual
 	expected.Sources = organizationSingletonSources(t, tx, fence, handles)
@@ -109,7 +109,7 @@ func organizationSingletonContext(t *testing.T, f *ontologyFixture, tx *gorm.DB,
 		require.NoError(t, err)
 		expected.Records = append(expected.Records, view)
 	}
-	expected.Candidates = make([]ontology.RecordView, 0, len(actual.Candidates))
+	expected.Candidates = make([]topic.RecordView, 0, len(actual.Candidates))
 	for _, record := range actual.Candidates {
 		view, err := f.store.currentView(tx, fence, record.Record)
 		require.NoError(t, err)
@@ -160,9 +160,9 @@ func TestOntologyMaintenanceReadMeasurement(t *testing.T) {
 							elapsed, queries := time.Since(started), counter.queries.Load()
 							expected := organizationSingletonContext(t, f, tx, fence, actual, handles[:count])
 							require.Equal(t, expected, actual)
-							hash, err := ontology.OrganizationContextHash(actual)
+							hash, err := topic.OrganizationContextHash(actual)
 							require.NoError(t, err)
-							expectedHash, err := ontology.OrganizationContextHash(expected)
+							expectedHash, err := topic.OrganizationContextHash(expected)
 							require.NoError(t, err)
 							require.Equal(t, expectedHash, hash)
 							if measurement.ContextHash != "" {
@@ -198,7 +198,7 @@ func TestOntologyMaintenanceReadMeasurement(t *testing.T) {
 	t.Logf("ontology_read_measurement %s", encoded)
 }
 
-func measureOrganizationBatchClaim(t *testing.T, f *ontologyFixture, counter *organizationReadCounter, handles []ontology.SourceHandle, catalogSize int) organizationReadMeasurement {
+func measureOrganizationBatchClaim(t *testing.T, f *ontologyFixture, counter *organizationReadCounter, handles []topic.SourceHandle, catalogSize int) organizationReadMeasurement {
 	t.Helper()
 	ctx := context.Background()
 	window := maintenanceWindow(t, f, maintenanceSettings(t, f))
@@ -209,7 +209,7 @@ func measureOrganizationBatchClaim(t *testing.T, f *ontologyFixture, counter *or
 		require.NoError(t, err)
 		require.NotNil(t, turn)
 		if repeat == 0 {
-			require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, ontology.MaintenancePageSize))
+			require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, topic.MaintenancePageSize))
 		}
 		counter.queries.Store(0)
 		started := time.Now()
@@ -218,7 +218,7 @@ func measureOrganizationBatchClaim(t *testing.T, f *ontologyFixture, counter *or
 		require.NoError(t, err)
 		require.NotNil(t, claim)
 		require.ElementsMatch(t, handles, claim.Sources)
-		require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, ontology.OrganizationResult{}, "maintenance_paused", time.Now()))
+		require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, topic.OrganizationResult{}, "maintenance_paused", time.Now()))
 		if repeat >= 2 {
 			samples = append(samples, float64(elapsed.Microseconds())/1000)
 			require.Positive(t, queries)

@@ -8,24 +8,24 @@ import (
 	audit "github.com/markhuangai/dense-mem/internal/audit"
 	auditpostgres "github.com/markhuangai/dense-mem/internal/audit/postgres"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
-	ontology "github.com/markhuangai/dense-mem/internal/topics"
+	topics "github.com/markhuangai/dense-mem/internal/topics"
 	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	topicspostgres "github.com/markhuangai/dense-mem/internal/topics/postgres"
 	"gorm.io/gorm"
 )
 
-func migrateOntology(ctx context.Context, db *gorm.DB, migrator *postgres.Migrator, logger infoLogger) error {
-	service := ontology.NewMaintenanceUpgradeService(topicspostgres.NewStore(db, postgres.NewRLS()), audit.New(auditpostgres.NewStore(db)))
+func migrateTopicStorage(ctx context.Context, db *gorm.DB, migrator *postgres.Migrator, logger infoLogger) error {
+	service := topics.NewMaintenanceUpgradeService(topicspostgres.NewStore(db, postgres.NewRLS()), audit.New(auditpostgres.NewStore(db)))
 	required := false
 	observe := func(phase string, state contract.MaintenanceUpgradeState) {
 		required = required || state.Required
-		logInfo(ctx, logger, "ontology upgrade preparation", "phase", phase,
+		logInfo(ctx, logger, "topic storage upgrade preparation", "phase", phase,
 			"migration_version", contract.OntologyBudgetRetirementVersion, "paused", state.Paused, "upgrade_owned_pause", state.OwnsPause,
 			"live_batches", state.LiveBatches, "live_team_leases", state.LiveTeamLeases,
 			"unreconciled_attempts", state.UnreconciledAttempts, "recovered_batches", state.RecoveredBatches, "closed_runs", state.ClosedRuns)
 	}
 	if err := service.Prepare(ctx, observe); err != nil {
-		return fmt.Errorf("prepare ontology upgrade: %w", err)
+		return fmt.Errorf("prepare topic storage upgrade: %w", err)
 	}
 	if err := migrateEvidenceOnly(ctx, db, migrator, logger); err != nil {
 		return err
@@ -48,7 +48,7 @@ func migrateOntology(ctx context.Context, db *gorm.DB, migrator *postgres.Migrat
 	}
 	state, err := service.Complete(ctx)
 	if err != nil {
-		return fmt.Errorf("restore ontology admission: %w", err)
+		return fmt.Errorf("restore Topic maintenance admission: %w", err)
 	}
 	observe("complete", state)
 	return nil
@@ -57,7 +57,7 @@ func migrateOntology(ctx context.Context, db *gorm.DB, migrator *postgres.Migrat
 // A stopped worker can leave a live lease behind. Its expiry releases capacity,
 // but only the provider accounting owner can reconcile an admitted attempt.
 func waitForTopicStorageDrain(ctx context.Context, db *gorm.DB, logger infoLogger) error {
-	ctx, cancel := context.WithTimeout(ctx, ontology.MaintenanceUpgradeWaitLimit)
+	ctx, cancel := context.WithTimeout(ctx, topics.MaintenanceUpgradeWaitLimit)
 	defer cancel()
 	var previous [3]int64
 	for {

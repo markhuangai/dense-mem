@@ -14,7 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -54,7 +54,7 @@ func TestOntologyMaintenanceFinalizationCancellationAndDiscovery(t *testing.T) {
 			require.NoError(t, err)
 			defer func() { _, _ = blocker.ExecContext(ctx, `SELECT pg_advisory_unlock(603001)`) }()
 			discovered := make(chan error, 1)
-			go func() { discovered <- f.store.discoverMaintenanceError(ctx, *discovery, ontology.MaintenancePageSize) }()
+			go func() { discovered <- f.store.discoverMaintenanceError(ctx, *discovery, topic.MaintenancePageSize) }()
 			waitFor := func(event, statement string) {
 				t.Helper()
 				require.Eventually(t, func() bool {
@@ -83,7 +83,7 @@ func TestOntologyMaintenanceFinalizationCancellationAndDiscovery(t *testing.T) {
 			}
 			err = <-finished
 			require.ErrorIs(t, err, expectedError)
-			var failure *ontology.MaintenanceFinalizationError
+			var failure *topic.MaintenanceFinalizationError
 			require.ErrorAs(t, err, &failure)
 			require.Equal(t, "source_updates", failure.Phase)
 			require.Equal(t, x.claim.ID, failure.BatchID)
@@ -232,7 +232,7 @@ func TestOntologyMaintenanceFinalizationRacesAndFences(t *testing.T) {
 			var observed time.Time
 			require.NoError(t, f.admin.Raw(`SELECT clock_timestamp()`).Row().Scan(&observed))
 			finished := make(chan error, 1)
-			var claim *ontology.MaintenanceClaim
+			var claim *topic.MaintenanceClaim
 			var x *finalizationFixture
 			started := false
 			defer func() {
@@ -286,7 +286,7 @@ func TestOntologyMaintenanceFinalizationRacesAndFences(t *testing.T) {
 				require.Positive(t, calls)
 			}
 			unchanged := x.completionState(t)
-			require.ErrorIs(t, f.store.CompleteMaintenanceBatch(ctx, *claim, x.result, "", claim.LeaseUntil), ontology.ErrLeaseLost)
+			require.ErrorIs(t, f.store.CompleteMaintenanceBatch(ctx, *claim, x.result, "", claim.LeaseUntil), topic.ErrLeaseLost)
 			require.Equal(t, unchanged, x.completionState(t), "injected-time expiry cannot mutate completion")
 			if !testCase.recovery {
 				start()
@@ -340,7 +340,7 @@ func TestOntologyMaintenanceFinalizationRacesAndFences(t *testing.T) {
 			calls, healthyCalls := x.calls.Load(), healthy.calls.Load()
 			turn, err := x.recoverAfterExpiry(t, "source_updates", failure)
 			require.Nil(t, turn)
-			var diagnostic *ontology.MaintenanceFinalizationError
+			var diagnostic *topic.MaintenanceFinalizationError
 			require.ErrorAs(t, err, &diagnostic)
 			require.Equal(t, "recovery_rollback", diagnostic.Phase)
 			require.Equal(t, x.claim.ID, diagnostic.BatchID)
@@ -351,7 +351,7 @@ func TestOntologyMaintenanceFinalizationRacesAndFences(t *testing.T) {
 				require.ErrorIs(t, err, context.Canceled)
 				require.Equal(t, "canceled", diagnostic.FailureClass())
 			}
-			require.NotErrorIs(t, err, ontology.ErrLeaseLost)
+			require.NotErrorIs(t, err, topic.ErrLeaseLost)
 			for _, candidate := range []*finalizationFixture{x, healthy} {
 				require.Equal(t, "running", candidate.batchStatus(t))
 				require.Zero(t, maintenanceRunByID(t, candidate.f, candidate.claim.RunID).CompletedBatches)
@@ -403,12 +403,12 @@ func TestOntologyMaintenanceFinalizationRacesAndFences(t *testing.T) {
 			require.Equal(t, history, x.history(t))
 			require.Equal(t, 1, maintenanceRunByID(t, f, x.claim.RunID).CompletedBatches)
 			require.Equal(t, "completed", x.batchStatus(t))
-			require.ErrorIs(t, f.store.AdmitMaintenanceAttempt(ctx, *x.claim, uuid.NewString(), 1, 1, 1, time.Now()), ontology.ErrLeaseLost)
-			_, err := f.store.PublishAutomatic(ontology.WithMaintenanceClaim(ctx, *x.claim), f.team, testPublication("stale-finalization", 0, ontology.Change{Record: testTopic("stale-finalization")}))
-			require.ErrorIs(t, err, ontology.ErrLeaseLost)
+			require.ErrorIs(t, f.store.AdmitMaintenanceAttempt(ctx, *x.claim, uuid.NewString(), 1, 1, 1, time.Now()), topic.ErrLeaseLost)
+			_, err := f.store.PublishAutomatic(topic.WithMaintenanceClaim(ctx, *x.claim), f.team, testPublication("stale-finalization", 0, topic.Change{Record: testTopic("stale-finalization")}))
+			require.ErrorIs(t, err, topic.ErrLeaseLost)
 			forged := *x.claim
 			forged.LeaseToken = uuid.NewString()
-			require.ErrorIs(t, f.store.CompleteMaintenanceBatch(ctx, forged, x.result, x.result.FailureCode, time.Now()), ontology.ErrLeaseLost)
+			require.ErrorIs(t, f.store.CompleteMaintenanceBatch(ctx, forged, x.result, x.result.FailureCode, time.Now()), topic.ErrLeaseLost)
 			require.Equal(t, before, f.canonicalSnapshot(t))
 			require.Equal(t, receipts, receiptCount(t, f))
 			require.Equal(t, calls, x.calls.Load())
@@ -439,7 +439,7 @@ func TestOntologyMaintenanceFinalizationAdmissionAndIsolation(t *testing.T) {
 				require.Equal(t, queued, x.queuedSources(t), "expired completion must not commit any source writes")
 				ctx := context.Background()
 				for range 8 {
-					require.NoError(t, pending.store.discoverMaintenanceError(ctx, *turn, ontology.MaintenancePageSize))
+					require.NoError(t, pending.store.discoverMaintenanceError(ctx, *turn, topic.MaintenancePageSize))
 				}
 				claim, err := pending.store.ClaimMaintenanceBatch(ctx, *turn, x.window.ID, time.Now())
 				require.NoError(t, err)
@@ -451,7 +451,7 @@ func TestOntologyMaintenanceFinalizationAdmissionAndIsolation(t *testing.T) {
 				require.Equal(t, "lost", x.batchStatus(t))
 				require.Zero(t, maintenanceRunByID(t, x.f, x.claim.RunID).CompletedBatches)
 				healthy.assertCompletedOutcome(t)
-				require.ErrorIs(t, x.f.store.CompleteMaintenanceBatch(ctx, *x.claim, x.result, x.result.FailureCode, time.Now()), ontology.ErrLeaseLost)
+				require.ErrorIs(t, x.f.store.CompleteMaintenanceBatch(ctx, *x.claim, x.result, x.result.FailureCode, time.Now()), topic.ErrLeaseLost)
 				require.Equal(t, queued, x.queuedSources(t))
 				require.Equal(t, history, x.history(t))
 				require.Equal(t, healthyHistory, healthy.history(t))
@@ -490,7 +490,7 @@ func TestOntologyMaintenanceFinalizationAdmissionAndIsolation(t *testing.T) {
 				busy, err := maintenanceBusySources(tx, fence)
 				require.NoError(t, err)
 				for _, source := range x.claim.Sources {
-					require.True(t, busy[ontology.SourceKey(source)])
+					require.True(t, busy[topic.SourceKey(source)])
 				}
 				return nil
 			}))
@@ -503,7 +503,7 @@ func TestOntologyMaintenanceFinalizationAdmissionAndIsolation(t *testing.T) {
 			require.True(t, time.Now().Before(x.claim.LeaseUntil))
 			x.assertCompletedOutcome(t)
 			for range 8 {
-				require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, ontology.MaintenancePageSize))
+				require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, topic.MaintenancePageSize))
 			}
 			claim, err := f.store.ClaimMaintenanceBatch(ctx, *turn, x.window.ID, time.Now())
 			require.NoError(t, err)
@@ -535,10 +535,10 @@ func TestOntologyMaintenanceFinalizationAdmissionAndIsolation(t *testing.T) {
 					switch mode {
 					case "paused":
 						require.NoError(t, f.admin.Exec(`UPDATE topic_maintenance_state SET paused=true WHERE singleton`).Error)
-						expected = ontology.ErrMaintenancePaused
+						expected = topic.ErrMaintenancePaused
 					case "disabled":
 						require.NoError(t, f.admin.Exec(`UPDATE app_config SET value='false' WHERE key=?`, domain.AppConfigTopicMaintenanceEnabled).Error)
-						expected = ontology.ErrMaintenanceDisabled
+						expected = topic.ErrMaintenanceDisabled
 					case "expired":
 						require.NoError(t, f.admin.Exec(`UPDATE topic_maintenance_batches SET lease_until=clock_timestamp()-interval '1 second' WHERE batch_id=?::uuid`, x.claim.ID).Error)
 					case "new_generation":
@@ -549,7 +549,7 @@ func TestOntologyMaintenanceFinalizationAdmissionAndIsolation(t *testing.T) {
 						require.NoError(t, f.admin.Raw(`SELECT to_jsonb(source)::text FROM topic_maintenance_sources AS source WHERE team_id=?::uuid AND source_id=?`, f.team, source.ID).Row().Scan(&revisedSource))
 					case "actor":
 						ctx = f.actor(0, "manager")
-						expected = ontology.ErrUnauthorized
+						expected = topic.ErrUnauthorized
 					}
 					before, calls := f.canonicalSnapshot(t), x.calls.Load()
 					turn, err := f.store.ClaimMaintenanceTurn(ctx, x.window.ID, time.Now(), time.Minute)
@@ -564,7 +564,7 @@ func TestOntologyMaintenanceFinalizationAdmissionAndIsolation(t *testing.T) {
 					expectedStatus := "completed"
 					if mode == "expired" {
 						expectedStatus = "lost"
-						require.ErrorIs(t, f.store.CompleteMaintenanceBatch(context.Background(), *x.claim, x.result, x.result.FailureCode, time.Now()), ontology.ErrLeaseLost)
+						require.ErrorIs(t, f.store.CompleteMaintenanceBatch(context.Background(), *x.claim, x.result, x.result.FailureCode, time.Now()), topic.ErrLeaseLost)
 					} else if mode == "new_generation" || mode == "actor" {
 						expectedStatus = "running"
 					}
@@ -580,7 +580,7 @@ func TestOntologyMaintenanceFinalizationAdmissionAndIsolation(t *testing.T) {
 							state := revalidationQueue(t, f, x.claim.Sources[0])
 							require.Equal(t, "organized", state.Status)
 							require.Equal(t, x.result.AssessmentID, state.AssessmentID)
-							require.Equal(t, x.claim.Revisions[ontology.SourceKey(x.claim.Sources[0])]+1, state.Revision)
+							require.Equal(t, x.claim.Revisions[topic.SourceKey(x.claim.Sources[0])]+1, state.Revision)
 						} else {
 							var after string
 							require.NoError(t, f.admin.Raw(`SELECT to_jsonb(source)::text FROM topic_maintenance_sources AS source WHERE team_id=?::uuid AND source_id=?`, f.team, x.claim.Sources[0].ID).Row().Scan(&after))
@@ -618,18 +618,18 @@ func TestOntologyMaintenanceFinalizationRejectsMismatchedReceipt(t *testing.T) {
 			receipt, err := decodeOrganization(body)
 			require.NoError(t, err)
 			claim := *x.claim
-			claim.Sources = append([]ontology.SourceHandle(nil), claim.Sources...)
+			claim.Sources = append([]topic.SourceHandle(nil), claim.Sources...)
 			claim.Sources[0].Version++
-			require.ErrorIs(t, validateMaintenanceReceipt(claim, receipt), ontology.ErrInvalid)
+			require.ErrorIs(t, validateMaintenanceReceipt(claim, receipt), topic.ErrInvalid)
 			claim = *x.claim
 			claim.Revisions = map[string]int64{}
-			require.ErrorIs(t, validateMaintenanceReceipt(claim, receipt), ontology.ErrInvalid)
+			require.ErrorIs(t, validateMaintenanceReceipt(claim, receipt), topic.ErrInvalid)
 			receipt.OperationKey = "different-batch"
 			encoded, err := json.Marshal(receipt)
 			require.NoError(t, err)
 			decoded, err := decodeOrganization(encoded)
 			require.NoError(t, err)
-			require.ErrorIs(t, validateMaintenanceReceipt(*x.claim, decoded), ontology.ErrInvalid)
+			require.ErrorIs(t, validateMaintenanceReceipt(*x.claim, decoded), topic.ErrInvalid)
 		})
 	}
 }

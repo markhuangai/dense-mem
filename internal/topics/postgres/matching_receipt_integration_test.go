@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -18,12 +18,12 @@ func TestOntologyMatchingHistoricalReceiptRefresh(t *testing.T) {
 	source := f.organizationEvidence(t, 1, "Atlas of", nil)
 	definition := testTopic("grammarreceipt")
 	definition.Definition.Description = "of"
-	revalidationPublish(t, f, ontology.Change{Record: definition})
+	revalidationPublish(t, f, topic.Change{Record: definition})
 	service, calls := organizationFixtureService(t, f, nil, ambiguousClassification)
-	input := ontology.OrganizationInput{OperationKey: "filtered-context", Sources: []ontology.SourceHandle{source}}
+	input := topic.OrganizationInput{OperationKey: "filtered-context", Sources: []topic.SourceHandle{source}}
 	original, err := service.Organize(ctx, f.team, input)
 	require.NoError(t, err)
-	var legacy ontology.OrganizationReceipt
+	var legacy topic.OrganizationReceipt
 	require.NoError(t, f.store.withScope(ctx, f.team, false, func(tx *gorm.DB, fence scope) error {
 		var err error
 		legacy, _, err = organizationByKey(tx, fence, input.OperationKey, false)
@@ -42,11 +42,11 @@ func TestOntologyMatchingHistoricalReceiptRefresh(t *testing.T) {
 		require.Len(t, contextData.Candidates, 1)
 		legacy.ID, legacy.OperationKey = uuid.NewString(), "unfiltered-historical-context"
 		legacy.Result.AssessmentID = legacy.ID
-		legacy.Dependencies, err = ontology.OrganizationDependencies(contextData)
+		legacy.Dependencies, err = topic.OrganizationDependencies(contextData)
 		if err != nil {
 			return err
 		}
-		legacy.ContextHash, err = ontology.OrganizationContextHash(contextData)
+		legacy.ContextHash, err = topic.OrganizationContextHash(contextData)
 		if err != nil {
 			return err
 		}
@@ -65,10 +65,10 @@ func TestOntologyMatchingHistoricalReceiptRefresh(t *testing.T) {
 	f.store = NewStore(f.app, f.rls)
 	require.NoError(t, f.store.withScope(ctx, f.team, true, func(tx *gorm.DB, fence scope) error {
 		marker := maintenanceMarker{AnchorKind: "topic_record_heads", AnchorID: definition.ID, TargetKind: "definition", TargetID: definition.ID}
-		selected, err := maintenanceMarkerSources(tx, fence, marker, ontology.MaintenancePageSize)
+		selected, err := maintenanceMarkerSources(tx, fence, marker, topic.MaintenancePageSize)
 		require.NoError(t, err)
 		require.Empty(t, selected, "an archived receipt alone must not schedule assignment work")
-		page, err := maintenanceDefinitionGroupPage(tx, fence, []maintenanceMarker{marker}, ontology.MaintenancePageSize)
+		page, err := maintenanceDefinitionGroupPage(tx, fence, []maintenanceMarker{marker}, topic.MaintenancePageSize)
 		require.NoError(t, err)
 		require.Empty(t, page.Sources)
 		return nil

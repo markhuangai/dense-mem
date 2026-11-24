@@ -22,7 +22,7 @@ import (
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	organization "github.com/markhuangai/dense-mem/internal/topics"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	topicspostgres "github.com/markhuangai/dense-mem/internal/topics/postgres"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -37,7 +37,7 @@ type recallOntologyFixture struct {
 	credentials []*domain.Credential
 	search      *searchFixtureStore
 	knowledge   *knowledgepostgres.Store
-	ontology    *topicspostgres.Store
+	topicStore  *topicspostgres.Store
 }
 
 func newRecallOntologyFixture(t testing.TB) *recallOntologyFixture {
@@ -59,8 +59,8 @@ func newRecallOntologyFixture(t testing.TB) *recallOntologyFixture {
 	insertSearchTestContract(t, admin, rls, "ontology recall", 3, "exact", "")
 	f.search = newSearchFixtureStore(app, rls)
 	f.knowledge = knowledgepostgres.NewStore(app, rls)
-	f.ontology = topicspostgres.NewStore(app, rls)
-	f.search.recall.WithOntology(func() OntologyReader { return f.ontology.NewRecallReader() }).WithTopics(f.ontology.NewTopicReader())
+	f.topicStore = topicspostgres.NewStore(app, rls)
+	f.search.recall.WithOrganizationReader(func() OrganizationReader { return f.topicStore.NewRecallReader() }).WithTopics(f.topicStore.NewTopicReader())
 	return f
 }
 
@@ -74,7 +74,7 @@ func (f *recallOntologyFixture) actor(owner int, role string) context.Context {
 	})
 }
 
-func (f *recallOntologyFixture) evidence(t testing.TB, owner int, text string, metadata map[string]any) ontology.SourceHandle {
+func (f *recallOntologyFixture) evidence(t testing.TB, owner int, text string, metadata map[string]any) topic.SourceHandle {
 	t.Helper()
 	ctx := context.Background()
 	ingest, err := f.knowledge.CreateIngestForTest(ctx, knowledge.CreateIngestInput{
@@ -88,36 +88,36 @@ func (f *recallOntologyFixture) evidence(t testing.TB, owner int, text string, m
 	if document.SearchState == "pending" {
 		completeSearchDocumentsForTest(t, f.search, f.team, map[string][]float32{document.SearchDocumentID: {1, 0, 0}})
 	}
-	return ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: fragment.FragmentID, Version: 1}
+	return topic.SourceHandle{Kind: topic.EvidenceSource, ID: fragment.FragmentID, Version: 1}
 }
 
-func (f *recallOntologyFixture) publication(t testing.TB, records ...ontology.Record) ontology.PublicationResult {
+func (f *recallOntologyFixture) publication(t testing.TB, records ...topic.Record) topic.PublicationResult {
 	t.Helper()
-	page, err := f.ontology.ListRecords(context.Background(), f.team, "", "", 1)
+	page, err := f.topicStore.ListRecords(context.Background(), f.team, "", "", 1)
 	require.NoError(t, err)
-	changes := []ontology.Change{}
+	changes := []topic.Change{}
 	for _, record := range records {
-		changes = append(changes, ontology.Change{ExpectedVersion: record.Version, Record: record})
+		changes = append(changes, topic.Change{ExpectedVersion: record.Version, Record: record})
 	}
-	result, err := f.ontology.PublishManager(f.actor(0, "manager"), f.team, ontology.Publication{OperationKey: uuid.NewString(), ExpectedRevision: page.Revision, Reason: "recall regression fixture", Changes: changes})
+	result, err := f.topicStore.PublishManager(f.actor(0, "manager"), f.team, topic.Publication{OperationKey: uuid.NewString(), ExpectedRevision: page.Revision, Reason: "recall regression fixture", Changes: changes})
 	require.NoError(t, err)
 	return result
 }
 
-func (f *recallOntologyFixture) rejectHistoricalOverride(t testing.TB, action ontology.OverrideAction, handles []ontology.SourceHandle) {
+func (f *recallOntologyFixture) rejectHistoricalOverride(t testing.TB, action topic.OverrideAction, handles []topic.SourceHandle) {
 	t.Helper()
-	snapshots, err := f.ontology.ReadSources(context.Background(), f.team, handles)
+	snapshots, err := f.topicStore.ReadSources(context.Background(), f.team, handles)
 	require.NoError(t, err)
-	record := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: action, Members: handles}}
+	record := topic.Record{ID: uuid.NewString(), Kind: topic.OverrideKind, Override: &topic.Override{Action: action, Members: handles}}
 	for _, snapshot := range snapshots {
-		fingerprint, err := ontology.SourceFingerprint(snapshot)
+		fingerprint, err := topic.SourceFingerprint(snapshot)
 		require.NoError(t, err)
-		record.Sources = append(record.Sources, ontology.SourceDependency{SourceHandle: snapshot.SourceHandle, Fingerprint: fingerprint})
+		record.Sources = append(record.Sources, topic.SourceDependency{SourceHandle: snapshot.SourceHandle, Fingerprint: fingerprint})
 	}
-	page, err := f.ontology.ListRecords(context.Background(), f.team, "", "", 1)
+	page, err := f.topicStore.ListRecords(context.Background(), f.team, "", "", 1)
 	require.NoError(t, err)
-	_, err = f.ontology.PublishManager(f.actor(0, "manager"), f.team, ontology.Publication{OperationKey: uuid.NewString(), ExpectedRevision: page.Revision, Reason: "Retired override", Changes: []ontology.Change{{Record: record}}})
-	require.ErrorIs(t, err, ontology.ErrOverride)
+	_, err = f.topicStore.PublishManager(f.actor(0, "manager"), f.team, topic.Publication{OperationKey: uuid.NewString(), ExpectedRevision: page.Revision, Reason: "Retired override", Changes: []topic.Change{{Record: record}}})
+	require.ErrorIs(t, err, topic.ErrOverride)
 }
 
 func (f *recallOntologyFixture) organizer(t testing.TB, meanings map[string]string) (*organization.Service, *atomic.Int32) {
@@ -137,7 +137,7 @@ func (f *recallOntologyFixture) organizerWithAccounting(t testing.TB, meanings m
 		response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
 		definitionRef := ""
 		for _, definition := range request.Definitions {
-			if definition.Kind == ontology.Topic {
+			if definition.Kind == topic.Topic {
 				definitionRef = definition.Ref
 				break
 			}
@@ -153,7 +153,7 @@ func (f *recallOntologyFixture) organizerWithAccounting(t testing.TB, meanings m
 			}
 		}
 		if definitionRef == "postgresql-topic" && len(response.Items) != 0 {
-			response.Definitions = append(response.Definitions, assessment.Definition{Ref: definitionRef, Kind: ontology.Topic, Key: "postgresql", Label: "PostgreSQL", Description: "Synthetic PostgreSQL source organization", Aliases: []string{"database"}})
+			response.Definitions = append(response.Definitions, assessment.Definition{Ref: definitionRef, Kind: topic.Topic, Key: "postgresql", Label: "PostgreSQL", Description: "Synthetic PostgreSQL source organization", Aliases: []string{"database"}})
 		}
 		for _, pair := range request.Pairs {
 			if pair.RequiredRelation != "" {
@@ -175,16 +175,16 @@ func (f *recallOntologyFixture) organizerWithAccounting(t testing.TB, meanings m
 	limits := assessor.DefaultSemanticAssessmentLimits()
 	cfg := &config.Config{AIVerifierAPIURL: server.URL, AIVerifierAPIKey: "synthetic-provider-key", AIVerifierModel: "fixture-model"}
 	transport := structured.NewOpenAI(cfg, server.Client())
-	return organization.NewService(f.ontology, assessment.NewProviderWithAccounting(transport, "fixture-model", limits, accounting, 300000)), calls
+	return organization.NewService(f.topicStore, assessment.NewProviderWithAccounting(transport, "fixture-model", limits, accounting, 300000)), calls
 }
 
-func (f *recallOntologyFixture) assignment(t testing.TB, definitionID string, handle ontology.SourceHandle) ontology.Record {
+func (f *recallOntologyFixture) assignment(t testing.TB, definitionID string, handle topic.SourceHandle) topic.Record {
 	t.Helper()
-	snapshots, err := f.ontology.ReadSources(context.Background(), f.team, []ontology.SourceHandle{handle})
+	snapshots, err := f.topicStore.ReadSources(context.Background(), f.team, []topic.SourceHandle{handle})
 	require.NoError(t, err)
-	fingerprint, err := ontology.SourceFingerprint(snapshots[0])
+	fingerprint, err := topic.SourceFingerprint(snapshots[0])
 	require.NoError(t, err)
-	return ontology.Record{ID: uuid.NewString(), Kind: ontology.AssignmentKind,
-		Assignment: &ontology.Assignment{Source: handle, DefinitionID: definitionID},
-		Sources:    []ontology.SourceDependency{{SourceHandle: handle, Fingerprint: fingerprint}}}
+	return topic.Record{ID: uuid.NewString(), Kind: topic.AssignmentKind,
+		Assignment: &topic.Assignment{Source: handle, DefinitionID: definitionID},
+		Sources:    []topic.SourceDependency{{SourceHandle: handle, Fingerprint: fingerprint}}}
 }

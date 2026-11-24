@@ -132,7 +132,7 @@ func TestRetrievalOntologyMembershipDoesNotAddRankingVotes(t *testing.T) {
 				})
 			}
 			ordinary := fuseRecallCandidates(batch, kind, nil)
-			batch.OntologyHits = []searchcontract.SearchHit{batch.VectorHits[59], batch.VectorHits[0], batch.VectorHits[59]}
+			batch.OrganizationHits = []searchcontract.SearchHit{batch.VectorHits[59], batch.VectorHits[0], batch.VectorHits[59]}
 			withOntology := fuseRecallCandidates(batch, kind, nil)
 			require.Equal(t, ordinary, withOntology)
 			require.InDelta(t, 1.0/120, withOntology[59].Score, 1e-12)
@@ -149,7 +149,7 @@ func TestRetrievalOntologyFallbackIsUniqueUnweightedAndKnownScoped(t *testing.T)
 		t.Run(kind, func(t *testing.T) {
 			batch := &recallcontract.RecallCandidateBatch{
 				TextHits: []searchcontract.SearchHit{{SourceKind: kind, SourceID: "scored", SearchState: "current"}},
-				OntologyHits: []searchcontract.SearchHit{
+				OrganizationHits: []searchcontract.SearchHit{
 					{SourceKind: kind, SourceID: "b", SearchState: "pending"},
 					{SourceKind: kind, SourceID: "a", SearchState: "failed"},
 					{SourceKind: kind, SourceID: "a", SearchState: "failed"},

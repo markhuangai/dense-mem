@@ -5,14 +5,14 @@ import (
 	"sort"
 
 	"github.com/lib/pq"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 )
 
-func (s *Store) PreviewManagementDraft(ctx context.Context, teamID, id string, version int64) (ontology.ImpactPreview, error) {
-	var result ontology.ImpactPreview
+func (s *Store) PreviewManagementDraft(ctx context.Context, teamID, id string, version int64) (topic.ImpactPreview, error) {
+	var result topic.ImpactPreview
 	if version < 1 {
-		return result, ontology.ErrInvalid
+		return result, topic.ErrInvalid
 	}
 	err := s.withManagerScope(ctx, teamID, false, func(tx *gorm.DB, fence scope, owner string) error {
 		draft, err := loadManagementDraft(tx, fence, owner, id, false)
@@ -20,18 +20,18 @@ func (s *Store) PreviewManagementDraft(ctx context.Context, teamID, id string, v
 			return err
 		}
 		if draft.Draft.Version != version {
-			return ontology.PublicationVersionRejection("draft_version", id, version, draft.Draft.Version)
+			return topic.PublicationVersionRejection("draft_version", id, version, draft.Draft.Version)
 		}
 		if draft.Draft.State != "open" {
-			return &ontology.PublicationRejection{Cause: ontology.ErrConflict, Reason: "draft_state", RecordID: id, Expected: "open", Observed: draft.Draft.State}
+			return &topic.PublicationRejection{Cause: topic.ErrConflict, Reason: "draft_state", RecordID: id, Expected: "open", Observed: draft.Draft.State}
 		}
-		if diagnostic := ontology.PublicationDiagnosticFromContext(ctx); diagnostic != nil {
+		if diagnostic := topic.PublicationDiagnosticFromContext(ctx); diagnostic != nil {
 			diagnostic.Publication = &draft.Prepared
 		}
 		if _, _, err := validateManagementPublication(tx, fence, draft.Prepared); err != nil {
 			return err
 		}
-		result = ontology.ImpactPreview{DraftID: id, DraftVersion: version, Revision: draft.Draft.BaseRevision, ChangedRecords: len(draft.Prepared.Changes), Examples: []ontology.ManagementSource{}, Complete: true, RequiresReassessment: true}
+		result = topic.ImpactPreview{DraftID: id, DraftVersion: version, Revision: draft.Draft.BaseRevision, ChangedRecords: len(draft.Prepared.Changes), Examples: []topic.ManagementSource{}, Complete: true, RequiresReassessment: true}
 		return readManagementImpact(tx, fence, draft.Prepared, &result)
 	})
 	return result, err
@@ -61,13 +61,13 @@ const managementImpactSQL = `WITH RECURSIVE scope AS (
 )
 `
 
-func readManagementImpact(tx *gorm.DB, fence scope, input ontology.Publication, result *ontology.ImpactPreview) error {
+func readManagementImpact(tx *gorm.DB, fence scope, input topic.Publication, result *topic.ImpactPreview) error {
 	var ids, keys []string
-	handles := map[ontology.SourceHandle]bool{}
+	handles := map[topic.SourceHandle]bool{}
 	for _, change := range input.Changes {
 		ids = append(ids, change.Record.ID)
 		for _, source := range change.Record.Sources {
-			keys = append(keys, ontology.SourceKey(source.SourceHandle))
+			keys = append(keys, topic.SourceKey(source.SourceHandle))
 			handles[source.SourceHandle] = true
 		}
 	}
@@ -75,12 +75,12 @@ func readManagementImpact(tx *gorm.DB, fence scope, input ontology.Publication, 
 	if err := tx.Raw(managementImpactSQL+`SELECT count(*) FROM affected JOIN topic_record_heads AS head USING(record_id) JOIN scope USING(team_id,shared_space_id,space_generation) WHERE NOT head.retired`, args...).Row().Scan(&result.AffectedRecords); err != nil {
 		return err
 	}
-	rows, err := tx.Raw(managementImpactSQL+`SELECT DISTINCT source_kind,source_id,source_version FROM keys ORDER BY source_kind,source_id,source_version LIMIT ?`, append(args, ontology.MaxDependencyRecords+1)...).Rows()
+	rows, err := tx.Raw(managementImpactSQL+`SELECT DISTINCT source_kind,source_id,source_version FROM keys ORDER BY source_kind,source_id,source_version LIMIT ?`, append(args, topic.MaxDependencyRecords+1)...).Rows()
 	if err != nil {
 		return err
 	}
 	for rows.Next() {
-		var handle ontology.SourceHandle
+		var handle topic.SourceHandle
 		if err := rows.Scan(&handle.Kind, &handle.ID, &handle.Version); err != nil {
 			rows.Close()
 			return err
@@ -95,10 +95,10 @@ func readManagementImpact(tx *gorm.DB, fence scope, input ontology.Publication, 
 	if closeErr != nil {
 		return closeErr
 	}
-	if len(handles) > ontology.MaxDependencyRecords {
-		return ontology.ErrContextBound
+	if len(handles) > topic.MaxDependencyRecords {
+		return topic.ErrContextBound
 	}
-	ordered := make([]ontology.SourceHandle, 0, len(handles))
+	ordered := make([]topic.SourceHandle, 0, len(handles))
 	for handle := range handles {
 		ordered = append(ordered, handle)
 	}
@@ -108,7 +108,7 @@ func readManagementImpact(tx *gorm.DB, fence scope, input ontology.Publication, 
 	}
 	// A stale dependency handle must not turn a preview example into evidence disclosure.
 	sort.Slice(ordered, func(i, j int) bool {
-		left, right := ontology.SourceKey(ordered[i]), ontology.SourceKey(ordered[j])
+		left, right := topic.SourceKey(ordered[i]), topic.SourceKey(ordered[j])
 		if left != right {
 			return left < right
 		}
@@ -120,7 +120,7 @@ func readManagementImpact(tx *gorm.DB, fence scope, input ontology.Publication, 
 			continue
 		}
 		result.AffectedSources++
-		if len(result.Examples) < ontology.MaxPreviewExamples {
+		if len(result.Examples) < topic.MaxPreviewExamples {
 			result.Examples = append(result.Examples, managementSource(source))
 		}
 	}

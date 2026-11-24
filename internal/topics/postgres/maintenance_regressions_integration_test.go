@@ -17,7 +17,7 @@ import (
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	organization "github.com/markhuangai/dense-mem/internal/topics"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -65,7 +65,7 @@ func TestOntologyMaintenanceRunCompletionUsesActiveScope(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, turn)
 			for range 6 {
-				require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, ontology.MaintenancePageSize))
+				require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, topiccontract.MaintenancePageSize))
 			}
 			require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
 				if err := tx.Exec(`UPDATE topic_maintenance_sources SET status=?,last_run_id=?::uuid WHERE team_id=?::uuid`, failedStatus, turn.RunID, f.team).Error; err != nil {
@@ -85,7 +85,7 @@ func TestOntologyMaintenanceRunCompletionUsesActiveScope(t *testing.T) {
 			require.NoError(t, f.admin.Raw(`SELECT status FROM topic_maintenance_runs WHERE run_id=?::uuid`, turn.RunID).Row().Scan(&runStatus))
 			require.Equal(t, "completed", runStatus)
 			_, err = f.store.MaintenanceCommand(ctx, domain.TopicMaintenanceCommand{Action: "retry", OperationKey: "historical-retry", RetryRunID: turn.RunID}, time.Now().UTC(), nil)
-			require.ErrorIs(t, err, ontology.ErrInvalid)
+			require.ErrorIs(t, err, topiccontract.ErrInvalid)
 		})
 	}
 }
@@ -101,7 +101,7 @@ func TestOntologyMaintenanceQueuedMarkerCoalescingAndConsumption(t *testing.T) {
 	require.NotNil(t, turn)
 	defer func() { require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn)) }()
 	for range 8 {
-		require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, ontology.MaintenancePageSize))
+		require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, topiccontract.MaintenancePageSize))
 	}
 	mutate := func(ctx context.Context, revision int) error {
 		return f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
@@ -127,7 +127,7 @@ func TestOntologyMaintenanceQueuedMarkerCoalescingAndConsumption(t *testing.T) {
 	require.NoError(t, f.admin.Raw(`SELECT last_value FROM topic_maintenance_marker_seq`).Row().Scan(&coalescedSequence))
 	require.Equal(t, allocatedSequence, coalescedSequence, "coalesced writes avoid allocating a global queue sequence")
 	require.NoError(t, f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
-		return tx.Exec(`UPDATE topic_maintenance_markers SET cursor=? WHERE team_id=?::uuid AND anchor_kind='evidence_fragments' AND anchor_id=?`, ontology.SourceKey(source), f.team, source.ID).Error
+		return tx.Exec(`UPDATE topic_maintenance_markers SET cursor=? WHERE team_id=?::uuid AND anchor_kind='evidence_fragments' AND anchor_id=?`, topiccontract.SourceKey(source), f.team, source.ID).Error
 	}))
 	require.NoError(t, mutate(ctx, 3))
 	reset, cursor := marker()
@@ -158,7 +158,7 @@ func TestOntologyMaintenanceQueuedMarkerCoalescingAndConsumption(t *testing.T) {
 	requeued, cursor := marker()
 	require.Greater(t, requeued, reset)
 	require.Empty(t, cursor)
-	require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, ontology.MaintenancePageSize))
+	require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, topiccontract.MaintenancePageSize))
 	var version int64
 	require.NoError(t, f.admin.Raw(`SELECT source_version FROM topic_maintenance_sources WHERE team_id=?::uuid AND source_kind='evidence' AND source_id=?`, f.team, source.ID).Row().Scan(&version))
 	require.EqualValues(t, 1, version, "Evidence retains its immutable source version after rediscovery")
@@ -171,13 +171,13 @@ func TestOntologyMaintenanceDefinitionMarkersTargetReceiptsAndVocabulary(t *test
 	dependent := f.organizationEvidence(t, 1, "Atlas uses PostgreSQL.", nil)
 	unrelated := f.organizationEvidence(t, 0, "Vega writes Swift.", nil)
 	root := testTopic("systems")
-	root.Sources = []ontology.SourceDependency{f.source(t, support)}
-	_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("marker-root", 0, ontology.Change{Record: root}))
+	root.Sources = []topiccontract.SourceDependency{f.source(t, support)}
+	_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("marker-root", 0, topiccontract.Change{Record: root}))
 	require.NoError(t, err)
 	child := testTopic("postgresql")
 	child.Definition.ParentID = root.ID
-	child.Dependencies = []ontology.RevisionRef{{ID: root.ID, Version: 1}}
-	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("marker-child", 1, ontology.Change{Record: child}))
+	child.Dependencies = []topiccontract.RevisionRef{{ID: root.ID, Version: 1}}
+	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("marker-child", 1, topiccontract.Change{Record: child}))
 	require.NoError(t, err)
 	config := maintenanceSettings(t, f)
 	service, _ := maintenanceServiceFixture(t, f, config, func(_ assessment.Request, response *assessment.Response) { response.Items = nil })
@@ -190,27 +190,27 @@ func TestOntologyMaintenanceDefinitionMarkersTargetReceiptsAndVocabulary(t *test
 	status, err := service.Status(ctx)
 	require.NoError(t, err)
 	require.EqualValues(t, 3, status.Counts.Failed)
-	selectSources := func(marker maintenanceMarker) []ontology.SourceHandle {
+	selectSources := func(marker maintenanceMarker) []topiccontract.SourceHandle {
 		t.Helper()
-		var handles []ontology.SourceHandle
+		var handles []topiccontract.SourceHandle
 		require.NoError(t, f.store.withScope(ctx, f.team, true, func(tx *gorm.DB, fence scope) error {
 			var err error
-			handles, err = maintenanceMarkerSources(tx, fence, marker, ontology.MaintenancePageSize)
+			handles, err = maintenanceMarkerSources(tx, fence, marker, topiccontract.MaintenancePageSize)
 			return err
 		}))
 		return handles
 	}
-	handles := selectSources(maintenanceMarker{AnchorKind: "source_dependency", AnchorID: ontology.SourceKey(support), TargetKind: "definition", TargetID: support.ID})
-	require.Equal(t, []ontology.SourceHandle{support}, handles, "a source dependency marker follows materialized catalog dependencies")
+	handles := selectSources(maintenanceMarker{AnchorKind: "source_dependency", AnchorID: topiccontract.SourceKey(support), TargetKind: "definition", TargetID: support.ID})
+	require.Equal(t, []topiccontract.SourceHandle{support}, handles, "a source dependency marker follows materialized catalog dependencies")
 	handles = selectSources(maintenanceMarker{AnchorKind: "topic_record_heads", AnchorID: child.ID, TargetKind: "definition", TargetID: child.ID})
-	require.Equal(t, []ontology.SourceHandle{dependent}, handles, "a Topic revision marker finds matching Evidence without reading failed receipts")
+	require.Equal(t, []topiccontract.SourceHandle{dependent}, handles, "a Topic revision marker finds matching Evidence without reading failed receipts")
 	page, err := f.store.ListRecords(ctx, f.team, "", "", 1)
 	require.NoError(t, err)
 	topic := testTopic("swift")
-	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("new-vocabulary", page.Revision, ontology.Change{Record: topic}))
+	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("new-vocabulary", page.Revision, topiccontract.Change{Record: topic}))
 	require.NoError(t, err)
 	handles = selectSources(maintenanceMarker{AnchorKind: "topic_record_heads", AnchorID: topic.ID, TargetKind: "definition", TargetID: topic.ID})
-	require.Equal(t, []ontology.SourceHandle{unrelated}, handles, "new vocabulary must reach a failed source with no previous dependency on the new record")
+	require.Equal(t, []topiccontract.SourceHandle{unrelated}, handles, "new vocabulary must reach a failed source with no previous dependency on the new record")
 }
 
 func TestOntologyMaintenanceTransitiveInvalidation(t *testing.T) {
@@ -218,13 +218,13 @@ func TestOntologyMaintenanceTransitiveInvalidation(t *testing.T) {
 	a := f.organizationEvidence(t, 0, "Evidence supporting database vocabulary.", nil)
 	b := f.organizationEvidence(t, 1, "Atlas uses PostgreSQL.", nil)
 	topic := testTopic("postgresql")
-	topic.Sources = []ontology.SourceDependency{f.source(t, a)}
-	_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("supported-topic", 0, ontology.Change{Record: topic}))
+	topic.Sources = []topiccontract.SourceDependency{f.source(t, a)}
+	_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("supported-topic", 0, topiccontract.Change{Record: topic}))
 	require.NoError(t, err)
 	config := maintenanceSettings(t, f)
 	service, _ := maintenanceServiceFixture(t, f, config, nil)
 	drainMaintenance(t, service)
-	viewPage, err := f.store.ListRecords(context.Background(), f.team, ontology.AssignmentKind, "", 20)
+	viewPage, err := f.store.ListRecords(context.Background(), f.team, topiccontract.AssignmentKind, "", 20)
 	require.NoError(t, err)
 	var dependent string
 	for _, record := range viewPage.Records {
@@ -241,7 +241,7 @@ func TestOntologyMaintenanceTransitiveInvalidation(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, turn)
 	for range 10 {
-		require.NoError(t, f.store.discoverMaintenanceError(context.Background(), *turn, ontology.MaintenancePageSize))
+		require.NoError(t, f.store.discoverMaintenanceError(context.Background(), *turn, topiccontract.MaintenancePageSize))
 	}
 	status, err := service.Status(context.Background())
 	require.NoError(t, err)
@@ -276,7 +276,7 @@ func TestOntologyMaintenanceControlInterruptionResumesSameWindow(t *testing.T) {
 			}
 			err := f.store.AdmitMaintenanceAttempt(ctx, *claim, uuid.NewString(), 1, 100, 100, time.Now().UTC())
 			require.Error(t, err)
-			require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, ontology.OrganizationResult{}, failure, time.Now().UTC()))
+			require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, topiccontract.OrganizationResult{}, failure, time.Now().UTC()))
 			require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn))
 			status, err := f.store.MaintenanceStatus(ctx, time.Now().UTC())
 			require.NoError(t, err)
@@ -391,7 +391,7 @@ func TestOntologyMaintenanceCompetingAdmissionAndCrashRecovery(t *testing.T) {
 	require.NotEqual(t, a.TeamID, b.TeamID)
 	results := make(chan error, 2)
 	var workers sync.WaitGroup
-	for _, claim := range []*ontology.MaintenanceClaim{a, b} {
+	for _, claim := range []*topiccontract.MaintenanceClaim{a, b} {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
@@ -405,7 +405,7 @@ func TestOntologyMaintenanceCompetingAdmissionAndCrashRecovery(t *testing.T) {
 		if err == nil {
 			admitted++
 		} else {
-			require.ErrorIs(t, err, ontology.ErrWindowClosed)
+			require.ErrorIs(t, err, topiccontract.ErrWindowClosed)
 			deferred++
 		}
 	}

@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -15,7 +15,7 @@ func TestOntologyManagementCompetingSavesKeepLosingEdits(t *testing.T) {
 	f := newOntologyFixture(t)
 	service := managementService(f)
 	ctx := f.actor(0, "manager")
-	input := managementInput(0, ontology.ManagementEdit{Action: "define", Kind: ontology.Topic, Definition: &ontology.Definition{Key: "save-race", Label: "Save race"}})
+	input := managementInput(0, topic.ManagementEdit{Action: "define", Kind: topic.Topic, Definition: &topic.Definition{Key: "save-race", Label: "Save race"}})
 	draft, err := service.SaveDraft(ctx, "", input)
 	require.NoError(t, err)
 	var group sync.WaitGroup
@@ -33,9 +33,9 @@ func TestOntologyManagementCompetingSavesKeepLosingEdits(t *testing.T) {
 	}
 	group.Wait()
 	if errors[0] == nil {
-		require.ErrorIs(t, errors[1], ontology.ErrConflict)
+		require.ErrorIs(t, errors[1], topic.ErrConflict)
 	} else {
-		require.ErrorIs(t, errors[0], ontology.ErrConflict)
+		require.ErrorIs(t, errors[0], topic.ErrConflict)
 		require.NoError(t, errors[1])
 	}
 	stored, err := service.Draft(ctx, draft.ID)

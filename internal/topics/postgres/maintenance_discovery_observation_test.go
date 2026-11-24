@@ -5,15 +5,15 @@ import (
 	"errors"
 	"testing"
 
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
 func TestMaintenanceDiscoveryObservation(t *testing.T) {
 	fence := scope{TeamID: "team", SpaceID: "space", Generation: 2}
-	handle := ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: "source", Version: 1}
-	receipt := ontology.OrganizationReceipt{ID: "receipt", OperationKey: "operation",
-		Sources: []ontology.SourceDependency{{SourceHandle: handle}}, Dependencies: []ontology.RevisionRef{{ID: "definition", Version: 1}}}
+	handle := topic.SourceHandle{Kind: topic.EvidenceSource, ID: "source", Version: 1}
+	receipt := topic.OrganizationReceipt{ID: "receipt", OperationKey: "operation",
+		Sources: []topic.SourceDependency{{SourceHandle: handle}}, Dependencies: []topic.RevisionRef{{ID: "definition", Version: 1}}}
 	require.Nil(t, observeMaintenanceReceipt(context.Background(), fence, handle, receipt))
 	observeMaintenanceSource(context.Background(), fence, handle, "source_selected", nil)
 	var events []maintenanceDiscoveryEvent

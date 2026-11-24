@@ -22,18 +22,18 @@ import (
 	recall "github.com/markhuangai/dense-mem/internal/recall"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
 func TestEvidenceOnlyPostgresTopicsUseDirectMembershipAndDeterministicHints(t *testing.T) {
 	f := newRecallOntologyFixture(t)
 	first, second := f.evidence(t, 0, "Shared topic first matching Evidence.", nil), f.evidence(t, 1, "Shared topic second matching Evidence.", nil)
-	unseen := []ontology.SourceHandle{f.evidence(t, 0, "Additional child Evidence.", nil), f.evidence(t, 1, "Additional sibling Evidence one.", nil), f.evidence(t, 1, "Additional sibling Evidence two.", nil)}
+	unseen := []topiccontract.SourceHandle{f.evidence(t, 0, "Additional child Evidence.", nil), f.evidence(t, 1, "Additional sibling Evidence one.", nil), f.evidence(t, 1, "Additional sibling Evidence two.", nil)}
 	parentEvidence := f.evidence(t, 0, "Direct parent Evidence.", nil)
-	parent := ontology.Record{ID: "73100000-0000-4000-8000-000000000001", Kind: ontology.Topic, Definition: &ontology.Definition{Key: "operations", Label: "Operations", Description: "Operational Evidence"}}
-	child := ontology.Record{ID: "73100000-0000-4000-8000-000000000002", Kind: ontology.Topic, Definition: &ontology.Definition{Key: "database operations", Label: "Database operations", Description: "Database operating procedures", ParentID: parent.ID}}
-	sibling := ontology.Record{ID: "73100000-0000-4000-8000-000000000003", Kind: ontology.Topic, Definition: &ontology.Definition{Key: "service operations", Label: "Service operations", Description: "Service operating procedures"}}
+	parent := topiccontract.Record{ID: "73100000-0000-4000-8000-000000000001", Kind: topiccontract.Topic, Definition: &topiccontract.Definition{Key: "operations", Label: "Operations", Description: "Operational Evidence"}}
+	child := topiccontract.Record{ID: "73100000-0000-4000-8000-000000000002", Kind: topiccontract.Topic, Definition: &topiccontract.Definition{Key: "database operations", Label: "Database operations", Description: "Database operating procedures", ParentID: parent.ID}}
+	sibling := topiccontract.Record{ID: "73100000-0000-4000-8000-000000000003", Kind: topiccontract.Topic, Definition: &topiccontract.Definition{Key: "service operations", Label: "Service operations", Description: "Service operating procedures"}}
 	f.publication(t, parent, child, sibling,
 		f.assignment(t, parent.ID, parentEvidence),
 		f.assignment(t, child.ID, first), f.assignment(t, child.ID, second), f.assignment(t, child.ID, unseen[0]),
@@ -82,8 +82,8 @@ func TestEvidenceOnlyPostgresTopicsUseDirectMembershipAndDeterministicHints(t *t
 func TestEvidenceOnlyPostgresTopicsRejectUnavailableAndReauthorizeCurrentMembership(t *testing.T) {
 	f := newRecallOntologyFixture(t)
 	first, withdrawn := f.evidence(t, 0, "Current shared topic Evidence.", nil), f.evidence(t, 1, "Withdrawn shared topic Evidence.", nil)
-	parent := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "parent", Label: "Parent"}}
-	child := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "child", Label: "Child", ParentID: parent.ID}}
+	parent := topiccontract.Record{ID: uuid.NewString(), Kind: topiccontract.Topic, Definition: &topiccontract.Definition{Key: "parent", Label: "Parent"}}
+	child := topiccontract.Record{ID: uuid.NewString(), Kind: topiccontract.Topic, Definition: &topiccontract.Definition{Key: "child", Label: "Child", ParentID: parent.ID}}
 	f.publication(t, parent, child, f.assignment(t, child.ID, first), f.assignment(t, child.ID, withdrawn))
 	ctx := f.actor(2, "member")
 	input := RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, SpaceKind: "team_shared", OrganizationEnabled: true, TopicIDs: []string{child.ID}, Limit: 10}
@@ -119,8 +119,8 @@ func TestEvidenceOnlyPostgresTopicsRejectUnavailableAndReauthorizeCurrentMembers
 	var foreignGeneration int64
 	require.NoError(t, f.admin.Raw(`SELECT id::text,generation FROM memory_spaces WHERE team_id=?::uuid AND kind='team_shared'`, foreignTeam).Row().Scan(&foreignSpace, &foreignGeneration))
 	foreignCtx := requestctx.WithActor(context.Background(), requestctx.Actor{TeamID: uuid.MustParse(foreignTeam), OwnerID: uuid.MustParse(foreignOwner), Role: "manager", Grants: []string{"read", "write"}, AllowedSpaces: []domain.MemorySpaceAccess{{ID: uuid.MustParse(foreignSpace), Kind: domain.MemorySpaceTeamShared, Generation: foreignGeneration}}})
-	foreignTopic := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "foreign", Label: "Foreign"}}
-	_, err = f.ontology.PublishManager(foreignCtx, foreignTeam, ontology.Publication{OperationKey: "foreign-topic", Reason: "Isolation fixture", Changes: []ontology.Change{{Record: foreignTopic}}})
+	foreignTopic := topiccontract.Record{ID: uuid.NewString(), Kind: topiccontract.Topic, Definition: &topiccontract.Definition{Key: "foreign", Label: "Foreign"}}
+	_, err = f.topicStore.PublishManager(foreignCtx, foreignTeam, topiccontract.Publication{OperationKey: "foreign-topic", Reason: "Isolation fixture", Changes: []topiccontract.Change{{Record: foreignTopic}}})
 	require.NoError(t, err)
 	input.TopicIDs = []string{foreignTopic.ID}
 	_, err = f.search.RecallEvidence(ctx, input)
@@ -145,8 +145,8 @@ func (c evidenceOnlyTopicConfig) TopicMaintenanceRuntimeConfig(context.Context) 
 func TestEvidenceOnlyPostgresTopicLogDiagnosis(t *testing.T) {
 	f := newRecallOntologyFixture(t)
 	const credential, presentedCredential = "topic-credential-canary", "topic-request-credential-canary"
-	topic := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "diagnosis", Label: "Diagnosis", Description: "Topic diagnosis admitted detail. " + credential + " " + presentedCredential}}
-	records := []ontology.Record{topic}
+	topic := topiccontract.Record{ID: uuid.NewString(), Kind: topiccontract.Topic, Definition: &topiccontract.Definition{Key: "diagnosis", Label: "Diagnosis", Description: "Topic diagnosis admitted detail. " + credential + " " + presentedCredential}}
+	records := []topiccontract.Record{topic}
 	evidenceIDs, assignmentIDs := []string{}, []string{}
 	for index := range 60 {
 		source := f.evidence(t, index%2, fmt.Sprintf("Topic diagnosis admitted Evidence %d.", index), nil)
@@ -165,7 +165,7 @@ func TestEvidenceOnlyPostgresTopicLogDiagnosis(t *testing.T) {
 	logger := observability.NewWithProtector(slog.LevelDebug, protector)
 	os.Stdout = previous
 	f.search.recall.WithTopicDiagnostics(logger, protector)
-	api := recall.NewRecallService(recall.RecallDependencies{Search: f.search.recall, OntologyConfig: evidenceOnlyTopicConfig(true), Logger: logger, DiagnosticProtector: protector})
+	api := recall.NewRecallService(recall.RecallDependencies{Search: f.search.recall, TopicMaintenanceConfig: evidenceOnlyTopicConfig(true), Logger: logger, DiagnosticProtector: protector})
 	ctx := observability.WithAuthenticationSecrets(f.actor(2, "member"), presentedCredential)
 	selected, err := api.Recall(ctx, recall.RecallRequest{TopicIDs: []string{topic.ID}})
 	require.NoError(t, err)
@@ -235,7 +235,7 @@ func TestEvidenceOnlyPostgresTopicLogDiagnosis(t *testing.T) {
 			require.Equal(t, "DEBUG", record["level"])
 			require.Equal(t, []any{topic.ID}, record["requested_ids"])
 			require.Equal(t, float64(f.generation), record["generation"])
-			var selection ontology.TopicReadResult
+			var selection topiccontract.TopicReadResult
 			require.NoError(t, json.Unmarshal(payloads[captureID], &selection))
 			require.Len(t, selection.Topics, 1)
 			require.ElementsMatch(t, evidenceIDs, selection.Topics[0].EvidenceIDs)
@@ -267,7 +267,7 @@ func TestEvidenceOnlyPostgresTopicLogDiagnosis(t *testing.T) {
 				optional = true
 			} else if record["requested_ids"] != nil {
 				rejected = true
-				var selection ontology.TopicReadResult
+				var selection topiccontract.TopicReadResult
 				require.NoError(t, json.Unmarshal(payloads[captureID], &selection))
 				require.Equal(t, "unavailable", selection.Rejected[missing])
 			}
@@ -281,7 +281,7 @@ func TestEvidenceOnlyPostgresTopicLogDiagnosis(t *testing.T) {
 
 func TestEvidenceOnlyPostgresTopicFiltersRespectRuntimeDisable(t *testing.T) {
 	f := newRecallOntologyFixture(t)
-	svc := recall.NewRecallService(recall.RecallDependencies{Search: f.search.recall, OntologyConfig: evidenceOnlyTopicConfig(false)})
+	svc := recall.NewRecallService(recall.RecallDependencies{Search: f.search.recall, TopicMaintenanceConfig: evidenceOnlyTopicConfig(false)})
 	_, err := svc.Recall(f.actor(2, "member"), recall.RecallRequest{TopicIDs: []string{uuid.NewString()}})
 	require.ErrorIs(t, err, recallcontract.ErrTopicUnavailable)
 	result, err := svc.Recall(f.actor(2, "member"), recall.RecallRequest{Query: "ordinary Evidence"})

@@ -23,7 +23,7 @@ import (
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -471,11 +471,11 @@ func TestEvidenceOnlyPostgresProgressConcurrentStarters(t *testing.T) {
 
 func insertProgressTopics(tx *gorm.DB, team, shared string, generation int64, publication string, recordCount int) error {
 	for offset := 0; offset < recordCount; offset += 500 {
-		var records []ontology.Record
+		var records []topic.Record
 		for i := offset; i < recordCount && i < offset+500; i++ {
-			record := ontology.Record{ID: uuid.NewString(), Version: 1, Kind: ontology.Topic, Definition: &ontology.Definition{Key: fmt.Sprintf("topic_%d", i), Label: fmt.Sprintf("Topic %d", i), Description: "synthetic volume"}}
+			record := topic.Record{ID: uuid.NewString(), Version: 1, Kind: topic.Topic, Definition: &topic.Definition{Key: fmt.Sprintf("topic_%d", i), Label: fmt.Sprintf("Topic %d", i), Description: "synthetic volume"}}
 			var err error
-			record.Fingerprint, err = ontology.RecordFingerprintWithAcceptedSources(record, nil)
+			record.Fingerprint, err = topic.RecordFingerprintWithAcceptedSources(record, nil)
 			if err != nil {
 				return err
 			}

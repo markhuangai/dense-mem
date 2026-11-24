@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -34,9 +34,9 @@ func TestOntologyUpgradeComposeSeed(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, pool.Close()) })
 	batch := seedOntologyUpgrade(t, db)
-	definition := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "upgrade-matching", Label: "Upgrade matching", Description: "of and the"}}
+	definition := topic.Record{ID: uuid.NewString(), Kind: topic.Topic, Definition: &topic.Definition{Key: "upgrade-matching", Label: "Upgrade matching", Description: "of and the"}}
 	definition.Version = 1
-	definition.Fingerprint, err = ontology.RecordFingerprintWithAcceptedSources(definition, nil)
+	definition.Fingerprint, err = topic.RecordFingerprintWithAcceptedSources(definition, nil)
 	require.NoError(t, err)
 	body, err := json.Marshal(definition)
 	require.NoError(t, err)

@@ -21,7 +21,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/provider/structured"
 	organization "github.com/markhuangai/dense-mem/internal/topics"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -169,7 +169,7 @@ func TestOntologyMaintenanceAttemptDiagnosticsPersistenceAndFailureBoundaries(t 
 			transport := structured.NewOpenAI(&config.Config{AIVerifierAPIURL: server.URL, AIVerifierModel: "fixture-model"}, client)
 			provider := assessment.NewProviderWithAccounting(transport, "fixture-model", limits, finalizationAccounting{f.store, *x.claim}, int(x.window.Policy.ContextWindowTokens))
 			service := organization.NewService(f.store, provider)
-			ctx, cancel := context.WithCancel(ontology.WithMaintenanceClaim(context.Background(), *x.claim))
+			ctx, cancel := context.WithCancel(topic.WithMaintenanceClaim(context.Background(), *x.claim))
 			defer cancel()
 			if mode == "canceled" {
 				go func() {
@@ -180,7 +180,7 @@ func TestOntologyMaintenanceAttemptDiagnosticsPersistenceAndFailureBoundaries(t 
 					}
 				}()
 			}
-			input := ontology.OrganizationInput{OperationKey: "maintenance:" + x.claim.ID, Sources: x.claim.Sources}
+			input := topic.OrganizationInput{OperationKey: "maintenance:" + x.claim.ID, Sources: x.claim.Sources}
 			result, err := service.Organize(ctx, f.team, input)
 			invalid := mode == "decode_invalid" || mode == "validate_invalid"
 			failed := invalid || mode == "timeout" || mode == "canceled" || mode == "reconciliation_failure"
@@ -202,7 +202,7 @@ func TestOntologyMaintenanceAttemptDiagnosticsPersistenceAndFailureBoundaries(t 
 					require.NotNil(t, attempt.Validation)
 					require.Equal(t, "response_invalid", attempt.FailureCode)
 					if mode == "decode_invalid" || (mode == "repaired" && i == 0) {
-						require.Equal(t, &ontology.AssessmentValidation{Stage: "decode", Code: "missing_field", FieldFamily: "request_id"}, attempt.Validation)
+						require.Equal(t, &topic.AssessmentValidation{Stage: "decode", Code: "missing_field", FieldFamily: "request_id"}, attempt.Validation)
 					} else {
 						require.Equal(t, "validate", attempt.Validation.Stage)
 						require.Equal(t, "item_count_mismatch", attempt.Validation.Code)
@@ -257,9 +257,9 @@ func TestOntologyMaintenanceAttemptDiagnosticsPersistenceAndFailureBoundaries(t 
 			}
 			var body []byte
 			require.NoError(t, f.admin.Raw(`SELECT body FROM historical_organization_assessments WHERE assessment_id=?::uuid`, result.AssessmentID).Row().Scan(&body))
-			var receipt ontology.OrganizationReceipt
+			var receipt topic.OrganizationReceipt
 			require.NoError(t, json.Unmarshal(body, &receipt))
-			require.NoError(t, ontology.ValidateOrganizationReceipt(receipt))
+			require.NoError(t, topic.ValidateOrganizationReceipt(receipt))
 			require.Equal(t, result.Attempts, receipt.Result.Attempts)
 			require.NotContains(t, string(body), "synthetic-provider-secret")
 			require.NotContains(t, string(body), "raw-source-canary")
@@ -274,7 +274,7 @@ func TestOntologyMaintenanceAttemptDiagnosticsPersistenceAndFailureBoundaries(t 
 			require.Equal(t, result.Attempts, replayed.Attempts)
 			input.Sources = input.Sources[:1]
 			_, _, replayErr = f.store.FindOrganization(stable, f.team, input, provider.Identity())
-			require.ErrorIs(t, replayErr, ontology.ErrConflict)
+			require.ErrorIs(t, replayErr, topic.ErrConflict)
 			input.Sources = x.claim.Sources
 			_, found, foreignErr := f.store.FindOrganization(stable, other.team, input, provider.Identity())
 			require.True(t, foreignErr != nil || !found)

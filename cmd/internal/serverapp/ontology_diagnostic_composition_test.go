@@ -30,7 +30,7 @@ func TestOntologyFreshnessCaptureRetainsCompleteProtectedComparisons(t *testing.
 			secret := uuid.NewString()
 			var console bytes.Buffer
 			logger := observability.NewWithHandler(slog.NewJSONHandler(&console, &slog.HandlerOptions{Level: level}))
-			diagnostic := ontologyDiagnosticCapture(sink, observability.NewCredentialProtector(secret), logger.ContextSlog())
+			diagnostic := topicMaintenanceDiagnostics(sink, observability.NewCredentialProtector(secret), logger.ContextSlog())
 			claim := contract.MaintenanceClaim{TeamID: uuid.NewString(), RunID: uuid.NewString(), ID: uuid.NewString()}
 			state := &contract.OrganizationContextState{Records: []contract.OrganizationContextRevision{{ID: secret, Version: 1, Current: true}}, Candidates: []contract.OrganizationContextRevision{}}
 			for range contract.MaxDependencyRecords - 1 {
@@ -89,7 +89,7 @@ func TestOntologyFailureCaptureUsesPrivateSinkAndCompleteManifests(t *testing.T)
 	const secret = "known-provider-key"
 	const authentication = "presented-request-credential"
 	ctx := observability.WithAuthenticationSecrets(context.Background(), authentication)
-	diagnostic := ontologyDiagnosticCapture(sink, observability.NewCredentialProtector(secret), nil)
+	diagnostic := topicMaintenanceDiagnostics(sink, observability.NewCredentialProtector(secret), nil)
 	claim := contract.MaintenanceClaim{TeamID: uuid.NewString(), RunID: uuid.NewString(), ID: uuid.NewString()}
 	result := contract.OrganizationResult{AssessmentID: uuid.NewString(), FailureCode: "provider_response_invalid"}
 	response := `{"error":"` + strings.Repeat("provider detail ", 1000) + secret + authentication + `"}`

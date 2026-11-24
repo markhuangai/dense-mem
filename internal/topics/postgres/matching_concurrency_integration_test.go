@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -19,7 +19,7 @@ func TestOntologyMatchingConcurrentInvalidation(t *testing.T) {
 	source := f.organizationEvidence(t, 1, "heliostat of", nil)
 	definition := testTopic("concurrentcatalog")
 	definition.Definition.Description = "of and the"
-	revalidationPublish(t, f, ontology.Change{Record: definition})
+	revalidationPublish(t, f, topic.Change{Record: definition})
 	before := f.canonicalSnapshot(t)
 	writerCtx, cancelWriter := context.WithTimeout(f.actor(0, "manager"), 15*time.Second)
 	defer cancelWriter()
@@ -36,13 +36,13 @@ func TestOntologyMatchingConcurrentInvalidation(t *testing.T) {
 		claimed, err := claimMaintenanceMarker(tx, fence, marker)
 		require.NoError(t, err)
 		require.True(t, claimed)
-		page, err := maintenanceDefinitionGroupPage(tx, fence, []maintenanceMarker{marker}, ontology.MaintenancePageSize)
+		page, err := maintenanceDefinitionGroupPage(tx, fence, []maintenanceMarker{marker}, topic.MaintenancePageSize)
 		require.NoError(t, err)
 		require.Empty(t, page.Sources)
 		require.True(t, page.Exhausted[0])
 		definition.Definition.Description = "heliostat"
 		go func() {
-			_, err := f.store.PublishManager(writerCtx, f.team, testPublication("meaningful-concurrent-change", 1, ontology.Change{ExpectedVersion: 1, Record: definition}))
+			_, err := f.store.PublishManager(writerCtx, f.team, testPublication("meaningful-concurrent-change", 1, topic.Change{ExpectedVersion: 1, Record: definition}))
 			done <- err
 		}()
 		require.False(t, discoveryWriterState(t, f, done), "publication must wait for the claimed marker")
@@ -54,15 +54,15 @@ func TestOntologyMatchingConcurrentInvalidation(t *testing.T) {
 		var count int
 		require.NoError(t, tx.Raw(`SELECT count(*) FROM topic_maintenance_markers WHERE team_id=?::uuid AND anchor_kind=? AND anchor_id=? AND cursor=''`, f.team, marker.AnchorKind, marker.AnchorID).Row().Scan(&count))
 		require.Equal(t, 1, count, "the meaningful change must survive consumption of the old empty page")
-		handles, err := maintenanceMarkerSources(tx, fence, marker, ontology.MaintenancePageSize)
+		handles, err := maintenanceMarkerSources(tx, fence, marker, topic.MaintenancePageSize)
 		require.NoError(t, err)
-		require.Equal(t, []ontology.SourceHandle{source}, handles)
-		page, err := maintenanceDefinitionGroupPage(tx, fence, []maintenanceMarker{marker}, ontology.MaintenancePageSize)
+		require.Equal(t, []topic.SourceHandle{source}, handles)
+		page, err := maintenanceDefinitionGroupPage(tx, fence, []maintenanceMarker{marker}, topic.MaintenancePageSize)
 		require.NoError(t, err)
 		require.Equal(t, handles, page.Sources)
 		return nil
 	}))
-	contextData, err := f.store.ReadOrganization(ctx, f.team, []ontology.SourceHandle{source})
+	contextData, err := f.store.ReadOrganization(ctx, f.team, []topic.SourceHandle{source})
 	require.NoError(t, err)
 	require.Len(t, contextData.Candidates, 1)
 	require.Equal(t, definition.ID, contextData.Candidates[0].ID)

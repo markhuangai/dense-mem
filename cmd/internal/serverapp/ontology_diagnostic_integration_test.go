@@ -32,7 +32,7 @@ import (
 	settingspg "github.com/markhuangai/dense-mem/internal/settings/postgres"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
 	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
-	ontologypg "github.com/markhuangai/dense-mem/internal/topics/postgres"
+	topicpg "github.com/markhuangai/dense-mem/internal/topics/postgres"
 	"github.com/stretchr/testify/require"
 )
 
@@ -147,7 +147,7 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 			require.NoError(t, logger.AttachSink(logs))
 			client := observability.DiagnosticHTTPClient(upstream.Client(), rootDiagnosticLogger(logger), protector)
 			provider := structured.NewOpenAI(&config.Config{AIVerifierAPIURL: upstream.URL, AIVerifierAPIKey: secret, AIVerifierModel: "fixture-model"}, client)
-			maintenance := buildTopicMaintenance(ontologypg.NewStore(app, rls), configuration, provider, assessor.DefaultSemanticAssessmentLimits(), "fixture-model", time.Minute, nil, rootSlogLogger(logger), ontologyDiagnosticCapture(logs, protector, rootDiagnosticLogger(logger)))
+			maintenance := buildTopicMaintenance(topicpg.NewStore(app, rls), configuration, provider, assessor.DefaultSemanticAssessmentLimits(), "fixture-model", time.Minute, nil, rootSlogLogger(logger), topicMaintenanceDiagnostics(logs, protector, rootDiagnosticLogger(logger)))
 			var failure *domain.OperationLog
 			for range 12 {
 				_, runErr := maintenance.RunTurn(ctx)

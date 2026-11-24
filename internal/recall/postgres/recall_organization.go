@@ -14,17 +14,17 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 )
 
-type ontologyReadError struct{ cause error }
+type organizationReadError struct{ cause error }
 
-func (e *ontologyReadError) Error() string { return "recall: optional ontology read failed" }
-func (e *ontologyReadError) Unwrap() error { return e.cause }
+func (e *organizationReadError) Error() string { return "recall: optional organization read failed" }
+func (e *organizationReadError) Unwrap() error { return e.cause }
 
-func ontologyFailureCode(err error) string {
-	if errors.Is(err, ontology.ErrContextBound) {
+func organizationReadFailureCode(err error) string {
+	if errors.Is(err, topiccontract.ErrContextBound) {
 		return "ontology_bound_exceeded"
 	}
 	return "ontology_unavailable"
@@ -38,17 +38,17 @@ func (r *Store) WithEvidenceSnapshot(ctx context.Context, teamID string, fn func
 		return r.rls.WithTeamReadOnlyRepeatableTx(ctx, r.db, teamID, func(tx *gorm.DB) error {
 			bound := *r
 			bound.snapshot, bound.snapshotTeam, bound.organizationFailure = tx, teamID, degradation
-			if r.ontology != nil {
-				reader := r.ontology()
-				bound.ontology = func() OntologyReader { return reader }
+			if r.organizationReader != nil {
+				reader := r.organizationReader()
+				bound.organizationReader = func() OrganizationReader { return reader }
 			}
 			return fn(&bound)
 		})
 	}
 	err := read("")
-	var optional *ontologyReadError
+	var optional *organizationReadError
 	if errors.As(err, &optional) && ctx.Err() == nil {
-		return read(ontologyFailureCode(optional.cause))
+		return read(organizationReadFailureCode(optional.cause))
 	}
 	return err
 }
@@ -63,25 +63,25 @@ func (r *Store) withRecallTx(ctx context.Context, teamID string, organized bool,
 	return r.rls.WithTeamReadOnlyRepeatableTx(ctx, r.db, teamID, fn)
 }
 
-func (r *Store) readOrganization(ctx context.Context, tx *gorm.DB, input RecallEvidenceInput, ids, candidates []string, limit int) (ontology.RecallOrganization, error) {
+func (r *Store) readOrganization(ctx context.Context, tx *gorm.DB, input RecallEvidenceInput, ids, candidates []string, limit int) (topiccontract.RecallOrganization, error) {
 	if !input.OrganizationEnabled || (input.SpaceKind != "" && input.SpaceKind != string(domain.MemorySpaceTeamShared)) {
-		return ontology.RecallOrganization{}, nil
+		return topiccontract.RecallOrganization{}, nil
 	}
 	if r.organizationFailure != "" {
-		return ontology.RecallOrganization{Degradation: r.organizationFailure}, nil
+		return topiccontract.RecallOrganization{Degradation: r.organizationFailure}, nil
 	}
 	if input.ValidAt != nil || input.KnownAt != nil {
-		return ontology.RecallOrganization{Degradation: "ontology_temporal_not_supported"}, nil
+		return topiccontract.RecallOrganization{Degradation: "ontology_temporal_not_supported"}, nil
 	}
-	if r.ontology == nil {
-		return ontology.RecallOrganization{Degradation: "ontology_unavailable"}, nil
+	if r.organizationReader == nil {
+		return topiccontract.RecallOrganization{Degradation: "ontology_unavailable"}, nil
 	}
-	result, err := r.ontology()(ctx, tx, input.TeamID, ontology.RecallReadInput{SpaceID: input.SpaceID, Query: input.Query, EvidenceIDs: ids, CandidateEvidenceIDs: candidates, Limit: limit})
+	result, err := r.organizationReader()(ctx, tx, input.TeamID, topiccontract.RecallReadInput{SpaceID: input.SpaceID, Query: input.Query, EvidenceIDs: ids, CandidateEvidenceIDs: candidates, Limit: limit})
 	if err != nil {
 		if ctx.Err() != nil {
 			return result, ctx.Err()
 		}
-		return result, &ontologyReadError{cause: err}
+		return result, &organizationReadError{cause: err}
 	}
 	return result, nil
 }
@@ -102,17 +102,17 @@ func (r *Store) HydrateOrganizedEvidence(ctx context.Context, input RecallEviden
 			requested = append(requested, group.Members...)
 		}
 		requested = domain.NormalizeReadIDList(requested)
-		if len(requested) > ontology.MaxDependencyRecords {
-			return &ontologyReadError{cause: ontology.ErrContextBound}
+		if len(requested) > topiccontract.MaxDependencyRecords {
+			return &organizationReadError{cause: topiccontract.ErrContextBound}
 		}
 		result.Hits, err = hydrateRecallEvidence(ctx, tx, input, contract, requested)
 		return err
 	})
-	var optional *ontologyReadError
+	var optional *organizationReadError
 	if errors.As(err, &optional) && r.snapshot == nil {
 		input.OrganizationEnabled = false
 		hits, requiredErr := r.HydrateEvidence(ctx, input, contract, ids)
-		return &recallcontract.EvidenceHydration{Hits: hits, OrganizationDegradation: ontologyFailureCode(optional.cause)}, requiredErr
+		return &recallcontract.EvidenceHydration{Hits: hits, OrganizationDegradation: organizationReadFailureCode(optional.cause)}, requiredErr
 	}
 	return result, err
 }
@@ -131,7 +131,7 @@ func mergeRecallExpansion(existing, additional []SearchHit, limit int) []SearchH
 	return result
 }
 
-func organizationSourceIDs(sources []ontology.SourceHandle, kind ontology.SourceKind) []string {
+func organizationSourceIDs(sources []topiccontract.SourceHandle, kind topiccontract.SourceKind) []string {
 	ids := []string{}
 	for _, source := range sources {
 		if source.Kind == kind {
@@ -141,12 +141,12 @@ func organizationSourceIDs(sources []ontology.SourceHandle, kind ontology.Source
 	return domain.NormalizeReadIDList(ids)
 }
 
-func (r *Store) organizationEvidenceCandidates(ctx context.Context, tx *gorm.DB, input RecallEvidenceInput, contract *ActiveSearchContract, organization ontology.RecallOrganization, limit int) ([]SearchHit, error) {
+func (r *Store) organizationEvidenceCandidates(ctx context.Context, tx *gorm.DB, input RecallEvidenceInput, contract *ActiveSearchContract, organization topiccontract.RecallOrganization, limit int) ([]SearchHit, error) {
 	if len(organization.Sources) == 0 {
 		return nil, nil
 	}
 	var hits []SearchHit
-	ids := organizationSourceIDs(organization.Sources, ontology.EvidenceSource)
+	ids := organizationSourceIDs(organization.Sources, topiccontract.EvidenceSource)
 	states := map[string]string{}
 	for _, hit := range hits {
 		ids = append(ids, hit.SourceID)
@@ -168,7 +168,7 @@ func (r *Store) resolveTopicFilter(ctx context.Context, tx *gorm.DB, input *Reca
 	if input.TopicIDs == nil {
 		return nil
 	}
-	var selection ontology.TopicReadResult
+	var selection topiccontract.TopicReadResult
 	defer func() {
 		if r.topicLogger == nil {
 			return
@@ -208,7 +208,7 @@ func (r *Store) resolveTopicFilter(ctx context.Context, tx *gorm.DB, input *Reca
 	if !input.OrganizationEnabled || r.topics == nil || (input.SpaceKind != "" && input.SpaceKind != string(domain.MemorySpaceTeamShared)) {
 		return recallcontract.ErrTopicUnavailable
 	}
-	selection, err = r.topics(ctx, tx, input.TeamID, ontology.TopicReadInput{SpaceID: input.SpaceID, TopicIDs: input.TopicIDs})
+	selection, err = r.topics(ctx, tx, input.TeamID, topiccontract.TopicReadInput{SpaceID: input.SpaceID, TopicIDs: input.TopicIDs})
 	if err != nil {
 		return fmt.Errorf("%w: %w", recallcontract.ErrTopicUnavailable, err)
 	}
@@ -260,7 +260,7 @@ func (r *Store) RelatedEvidenceTopics(ctx context.Context, input RecallEvidenceI
 		if err != nil {
 			return err
 		}
-		selection, err := r.topics(ctx, tx, input.TeamID, ontology.TopicReadInput{SpaceID: input.SpaceID, EvidenceIDs: returned})
+		selection, err := r.topics(ctx, tx, input.TeamID, topiccontract.TopicReadInput{SpaceID: input.SpaceID, EvidenceIDs: returned})
 		result.Diagnostics = map[string]any{"space_id": selection.SpaceID, "generation": selection.Generation, "rejected": selection.Rejected, "memberships": selection.Topics}
 		if err != nil {
 			return err
@@ -270,8 +270,8 @@ func (r *Store) RelatedEvidenceTopics(ctx context.Context, input RecallEvidenceI
 			ids = append(ids, topic.EvidenceIDs...)
 		}
 		ids = domain.NormalizeReadIDList(ids)
-		if len(ids) > ontology.MaxDependencyRecords {
-			return ontology.ErrContextBound
+		if len(ids) > topiccontract.MaxDependencyRecords {
+			return topiccontract.ErrContextBound
 		}
 		contract, err := r.GetActiveSearchContract(ctx)
 		if err != nil {

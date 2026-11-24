@@ -18,23 +18,23 @@ import (
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	organization "github.com/markhuangai/dense-mem/internal/topics"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
 type finalizationFixture struct {
 	f         *ontologyFixture
-	window    *ontology.MaintenanceWindow
-	claim     *ontology.MaintenanceClaim
+	window    *topic.MaintenanceWindow
+	claim     *topic.MaintenanceClaim
 	organizer *organization.Service
 	calls     *atomic.Int32
-	result    ontology.OrganizationResult
+	result    topic.OrganizationResult
 }
 
 type finalizationAccounting struct {
 	store *Store
-	claim ontology.MaintenanceClaim
+	claim topic.MaintenanceClaim
 }
 
 func (a finalizationAccounting) BeforeAttempt(ctx context.Context, id string, number, input, output int) (context.Context, error) {
@@ -43,7 +43,7 @@ func (a finalizationAccounting) BeforeAttempt(ctx context.Context, id string, nu
 	}), nil
 }
 
-func (a finalizationAccounting) AfterAttempt(ctx context.Context, id string, attempt ontology.AssessmentAttempt, _ bool) error {
+func (a finalizationAccounting) AfterAttempt(ctx context.Context, id string, attempt topic.AssessmentAttempt, _ bool) error {
 	return a.store.ReconcileMaintenanceAttempt(ctx, a.claim, id, attempt)
 }
 
@@ -66,7 +66,7 @@ func newFinalizationFixtureWithConcurrency(t *testing.T, global, team int, texts
 	return claimFinalizationFixture(t, f, window)
 }
 
-func claimFinalizationFixture(t *testing.T, f *ontologyFixture, window *ontology.MaintenanceWindow) *finalizationFixture {
+func claimFinalizationFixture(t *testing.T, f *ontologyFixture, window *topic.MaintenanceWindow) *finalizationFixture {
 	t.Helper()
 	_, err := f.store.MaintenanceCommand(context.Background(), domain.TopicMaintenanceCommand{Action: "run", OperationKey: uuid.NewString(), MaxBatches: 1}, time.Now().UTC(), nil)
 	require.NoError(t, err)
@@ -74,7 +74,7 @@ func claimFinalizationFixture(t *testing.T, f *ontologyFixture, window *ontology
 	return finalizationFixtureForClaim(t, f, window, claim)
 }
 
-func finalizationFixtureForClaim(t *testing.T, f *ontologyFixture, window *ontology.MaintenanceWindow, claim *ontology.MaintenanceClaim) *finalizationFixture {
+func finalizationFixtureForClaim(t *testing.T, f *ontologyFixture, window *topic.MaintenanceWindow, claim *topic.MaintenanceClaim) *finalizationFixture {
 	t.Helper()
 	organizer, calls := organizationFixtureServiceWithAccounting(t, f, nil, nil, "fixture-model", maintenanceFixtureLimits(), finalizationAccounting{f.store, *claim}, 300000, map[string]int{"prompt_tokens": 17, "completion_tokens": 9, "total_tokens": 26})
 	return &finalizationFixture{f: f, window: window, claim: claim, organizer: organizer, calls: calls}
@@ -83,8 +83,8 @@ func finalizationFixtureForClaim(t *testing.T, f *ontologyFixture, window *ontol
 func (x *finalizationFixture) stage(t *testing.T) {
 	t.Helper()
 	var err error
-	x.result, err = x.organizer.Organize(ontology.WithMaintenanceClaim(context.Background(), *x.claim), x.f.team,
-		ontology.OrganizationInput{OperationKey: "maintenance:" + x.claim.ID, Sources: x.claim.Sources})
+	x.result, err = x.organizer.Organize(topic.WithMaintenanceClaim(context.Background(), *x.claim), x.f.team,
+		topic.OrganizationInput{OperationKey: "maintenance:" + x.claim.ID, Sources: x.claim.Sources})
 	require.NoError(t, err)
 	require.True(t, x.result.Current)
 }
@@ -129,8 +129,8 @@ func (x *finalizationFixture) stageOutcome(t *testing.T, mode string) {
 	}
 	x.organizer, x.calls = organizationFixtureServiceWithAccounting(t, x.f, nil, edit, "fixture-model", maintenanceFixtureLimits(), finalizationAccounting{x.f.store, *x.claim}, 300000, usage...)
 	var err error
-	x.result, err = x.organizer.Organize(ontology.WithMaintenanceClaim(context.Background(), *x.claim), x.f.team,
-		ontology.OrganizationInput{OperationKey: "maintenance:" + x.claim.ID, Sources: x.claim.Sources})
+	x.result, err = x.organizer.Organize(topic.WithMaintenanceClaim(context.Background(), *x.claim), x.f.team,
+		topic.OrganizationInput{OperationKey: "maintenance:" + x.claim.ID, Sources: x.claim.Sources})
 	if expectedFailure == "" {
 		require.NoError(t, err)
 		require.True(t, x.result.Current)
@@ -180,7 +180,7 @@ func (x *finalizationFixture) assertCompletedOutcome(t *testing.T) {
 		require.Equal(t, "incomplete", run.Status)
 		for _, source := range x.claim.Sources {
 			var row struct{ Status, Reason, AssessmentID string }
-			found := x.f.admin.Raw(`SELECT status,reason,assessment_id::text FROM topic_maintenance_sources WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND source_kind=? AND source_id=? AND revision=?`, x.claim.TeamID, x.claim.SpaceID, x.claim.Generation, source.Kind, source.ID, x.claim.Revisions[ontology.SourceKey(source)]).Scan(&row)
+			found := x.f.admin.Raw(`SELECT status,reason,assessment_id::text FROM topic_maintenance_sources WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND source_kind=? AND source_id=? AND revision=?`, x.claim.TeamID, x.claim.SpaceID, x.claim.Generation, source.Kind, source.ID, x.claim.Revisions[topic.SourceKey(source)]).Scan(&row)
 			require.NoError(t, found.Error)
 			if found.RowsAffected > 0 {
 				state := "failed"
@@ -269,7 +269,7 @@ func (x *finalizationFixture) queuedSources(t *testing.T) string {
 	return rows
 }
 
-func (x *finalizationFixture) recoverAfterExpiry(t *testing.T, boundary, rollbackFailure string) (*ontology.MaintenanceTurn, error) {
+func (x *finalizationFixture) recoverAfterExpiry(t *testing.T, boundary, rollbackFailure string) (*topic.MaintenanceTurn, error) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -318,7 +318,7 @@ func (x *finalizationFixture) recoverAfterExpiry(t *testing.T, boundary, rollbac
 	}))
 	defer func() { require.NoError(t, x.f.app.Callback().Raw().Remove(name)) }()
 	type result struct {
-		turn *ontology.MaintenanceTurn
+		turn *topic.MaintenanceTurn
 		err  error
 	}
 	finished, stopped := make(chan result, 1), make(chan struct{})

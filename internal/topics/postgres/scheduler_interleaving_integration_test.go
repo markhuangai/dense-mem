@@ -13,7 +13,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 
 	"github.com/stretchr/testify/require"
 )
@@ -22,7 +22,7 @@ func TestOntologyMaintenanceParallelSchedulerFillsAvailableSlots(t *testing.T) {
 	for _, limits := range [][2]int{{1, 1}, {4, 1}, {4, 4}, {8, 8}} {
 		t.Run(fmt.Sprintf("global-%d-team-%d", limits[0], limits[1]), func(t *testing.T) {
 			f := newOrganizationFixture(t)
-			for i := range limits[1]*ontology.MaxOrganizationSources + 1 {
+			for i := range limits[1]*topic.MaxOrganizationSources + 1 {
 				f.organizationEvidence(t, i%len(f.owners), fmt.Sprintf("Slot fill source %d.", i), nil)
 			}
 			config := schedulerConfig(t, f, limits[0], limits[1])

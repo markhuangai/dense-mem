@@ -17,7 +17,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/pressly/goose/v3"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -29,7 +29,7 @@ type legacyMaintenance struct {
 	f                                     *ontologyFixture
 	provider                              *goose.Provider
 	window, run, batch, assessment, grant string
-	deferred                              ontology.SourceHandle
+	deferred                              topic.SourceHandle
 	endsAt, pendingAt                     time.Time
 }
 
@@ -46,7 +46,7 @@ func TestOntologyEvidenceOnlyResetRebuildsExistingEvidence(t *testing.T) {
 		return tx.Exec(`UPDATE memory_spaces SET generation=generation+1 WHERE team_id=?::uuid AND id=?::uuid`, f.team, f.space).Error
 	}))
 	f.generation++
-	shared := []ontology.SourceHandle{
+	shared := []topic.SourceHandle{
 		f.organizationEvidence(t, 0, "Actor A uses PostgreSQL.", nil),
 		f.organizationEvidence(t, 1, "Actor B uses PostgreSQL.", nil),
 	}
@@ -68,7 +68,7 @@ func TestOntologyEvidenceOnlyResetRebuildsExistingEvidence(t *testing.T) {
 			return err
 		}
 		for _, source := range shared {
-			body, err := json.Marshal([]ontology.SourceHandle{source})
+			body, err := json.Marshal([]topic.SourceHandle{source})
 			if err != nil {
 				return err
 			}
@@ -158,18 +158,18 @@ func TestOntologyEvidenceOnlyResetRebuildsExistingEvidence(t *testing.T) {
 	require.NoError(t, err)
 	service, calls := maintenanceServiceFixture(t, f, config, nil)
 	_, err = f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now().UTC(), time.Minute)
-	require.ErrorIs(t, err, ontology.ErrMaintenancePaused)
+	require.ErrorIs(t, err, topic.ErrMaintenancePaused)
 	require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
 		return tx.Exec(`UPDATE topic_maintenance_state SET paused=false`).Error
 	}))
 	_, err = f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now().UTC(), time.Minute)
-	require.ErrorIs(t, err, ontology.ErrMaintenanceDisabled)
+	require.ErrorIs(t, err, topic.ErrMaintenanceDisabled)
 	_, err = config.UpdateTopicMaintenanceSettings(ctx, map[string]string{domain.AppConfigTopicMaintenanceEnabled: "true"}, "control", "", "")
 	require.NoError(t, err)
 	drainMaintenance(t, service)
 	require.Positive(t, calls())
-	_, err = f.store.ListRecords(staleActor, f.team, ontology.Topic, "", 20)
-	require.ErrorIs(t, err, ontology.ErrUnauthorized)
+	_, err = f.store.ListRecords(staleActor, f.team, topic.Topic, "", 20)
+	require.ErrorIs(t, err, topic.ErrUnauthorized)
 	credentials := access.NewCredentialRepository(f.app, f.rls, nil)
 	for index, original := range f.credentials {
 		refreshed, err := credentials.GetActiveByID(ctx, original.ID)
@@ -182,13 +182,13 @@ func TestOntologyEvidenceOnlyResetRebuildsExistingEvidence(t *testing.T) {
 	}
 	for _, item := range []struct {
 		fixture *ontologyFixture
-		source  ontology.SourceHandle
+		source  topic.SourceHandle
 		owner   int
 	}{{f, shared[0], 0}, {f, shared[1], 1}, {other, peer, 0}} {
 		var count int
 		require.NoError(t, f.admin.Raw(`SELECT count(*) FROM topic_maintenance_sources WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND source_id=? AND eligible AND status='organized'`, item.fixture.team, item.fixture.space, item.fixture.generation, item.source.ID).Row().Scan(&count))
 		require.Equal(t, 1, count)
-		view, err := item.fixture.store.ListRecords(item.fixture.actor(item.owner, "member"), item.fixture.team, ontology.Topic, "", 20)
+		view, err := item.fixture.store.ListRecords(item.fixture.actor(item.owner, "member"), item.fixture.team, topic.Topic, "", 20)
 		require.NoError(t, err)
 		require.NotEmpty(t, view.Records)
 	}
@@ -220,7 +220,7 @@ func legacyMaintenanceFixture(t *testing.T) legacyMaintenance {
 	x.deferred = f.organizationEvidence(t, 0, "Atlas stores PostgreSQL data.", nil)
 	failed := f.organizationEvidence(t, 0, "Beacon stores SQLite data.", nil)
 	ambiguous := f.organizationEvidence(t, 0, "Cedar storage is uncertain.", nil)
-	sources, err := json.Marshal([]ontology.SourceHandle{x.deferred})
+	sources, err := json.Marshal([]topic.SourceHandle{x.deferred})
 	require.NoError(t, err)
 	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.app, func(tx *gorm.DB) error {
 		if err := tx.Exec(`INSERT INTO ontology_maintenance_windows(window_id,starts_at,ends_at,policy,charged_input,charged_output,reserved_input,reserved_output,overrun,additional_input,additional_output)
@@ -241,7 +241,7 @@ func legacyMaintenanceFixture(t *testing.T) legacyMaintenance {
 		return tx.Exec(`INSERT INTO ontology_maintenance_attempts(batch_id,assessment_id,attempt,window_id,reserved_input,reserved_output,reported_input,reported_output,reported_total,admitted_at,reconciled_at)
 		 VALUES(?::uuid,?::uuid,1,?::uuid,70,100,0,0,0,clock_timestamp()-interval '2 minutes',clock_timestamp()-interval '1 minute')`, x.batch, x.assessment, x.window).Error
 	}))
-	for i, source := range []ontology.SourceHandle{x.deferred, failed, ambiguous} {
+	for i, source := range []topic.SourceHandle{x.deferred, failed, ambiguous} {
 		dependency := f.source(t, source)
 		require.NoError(t, f.store.withScope(context.Background(), f.team, false, func(tx *gorm.DB, fence scope) error {
 			return tx.Exec(`INSERT INTO ontology_maintenance_sources(team_id,shared_space_id,space_generation,source_kind,source_id,source_version,fingerprint,eligible,status,last_run_id)
@@ -315,7 +315,7 @@ func TestOntologyMaintenanceBudgetRetirementHistoryAndRequeue(t *testing.T) {
 	require.Zero(t, status.Usage.UnreconciledAttempts)
 	runs, err := restarted.ListMaintenanceRuns(ctx, "", 100)
 	require.NoError(t, err)
-	var historical ontology.MaintenanceRun
+	var historical topic.MaintenanceRun
 	for _, run := range runs.Runs {
 		if run.ID == x.grant {
 			historical = run
@@ -472,5 +472,5 @@ func TestOntologyMaintenanceBudgetRetirementRejectsLegacyWriters(t *testing.T) {
 	require.Equal(t, storage.MigrationStateInvalid, state.Kind)
 	require.Equal(t, "database migration is newer than this binary", state.Reason)
 	_, err = f.store.MaintenanceCommand(ctx, domain.TopicMaintenanceCommand{Action: "allowance", OperationKey: uuid.NewString()}, time.Now(), nil)
-	require.ErrorIs(t, err, ontology.ErrInvalid)
+	require.ErrorIs(t, err, topic.ErrInvalid)
 }

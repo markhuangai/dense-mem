@@ -10,30 +10,30 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/assessor"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 )
 
 const SchemaName = "ontology_evidence_organization_v4"
 const EquivalenceSchemaName = "evidence_equivalence_v1"
 
 type Item struct {
-	Ref                    string              `json:"ref"`
-	Kind                   ontology.SourceKind `json:"kind"`
-	Text                   string              `json:"text"`
-	OwnerRef               string              `json:"owner_ref"`
-	Context                map[string]string   `json:"context"`
-	LockedDefinitionRef    string              `json:"locked_definition_ref"`
-	PreferredDefinitionRef string              `json:"preferred_definition_ref"`
+	Ref                    string            `json:"ref"`
+	Kind                   topic.SourceKind  `json:"kind"`
+	Text                   string            `json:"text"`
+	OwnerRef               string            `json:"owner_ref"`
+	Context                map[string]string `json:"context"`
+	LockedDefinitionRef    string            `json:"locked_definition_ref"`
+	PreferredDefinitionRef string            `json:"preferred_definition_ref"`
 }
 
 type Definition struct {
-	Ref         string        `json:"ref"`
-	Kind        ontology.Kind `json:"kind"`
-	Key         string        `json:"key"`
-	Label       string        `json:"label"`
-	Description string        `json:"description"`
-	Aliases     []string      `json:"aliases"`
-	ParentRef   string        `json:"parent_ref"`
+	Ref         string     `json:"ref"`
+	Kind        topic.Kind `json:"kind"`
+	Key         string     `json:"key"`
+	Label       string     `json:"label"`
+	Description string     `json:"description"`
+	Aliases     []string   `json:"aliases"`
+	ParentRef   string     `json:"parent_ref"`
 }
 
 type Pair struct {
@@ -117,8 +117,8 @@ func (request Request) withServerDecisions(response Response) Response {
 }
 
 func Decode(raw string) (Response, error) {
-	if len(raw) > ontology.MaxPublicationBytes {
-		return Response{}, validationResult([]assessor.SemanticValidationError{validationIssue("response", "strict_json", "JSON input exceeds %d bytes", ontology.MaxPublicationBytes)}, nil)
+	if len(raw) > topic.MaxPublicationBytes {
+		return Response{}, validationResult([]assessor.SemanticValidationError{validationIssue("response", "strict_json", "JSON input exceeds %d bytes", topic.MaxPublicationBytes)}, nil)
 	}
 	fields, errs := jsonstrict.ValidateResponseObject([]byte(raw), "", []string{"request_id", "definitions", "items", "equivalence"}, nil, nil)
 	for _, section := range []struct {
@@ -214,13 +214,13 @@ func validateDecisions(request, questions Request, response Response) error {
 			errs = append(errs, validationIssue(section.name, "missing_array", "must be an array, including when empty"))
 		}
 	}
-	if len(response.Definitions) > ontology.MaxVocabularyCandidates {
-		errs = append(errs, validationIssue("definitions", "definition_limit", "must contain at most %d definitions; received %d", ontology.MaxVocabularyCandidates, len(response.Definitions)))
+	if len(response.Definitions) > topic.MaxVocabularyCandidates {
+		errs = append(errs, validationIssue("definitions", "definition_limit", "must contain at most %d definitions; received %d", topic.MaxVocabularyCandidates, len(response.Definitions)))
 	}
 	if len(response.Items) != len(questions.Items) {
 		errs = append(errs, validationIssue("items", "item_count_mismatch", "must contain exactly %d decisions, one per requested item ref; received %d", len(questions.Items), len(response.Items)))
 	}
-	if len(response.Definitions) > ontology.MaxVocabularyCandidates || len(response.Items) > 20 || len(response.Equivalence) > 190 {
+	if len(response.Definitions) > topic.MaxVocabularyCandidates || len(response.Items) > 20 || len(response.Equivalence) > 190 {
 		if len(response.Equivalence) > 190 {
 			errs = append(errs, validationIssue("equivalence", "equivalence_coverage", "must contain exactly one decision per requested pair ref; received %d", len(response.Equivalence)))
 		}
@@ -256,7 +256,7 @@ func validateDecisions(request, questions Request, response Response) error {
 		definitionOrder = append(definitionOrder, d.Ref)
 		newRefs = append(newRefs, d.Ref)
 	}
-	catalog := map[string]ontology.Record{}
+	catalog := map[string]topic.Record{}
 	catalogValid := true
 	for _, ref := range definitionOrder {
 		d := definitions[ref]
@@ -268,21 +268,21 @@ func validateDecisions(request, questions Request, response Response) error {
 			}
 			parentID = referenceID(d.ParentRef)
 		}
-		record := ontology.Record{ID: referenceID(ref), Kind: d.Kind, Definition: &ontology.Definition{Key: d.Key, Label: d.Label, Description: d.Description, Aliases: d.Aliases, ParentID: parentID}}
-		if err := ontology.ValidateRecord(record); err != nil {
+		record := topic.Record{ID: referenceID(ref), Kind: d.Kind, Definition: &topic.Definition{Key: d.Key, Label: d.Label, Description: d.Description, Aliases: d.Aliases, ParentID: parentID}}
+		if err := topic.ValidateRecord(record); err != nil {
 			encoded, _ := json.Marshal(d)
 			code := "definition_record"
 			errs = append(errs, validationIssue(paths[ref], code, "invalid definition %s: %v", encoded, err))
-			cause = ontology.ErrInvalid
+			cause = topic.ErrInvalid
 			catalogValid = false
 		}
 		catalog[record.ID] = record
 	}
 	if catalogValid {
-		if err := ontology.ValidateDefinitions(catalog); err != nil {
+		if err := topic.ValidateDefinitions(catalog); err != nil {
 			encoded, _ := json.Marshal(response.Definitions)
 			errs = append(errs, validationIssue("definitions", "definition_catalog", "%v; proposed definitions: %s", err, encoded))
-			cause = ontology.ErrInvalid
+			cause = topic.ErrInvalid
 		}
 	}
 	items := map[string]Item{}
@@ -404,7 +404,7 @@ func validateDecisions(request, questions Request, response Response) error {
 }
 
 func compatibleDefinition(item Item, d Definition) bool {
-	return item.Kind == ontology.EvidenceSource && d.Kind == ontology.Topic
+	return item.Kind == topic.EvidenceSource && d.Kind == topic.Topic
 }
 
 func referenceID(ref string) string {

@@ -15,7 +15,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	evalharness "github.com/markhuangai/dense-mem/internal/testfixture/evaluation"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -119,13 +119,13 @@ func flattenedAccuracySources(observation recallAccuracyObservation) []string {
 func (f *recallAccuracyFixture) groupAccuracySources(t *testing.T, sources []evalharness.RecallAccuracySource) {
 	t.Helper()
 	meanings := map[string]string{}
-	var handles []ontology.SourceHandle
+	var handles []topic.SourceHandle
 	for _, source := range sources {
 		meanings[source.Text] = "paraphrase"
 		handles = append(handles, f.evidence[source.ID])
 	}
 	organizer, calls := f.organizer(t, meanings)
-	result, err := organizer.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
+	result, err := organizer.Organize(context.Background(), f.team, topic.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
 	require.NoError(t, err)
 	require.Empty(t, result.FailureCode)
 	require.NotNil(t, result.Publication)
@@ -138,7 +138,7 @@ func TestRecallAccuracyIsolation(t *testing.T) {
 	f := newRecallOntologyFixture(t)
 	source := evalharness.RecallAccuracyCohort()[0].Sources[0]
 	shared := f.evidence(t, 0, source.Text, nil)
-	definition := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "accuracy isolation", Label: "Accuracy isolation"}}
+	definition := topic.Record{ID: uuid.NewString(), Kind: topic.Topic, Definition: &topic.Definition{Key: "accuracy isolation", Label: "Accuracy isolation"}}
 	f.publication(t, definition, f.assignment(t, definition.ID, shared))
 	privateIDs := []string{}
 	privateContexts := []context.Context{}

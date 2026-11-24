@@ -15,11 +15,11 @@ func recallSourceFilter(column string, sourceIDs []string, args []any) (string, 
 	return " AND " + column + " = ANY(?::uuid[])", append(args, pq.Array(sourceIDs))
 }
 
-func augmentRecallVectorChannel(existing, ontology []SearchHit, limit int, score func([]string) ([]SearchHit, error)) ([]SearchHit, error) {
-	if len(ontology) == 0 {
+func augmentRecallVectorChannel(existing, topicStore []SearchHit, limit int, score func([]string) ([]SearchHit, error)) ([]SearchHit, error) {
+	if len(topicStore) == 0 {
 		return existing, nil
 	}
-	pooled := make([]SearchHit, 0, len(existing)+len(ontology))
+	pooled := make([]SearchHit, 0, len(existing)+len(topicStore))
 	seen := make(map[string]bool, cap(pooled))
 	for _, hit := range existing {
 		if !seen[hit.SourceID] {
@@ -27,8 +27,8 @@ func augmentRecallVectorChannel(existing, ontology []SearchHit, limit int, score
 			pooled = append(pooled, hit)
 		}
 	}
-	ids := make([]string, 0, len(ontology))
-	for _, hit := range ontology {
+	ids := make([]string, 0, len(topicStore))
+	for _, hit := range topicStore {
 		if !seen[hit.SourceID] {
 			seen[hit.SourceID] = true
 			ids = append(ids, hit.SourceID)
@@ -40,7 +40,7 @@ func augmentRecallVectorChannel(existing, ontology []SearchHit, limit int, score
 	if len(pooled)+len(ids) > 2*limit {
 		return nil, fmt.Errorf("recall: ontology scoring pool exceeds twice the candidate limit")
 	}
-	// Ordinary scores remain valid in the same repeatable-read transaction used for ontology augmentation.
+	// Ordinary scores remain valid in the same repeatable-read transaction used for organization augmentation.
 	hits, err := score(ids)
 	if err != nil {
 		return nil, err

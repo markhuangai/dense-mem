@@ -309,7 +309,7 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 	accounting := &maintenanceAttemptAccounting{repository: s.deps.Repository, claim: claim, now: s.deps.Now, admitted: map[maintenanceAttemptKey]bool{}}
 	organizer := s.deps.Organizer(work.policy.Model, work.policy.ContextWindowTokens, accounting)
 	organizer.policy = &work.policy
-	assessmentCtx := observability.WithAIOperation(claimCtx, observability.AIOperationOntologyOrganization, len(claim.Sources))
+	assessmentCtx := observability.WithAIOperation(claimCtx, observability.AIOperationLegacyOrganization, len(claim.Sources))
 	if s.deps.Assign != nil {
 		equivalenceCtx := observability.WithAIOperation(claimCtx, observability.AIOperationEvidenceEquivalence, len(claim.Sources))
 		result, runErr = organizer.AssessMaintenanceEquivalence(equivalenceCtx, claim)

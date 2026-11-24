@@ -12,23 +12,23 @@ import (
 	"github.com/lib/pq"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 )
 
-func (s *Store) ClaimMaintenanceBatch(ctx context.Context, turn ontology.MaintenanceTurn, windowID string, now time.Time) (*ontology.MaintenanceClaim, error) {
+func (s *Store) ClaimMaintenanceBatch(ctx context.Context, turn topic.MaintenanceTurn, windowID string, now time.Time) (*topic.MaintenanceClaim, error) {
 	if err := requireAutomatic(ctx); err != nil {
 		return nil, err
 	}
 	spaceID, err := uuid.Parse(turn.SpaceID)
 	if err != nil {
-		return nil, ontology.ErrLeaseLost
+		return nil, topic.ErrLeaseLost
 	}
 	ctx = requestctx.WithAllowedSpaces(ctx, []domain.MemorySpaceAccess{{ID: spaceID, Kind: domain.MemorySpaceTeamShared, Generation: turn.Generation}})
-	claim := &ontology.MaintenanceClaim{ID: uuid.NewString(), WindowID: windowID, TeamID: turn.TeamID, SpaceID: turn.SpaceID, Generation: turn.Generation, LeaseToken: turn.LeaseToken, LeaseUntil: turn.LeaseUntil, Revisions: map[string]int64{}}
+	claim := &topic.MaintenanceClaim{ID: uuid.NewString(), WindowID: windowID, TeamID: turn.TeamID, SpaceID: turn.SpaceID, Generation: turn.Generation, LeaseToken: turn.LeaseToken, LeaseUntil: turn.LeaseUntil, Revisions: map[string]int64{}}
 	err = s.withScope(ctx, turn.TeamID, false, func(tx *gorm.DB, fence scope) error {
 		if fence.SpaceID != turn.SpaceID || fence.Generation != turn.Generation {
-			return ontology.ErrLeaseLost
+			return topic.ErrLeaseLost
 		}
 		if err := checkMaintenanceTurn(tx, turn); err != nil {
 			return err
@@ -41,17 +41,17 @@ func (s *Store) ClaimMaintenanceBatch(ctx context.Context, turn ontology.Mainten
 		for key := range busy {
 			keys = append(keys, key)
 		}
-		var seeds []ontology.SourceHandle
+		var seeds []topic.SourceHandle
 		rows, err := tx.Raw(`SELECT source_kind,source_id,source_version FROM topic_maintenance_sources AS source WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND eligible AND
          NOT (source_kind || ':' || source_id=ANY(?::text[])) AND
          ((?<>'' AND source.last_run_id=NULLIF(?,'')::uuid AND status='failed') OR
          (?='' AND status='pending'))
-         ORDER BY pending_at,source_kind,source_id LIMIT ?`, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(keys), turn.RetryRunID, turn.RetryRunID, turn.RetryRunID, ontology.MaintenancePageSize).Rows()
+         ORDER BY pending_at,source_kind,source_id LIMIT ?`, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(keys), turn.RetryRunID, turn.RetryRunID, turn.RetryRunID, topic.MaintenancePageSize).Rows()
 		if err != nil {
 			return err
 		}
 		for rows.Next() {
-			var seed ontology.SourceHandle
+			var seed topic.SourceHandle
 			if err := rows.Scan(&seed.Kind, &seed.ID, &seed.Version); err != nil {
 				_ = rows.Close()
 				return err
@@ -68,17 +68,17 @@ func (s *Store) ClaimMaintenanceBatch(ctx context.Context, turn ontology.Mainten
 		}
 		for _, seed := range seeds {
 			_, err := readSource(tx, fence, seed)
-			if err != nil && !errors.Is(err, ontology.ErrSourceStale) {
+			if err != nil && !errors.Is(err, topic.ErrSourceStale) {
 				return err
 			}
-			if errors.Is(err, ontology.ErrSourceStale) {
+			if errors.Is(err, topic.ErrSourceStale) {
 				if err := refreshMaintenanceSource(tx, fence, seed, false); err != nil {
 					return err
 				}
 				continue
 			}
 			claim.Sources = append(claim.Sources, seed)
-			if len(claim.Sources) == ontology.MaxOrganizationSources {
+			if len(claim.Sources) == topic.MaxOrganizationSources {
 				break
 			}
 		}
@@ -90,21 +90,21 @@ func (s *Store) ClaimMaintenanceBatch(ctx context.Context, turn ontology.Mainten
 	return s.admitMaintenanceBatch(ctx, turn, claim, nil, now)
 }
 
-func (s *Store) admitMaintenanceBatch(ctx context.Context, turn ontology.MaintenanceTurn, claim *ontology.MaintenanceClaim, community *ontology.CommunityInput, now time.Time) (*ontology.MaintenanceClaim, error) {
+func (s *Store) admitMaintenanceBatch(ctx context.Context, turn topic.MaintenanceTurn, claim *topic.MaintenanceClaim, community *topic.CommunityInput, now time.Time) (*topic.MaintenanceClaim, error) {
 	err := s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
 		paused, err := maintenanceState(tx)
 		if err != nil {
 			return err
 		}
 		if paused {
-			return ontology.ErrMaintenancePaused
+			return topic.ErrMaintenancePaused
 		}
 		enabled, err := maintenanceEnabled(tx)
 		if err != nil {
 			return err
 		}
 		if !enabled {
-			return ontology.ErrMaintenanceDisabled
+			return topic.ErrMaintenanceDisabled
 		}
 		if err := checkMaintenanceTurn(tx, turn); err != nil {
 			return err
@@ -130,7 +130,7 @@ func (s *Store) admitMaintenanceBatch(ctx context.Context, turn ontology.Mainten
 				AND ready_at<=statement_timestamp() FOR UPDATE`, claim.TeamID, claim.SpaceID, claim.Generation,
 				community.Topic.ID, community.Topic.Version, community.WorkID).Row().Scan(&communityTopicID)
 			if errors.Is(err, sql.ErrNoRows) {
-				return ontology.ErrSourceStale
+				return topic.ErrSourceStale
 			}
 			if err != nil {
 				return err
@@ -171,39 +171,39 @@ func maintenanceBusySources(tx *gorm.DB, fence scope) (map[string]bool, error) {
 		if err := rows.Scan(&body); err != nil {
 			return nil, err
 		}
-		var sources []ontology.SourceHandle
+		var sources []topic.SourceHandle
 		if err := json.Unmarshal(body, &sources); err != nil {
 			return nil, err
 		}
 		for _, source := range sources {
-			busy[ontology.SourceKey(source)] = true
+			busy[topic.SourceKey(source)] = true
 		}
 	}
 	return busy, rows.Err()
 }
 
-func maintenanceClosureBusy(sources []ontology.SourceHandle, busy map[string]bool) bool {
+func maintenanceClosureBusy(sources []topic.SourceHandle, busy map[string]bool) bool {
 	for _, source := range sources {
-		if busy[ontology.SourceKey(source)] {
+		if busy[topic.SourceKey(source)] {
 			return true
 		}
 	}
 	return false
 }
 
-func hasMaintenanceSource(sources []ontology.SourceHandle, source ontology.SourceHandle) bool {
+func hasMaintenanceSource(sources []topic.SourceHandle, source topic.SourceHandle) bool {
 	for _, existing := range sources {
-		if ontology.SourceKey(existing) == ontology.SourceKey(source) {
+		if topic.SourceKey(existing) == topic.SourceKey(source) {
 			return true
 		}
 	}
 	return false
 }
 
-func (s *Store) maintenanceGroupClosure(tx *gorm.DB, fence scope, initial []ontology.SourceHandle) ([]ontology.SourceHandle, bool, error) {
-	handles := append([]ontology.SourceHandle{}, initial...)
+func (s *Store) maintenanceGroupClosure(tx *gorm.DB, fence scope, initial []topic.SourceHandle) ([]topic.SourceHandle, bool, error) {
+	handles := append([]topic.SourceHandle{}, initial...)
 	for {
-		if len(handles) > ontology.MaxOrganizationSources {
+		if len(handles) > topic.MaxOrganizationSources {
 			return nil, true, nil
 		}
 		records, err := organizationSourceRecords(tx, fence, handles, true)
@@ -216,7 +216,7 @@ func (s *Store) maintenanceGroupClosure(tx *gorm.DB, fence scope, initial []onto
 		}
 		before := len(handles)
 		for _, record := range views {
-			var members []ontology.SourceHandle
+			var members []topic.SourceHandle
 			if record.Current && record.Group != nil {
 				members = record.Group.Members
 			}
@@ -232,24 +232,24 @@ func (s *Store) maintenanceGroupClosure(tx *gorm.DB, fence scope, initial []onto
 			}
 		}
 		if len(handles) == before {
-			sort.Slice(handles, func(i, j int) bool { return ontology.SourceKey(handles[i]) < ontology.SourceKey(handles[j]) })
+			sort.Slice(handles, func(i, j int) bool { return topic.SourceKey(handles[i]) < topic.SourceKey(handles[j]) })
 			return handles, false, nil
 		}
 	}
 }
 
-func maintenanceRelatedSources(tx *gorm.DB, fence scope, snapshot ontology.SourceSnapshot) ([]ontology.SourceHandle, error) {
+func maintenanceRelatedSources(tx *gorm.DB, fence scope, snapshot topic.SourceSnapshot) ([]topic.SourceHandle, error) {
 	query := maintenanceLexicalQuery(snapshot)
 	rows, err := tx.Raw(`SELECT source_kind,source_id,source_version FROM topic_maintenance_sources WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?
 	 AND eligible AND source_kind=? AND source_id<>? AND ((meaning_key<>'' AND meaning_key=?) OR (?!='' AND search_tsv@@websearch_to_tsquery('simple',?)))
-	 ORDER BY (meaning_key<>'' AND meaning_key=?) DESC,ts_rank_cd(search_tsv,websearch_to_tsquery('simple',?)) DESC,source_id LIMIT ?`, fence.TeamID, fence.SpaceID, fence.Generation, snapshot.Kind, snapshot.ID, snapshot.MeaningKey, query, query, snapshot.MeaningKey, query, ontology.MaxOrganizationSources-1).Rows()
+	 ORDER BY (meaning_key<>'' AND meaning_key=?) DESC,ts_rank_cd(search_tsv,websearch_to_tsquery('simple',?)) DESC,source_id LIMIT ?`, fence.TeamID, fence.SpaceID, fence.Generation, snapshot.Kind, snapshot.ID, snapshot.MeaningKey, query, query, snapshot.MeaningKey, query, topic.MaxOrganizationSources-1).Rows()
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	result := []ontology.SourceHandle{}
+	result := []topic.SourceHandle{}
 	for rows.Next() {
-		var handle ontology.SourceHandle
+		var handle topic.SourceHandle
 		if err := rows.Scan(&handle.Kind, &handle.ID, &handle.Version); err != nil {
 			return nil, err
 		}
@@ -258,7 +258,7 @@ func maintenanceRelatedSources(tx *gorm.DB, fence scope, snapshot ontology.Sourc
 	return result, rows.Err()
 }
 
-func collectMaintenanceRevisions(tx *gorm.DB, fence scope, claim *ontology.MaintenanceClaim) error {
+func collectMaintenanceRevisions(tx *gorm.DB, fence scope, claim *topic.MaintenanceClaim) error {
 	if len(claim.Sources) == 0 {
 		return nil
 	}
@@ -287,7 +287,7 @@ func collectMaintenanceRevisions(tx *gorm.DB, fence scope, claim *ontology.Maint
 			return err
 		}
 		index := positions[id]
-		key := ontology.SourceKey(claim.Sources[index])
+		key := topic.SourceKey(claim.Sources[index])
 		claim.Sources[index].Version = version
 		claim.Revisions[key], claim.PriorAssignmentHashes[key] = revision, hash
 	}
@@ -295,12 +295,12 @@ func collectMaintenanceRevisions(tx *gorm.DB, fence scope, claim *ontology.Maint
 		return err
 	}
 	if len(claim.Revisions) != len(ids) {
-		return ontology.ErrSourceStale
+		return topic.ErrSourceStale
 	}
 	return nil
 }
 
-func (s *Store) CompleteMaintenanceBatch(ctx context.Context, claim ontology.MaintenanceClaim, result ontology.OrganizationResult, failure string, now time.Time) error {
+func (s *Store) CompleteMaintenanceBatch(ctx context.Context, claim topic.MaintenanceClaim, result topic.OrganizationResult, failure string, now time.Time) error {
 	started, phase := time.Now(), "accounting_lock"
 	err := s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
 		if _, err := maintenanceState(tx); err != nil {
@@ -315,14 +315,14 @@ func (s *Store) CompleteMaintenanceBatch(ctx context.Context, claim ontology.Mai
 	return maintenanceFinalizationError(ctx, claim, phase, started, err)
 }
 
-func completeMaintenanceBatch(tx *gorm.DB, claim ontology.MaintenanceClaim, result ontology.OrganizationResult, failure string, now time.Time, phase *string) error {
+func completeMaintenanceBatch(tx *gorm.DB, claim topic.MaintenanceClaim, result topic.OrganizationResult, failure string, now time.Time, phase *string) error {
 	*phase = "batch_fence"
 	var status string
 	var live bool
 	err := tx.Raw(`SELECT status,lease_until>? AND lease_until>clock_timestamp() FROM topic_maintenance_batches
 	 WHERE batch_id=?::uuid AND run_id=?::uuid AND window_id=?::uuid AND team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND lease_token=?::uuid FOR UPDATE`, now, claim.ID, claim.RunID, claim.WindowID, claim.TeamID, claim.SpaceID, claim.Generation, claim.LeaseToken).Row().Scan(&status, &live)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ontology.ErrLeaseLost
+		return topic.ErrLeaseLost
 	}
 	if err != nil {
 		return err
@@ -331,7 +331,7 @@ func completeMaintenanceBatch(tx *gorm.DB, claim ontology.MaintenanceClaim, resu
 		return nil
 	}
 	if status != "running" || !live || !now.Before(claim.LeaseUntil) {
-		return ontology.ErrLeaseLost
+		return topic.ErrLeaseLost
 	}
 	*phase = "receipt_revalidation"
 	receipt, revisions, err := currentMaintenanceCompletion(tx, claim, result, failure)
@@ -342,27 +342,27 @@ func completeMaintenanceBatch(tx *gorm.DB, claim ontology.MaintenanceClaim, resu
 	if receipt != nil {
 		result = receipt.Result
 		for _, source := range receipt.Sources {
-			fingerprints[ontology.SourceKey(source.SourceHandle)] = source.Fingerprint
+			fingerprints[topic.SourceKey(source.SourceHandle)] = source.Fingerprint
 		}
 	}
 
 	progress := false
-	outcomes := map[string]ontology.OrganizationOutcome{}
+	outcomes := map[string]topic.OrganizationOutcome{}
 	for _, outcome := range result.Outcomes {
-		outcomes[ontology.SourceKey(outcome.Source)] = outcome
+		outcomes[topic.SourceKey(outcome.Source)] = outcome
 	}
 	*phase = "source_updates"
 	for _, source := range claim.Sources {
-		key := ontology.SourceKey(source)
+		key := topic.SourceKey(source)
 		revision, reuse := revisions[key]
 		if !reuse {
 			revision = claim.Revisions[key]
 		}
 		outcome, exists := outcomes[key]
 		if !exists {
-			outcome = ontology.OrganizationOutcome{Source: source, Status: "failed", Reason: failure}
+			outcome = topic.OrganizationOutcome{Source: source, Status: "failed", Reason: failure}
 		}
-		state := ontology.MaintenanceOutcomeState(outcome, result, failure)
+		state := topic.MaintenanceOutcomeState(outcome, result, failure)
 		reason := outcome.Reason
 		if failure != "" {
 			reason = failure
@@ -385,7 +385,7 @@ func completeMaintenanceBatch(tx *gorm.DB, claim ontology.MaintenanceClaim, resu
 		return updated.Error
 	}
 	if updated.RowsAffected != 1 {
-		return ontology.ErrLeaseLost
+		return topic.ErrLeaseLost
 	}
 	*phase = "run_update"
 	var bounded bool
@@ -408,19 +408,19 @@ func completeMaintenanceBatch(tx *gorm.DB, claim ontology.MaintenanceClaim, resu
 	return nil
 }
 
-func currentMaintenanceCompletion(tx *gorm.DB, claim ontology.MaintenanceClaim, result ontology.OrganizationResult, failure string) (*ontology.OrganizationReceipt, map[string]int64, error) {
+func currentMaintenanceCompletion(tx *gorm.DB, claim topic.MaintenanceClaim, result topic.OrganizationResult, failure string) (*topic.OrganizationReceipt, map[string]int64, error) {
 	if failure != "" || result.FailureCode != "" || !result.Current || result.AssessmentID == "" {
 		return nil, nil, nil
 	}
 	type queuedSource struct {
-		handle              ontology.SourceHandle
+		handle              topic.SourceHandle
 		revision            int64
 		fingerprint, status string
 		eligible            bool
 	}
 	keys := make([]string, 0, len(claim.Sources))
 	for _, source := range claim.Sources {
-		keys = append(keys, ontology.SourceKey(source))
+		keys = append(keys, topic.SourceKey(source))
 	}
 	rows, err := tx.Raw(`SELECT source_kind,source_id,source_version,revision,fingerprint,status,eligible FROM topic_maintenance_sources
 	 WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND source_kind || ':' || source_id=ANY(?::text[])`, claim.TeamID, claim.SpaceID, claim.Generation, pq.Array(keys)).Rows()
@@ -434,7 +434,7 @@ func currentMaintenanceCompletion(tx *gorm.DB, claim ontology.MaintenanceClaim, 
 			rows.Close()
 			return nil, nil, err
 		}
-		if source.revision > claim.Revisions[ontology.SourceKey(source.handle)] && source.eligible && source.status == "pending" {
+		if source.revision > claim.Revisions[topic.SourceKey(source.handle)] && source.eligible && source.status == "pending" {
 			pending = append(pending, source)
 		}
 	}
@@ -471,7 +471,7 @@ func currentMaintenanceCompletion(tx *gorm.DB, claim ontology.MaintenanceClaim, 
 	if !found || receipt.ID != result.AssessmentID || receipt.Result.FailureCode != "" || !receipt.Result.Current {
 		return nil, nil, nil
 	}
-	hash, err := ontology.OrganizationInputHash(ontology.OrganizationInput{Sources: claim.Sources}, receipt.ProviderIdentity)
+	hash, err := topic.OrganizationInputHash(topic.OrganizationInput{Sources: claim.Sources}, receipt.ProviderIdentity)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -485,14 +485,14 @@ func currentMaintenanceCompletion(tx *gorm.DB, claim ontology.MaintenanceClaim, 
 	if err != nil || !current {
 		return nil, nil, err
 	}
-	if err := maintenancePublicationFence(ontology.WithMaintenanceClaim(tx.Statement.Context, claim), tx, fence); err != nil {
+	if err := maintenancePublicationFence(topic.WithMaintenanceClaim(tx.Statement.Context, claim), tx, fence); err != nil {
 		return nil, nil, err
 	}
 	revisions := map[string]int64{}
 	for _, source := range pending {
 		for _, dependency := range receipt.Sources {
 			if source.handle == dependency.SourceHandle && source.fingerprint == dependency.Fingerprint {
-				revisions[ontology.SourceKey(source.handle)] = source.revision
+				revisions[topic.SourceKey(source.handle)] = source.revision
 			}
 		}
 	}

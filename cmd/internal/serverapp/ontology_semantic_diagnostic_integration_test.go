@@ -21,7 +21,7 @@ import (
 	operationspg "github.com/markhuangai/dense-mem/internal/operations/postgres"
 	application "github.com/markhuangai/dense-mem/internal/topics"
 	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
-	ontologypg "github.com/markhuangai/dense-mem/internal/topics/postgres"
+	topicpg "github.com/markhuangai/dense-mem/internal/topics/postgres"
 	"github.com/stretchr/testify/require"
 )
 
@@ -41,13 +41,13 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 			ctx = observability.WithAuthenticationSecrets(ctx, auth)
 			protector := observability.NewCredentialProtector(secret)
 			logs := operations.NewOperationLogService(operationspg.NewOperationLogRepository(app, rls), nil)
-			store := ontologypg.NewStore(app, rls)
+			store := topicpg.NewStore(app, rls)
 			var root *observability.Logger
 			capture := func(run func()) (string, []map[string]any) {
 				return captureOntologyPublicationConsole(t, func() {
 					root = observability.NewWithProtector(level, protector)
 					require.NoError(t, root.AttachSink(logs))
-					store.WithPublicationDiagnostics(ontologyPublicationDiagnostics(root.ContextSlog(), protector))
+					store.WithPublicationDiagnostics(topicPublicationDiagnostics(root.ContextSlog(), protector))
 					run()
 				})
 			}
@@ -125,7 +125,7 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 				require.NoError(t, admin.Exec(`DROP TRIGGER IF EXISTS reject_semantic_publication_audit ON audit_log; DROP FUNCTION IF EXISTS reject_semantic_publication_audit()`).Error)
 			})
 			console, _ = capture(func() {
-				service.WithPublicationDiagnostics(ontologyPublicationDiagnostics(root.ContextSlog(), protector))
+				service.WithPublicationDiagnostics(topicPublicationDiagnostics(root.ContextSlog(), protector))
 				_, err := service.CommandDraft(ctx, draft.ID, "publish", contract.DraftCommand{OperationKey: uuid.NewString(), ExpectedVersion: draft.Version, ExpectedRevision: 1, Reason: draft.Reason})
 				require.ErrorIs(t, err, contract.ErrAuditUnavailable)
 			})
@@ -200,7 +200,7 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 			t.Run("manager_workflow", func(t *testing.T) {
 				observe := func(run func()) (string, []map[string]any) {
 					return capture(func() {
-						service.WithPublicationDiagnostics(ontologyPublicationDiagnostics(root.ContextSlog(), protector))
+						service.WithPublicationDiagnostics(topicPublicationDiagnostics(root.ContextSlog(), protector))
 						run()
 					})
 				}

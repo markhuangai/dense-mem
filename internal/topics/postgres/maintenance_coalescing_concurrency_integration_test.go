@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -97,7 +97,7 @@ func TestOntologyMaintenanceCoalescingConcurrentPublicationRetained(t *testing.T
 	paused := pauseDiscovery(t, x, "source_finished", 100)
 	updated := definitions[1]
 	updated.Definition.Description = "PostgreSQL revised definition"
-	input := testPublication("coalesced-concurrent-publication", page.Revision, ontology.Change{ExpectedVersion: 1, Record: updated})
+	input := testPublication("coalesced-concurrent-publication", page.Revision, topic.Change{ExpectedVersion: 1, Record: updated})
 	ctx, cancel := context.WithTimeout(x.f.actor(0, "manager"), 15*time.Second)
 	defer cancel()
 	finished, stopped := make(chan error, 1), make(chan struct{})

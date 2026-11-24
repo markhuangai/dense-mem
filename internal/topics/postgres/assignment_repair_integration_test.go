@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	assignment "github.com/markhuangai/dense-mem/internal/topicassignment/contract"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -21,23 +21,23 @@ func testMaintenanceAssignmentRepair(t *testing.T) {
 	source := f.organizationEvidence(t, 0, text, nil)
 	dep := f.source(t, source)
 	modified, retired, stable := testTopic("logs"), testTopic("buffering"), testTopic("requests")
-	first, err := f.store.PublishAutomatic(ctx, f.team, testPublication("original-topics", 0, ontology.Change{Record: modified}, ontology.Change{Record: retired}, ontology.Change{Record: stable}))
+	first, err := f.store.PublishAutomatic(ctx, f.team, testPublication("original-topics", 0, topiccontract.Change{Record: modified}, topiccontract.Change{Record: retired}, topiccontract.Change{Record: stable}))
 	require.NoError(t, err)
 	input := assignment.Scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation, OperationID: uuid.NewString()}
 	foregroundCtx := f.actor(0, "member")
 	foregroundHash := testHash("unchanged foreground shortlist")
 	accepted := assignment.Outcome{Text: text, Method: "generation", InputHash: foregroundHash}
-	for _, topic := range []ontology.Record{modified, retired, stable} {
+	for _, topic := range []topiccontract.Record{modified, retired, stable} {
 		accepted.Matches = append(accepted.Matches, assignment.Match{ID: topic.ID, Version: 1, Quote: text})
 	}
 	require.NoError(t, f.rls.WithTeamProfileTx(foregroundCtx, f.app, f.team, f.owners[0], func(tx *gorm.DB) error {
 		return f.store.PublishAssignmentsTx(foregroundCtx, tx, input, []assignment.Publication{{EvidenceID: source.ID, Outcome: accepted}})
 	}))
 	_, claim := maintenanceClaim(t, f, maintenanceWindow(t, f, maintenanceSettings(t, f)))
-	require.Equal(t, foregroundHash, claim.PriorAssignmentHashes[ontology.SourceKey(source)])
+	require.Equal(t, foregroundHash, claim.PriorAssignmentHashes[topiccontract.SourceKey(source)])
 	modified.Definition.Key, modified.Definition.Label = "peppercorn", "Peppercorn"
 	retired.Retired = true
-	_, err = f.store.PublishAutomatic(ctx, f.team, testPublication("changed-topics", first.Revision+1, ontology.Change{Record: modified, ExpectedVersion: 1}, ontology.Change{Record: retired, ExpectedVersion: 1}))
+	_, err = f.store.PublishAutomatic(ctx, f.team, testPublication("changed-topics", first.Revision+1, topiccontract.Change{Record: modified, ExpectedVersion: 1}, topiccontract.Change{Record: retired, ExpectedVersion: 1}))
 	require.NoError(t, err)
 	foreground, err := f.store.ReadAssignmentCandidates(foregroundCtx, input, assignment.Slice{Text: text})
 	require.NoError(t, err)
@@ -75,26 +75,26 @@ func testMaintenanceAssignmentRepair(t *testing.T) {
 		dep := f.source(t, source)
 		window := maintenanceWindow(t, f, concurrencyConfig(t, f, 2, 2))
 		_, claim := maintenanceClaim(t, f, window)
-		require.Equal(t, []ontology.SourceHandle{source}, claim.Sources)
-		ctx := ontology.WithMaintenanceClaim(t.Context(), *claim)
+		require.Equal(t, []topiccontract.SourceHandle{source}, claim.Sources)
+		ctx := topiccontract.WithMaintenanceClaim(t.Context(), *claim)
 		input := assignment.Scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation, OperationID: claim.ID}
 		candidates, err := f.store.ReadAssignmentCandidates(ctx, input, assignment.Slice{EvidenceID: source.ID, SourceFingerprint: dep.Fingerprint, Text: text})
 		require.NoError(t, err)
 		require.Empty(t, candidates.Topics)
 
 		topic := testTopic("postgresql")
-		revalidationPublish(t, f, ontology.Change{Record: topic})
+		revalidationPublish(t, f, topiccontract.Change{Record: topic})
 		revalidationDiscover(t, f, window)
 		queued := revalidationQueue(t, f, source)
-		require.Greater(t, queued.Revision, claim.Revisions[ontology.SourceKey(source)])
+		require.Greater(t, queued.Revision, claim.Revisions[topiccontract.SourceKey(source)])
 
 		outcome := assignment.Outcome{Text: text, Method: "generation", InputHash: testHash("old shortlist")}
 		_, err = f.store.CommitMaintenanceAssignments(ctx, *claim, []assignment.Publication{{EvidenceID: source.ID, ExpectedFingerprint: dep.Fingerprint, Outcome: outcome}})
-		require.ErrorIs(t, err, ontology.ErrSourceStale)
+		require.ErrorIs(t, err, topiccontract.ErrSourceStale)
 		var outcomeCount int64
 		require.NoError(t, f.admin.Raw(`SELECT count(*) FROM topic_assignment_outcomes WHERE team_id=?::uuid AND operation_id=?::uuid`, f.team, claim.ID).Row().Scan(&outcomeCount))
 		require.Zero(t, outcomeCount)
-		require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, ontology.OrganizationResult{}, "source_stale", time.Now()))
+		require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, topiccontract.OrganizationResult{}, "source_stale", time.Now()))
 		require.Equal(t, queued, revalidationQueue(t, f, source))
 	})
 }

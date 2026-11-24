@@ -30,7 +30,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/storage/postgres/lockadmission"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 	"github.com/markhuangai/dense-mem/internal/topicassignment"
-	ontology "github.com/markhuangai/dense-mem/internal/topics"
+	topics "github.com/markhuangai/dense-mem/internal/topics"
 	topicspostgres "github.com/markhuangai/dense-mem/internal/topics/postgres"
 )
 
@@ -142,7 +142,7 @@ func RunActiveServer(
 	recallStore := recallpostgres.NewStore(
 		pgDB.GetDB(), rlsHelper, searchRepo,
 		recallpostgres.LoadRecallEvidenceConflictRecords,
-	).WithOntology(func() recallpostgres.OntologyReader { return topicStore.NewRecallReader() }).WithTopics(topicStore.NewTopicReader())
+	).WithOrganizationReader(func() recallpostgres.OrganizationReader { return topicStore.NewRecallReader() }).WithTopics(topicStore.NewTopicReader())
 	operationLogDB, err := postgres.OpenOperationLogClient(startupCtx, &cfg, logger)
 	if err != nil {
 		return fmt.Errorf("open operation log sink pool: %w", err)
@@ -236,7 +236,7 @@ func RunActiveServer(
 		Logger:            logger,
 	}
 	recallStore.WithTopicDiagnostics(logger, diagnosticProtector)
-	publicationDiagnostics := ontologyPublicationDiagnostics(rootDiagnosticLogger(logger), diagnosticProtector)
+	publicationDiagnostics := topicPublicationDiagnostics(rootDiagnosticLogger(logger), diagnosticProtector)
 	topicStore.WithPublicationDiagnostics(publicationDiagnostics)
 	telemetry, err := buildTelemetryApplication(startupCtx, cfg, appConfigService, telemetryLifecycleRepo, logger, diagnosticProtector)
 	if err != nil {
@@ -273,11 +273,11 @@ func RunActiveServer(
 	}
 	sessionAssessmentLimits := assessmentLimits
 	sessionAssessmentLimits.MaxEvidenceItems = 100
-	topicMaintenance := buildTopicMaintenance(topicStore, appConfigService, assessorProvider, assessmentLimits, sessionModels.remember, time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second, auditService, rootDiagnosticLogger(logger), ontologyDiagnosticCapture(operationLogService, diagnosticProtector, rootDiagnosticLogger(logger)))
+	topicMaintenance := buildTopicMaintenance(topicStore, appConfigService, assessorProvider, assessmentLimits, sessionModels.remember, time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second, auditService, rootDiagnosticLogger(logger), topicMaintenanceDiagnostics(operationLogService, diagnosticProtector, rootDiagnosticLogger(logger)))
 	rootLogger := rootDiagnosticLogger(logger)
 	topicAssignment := topicassignment.NewService(topicStore, appConfigService, assessorProvider, decisions, assessmentLimits, sessionModels.remember, rootLogger)
 	knowledgeStore.WithTopicAssignments(topicStore)
-	topicMaintenance.WithTopicProcessing(topicAssignment, topicStore, topicStore, ontology.CommunityAssessor{
+	topicMaintenance.WithTopicProcessing(topicAssignment, topicStore, topicStore, topics.CommunityAssessor{
 		Transport: assessorProvider, Decisions: decisions, Settings: appConfigService, Limits: assessmentLimits, Logger: rootLogger,
 	})
 	applications := buildApplicationBundle(applicationCompositionDependencies{
@@ -372,7 +372,7 @@ func RunActiveServer(
 		evidenceConflicts:        evidenceConflictService,
 		recallFeedback:           recallFeedbackEventService,
 		topicMaintenance:         topicMaintenance,
-		ontologyManagement:       ontology.NewManagementService(topicStore, auditService).WithPublicationDiagnostics(publicationDiagnostics),
+		topicManagement:          topics.NewManagementService(topicStore, auditService).WithPublicationDiagnostics(publicationDiagnostics),
 		recall:                   recallSvc,
 	})
 	if err != nil {
@@ -520,7 +520,7 @@ func RunActiveServer(
 		return abortStartup(err)
 	}
 	lifecycle.start("topic maintenance", func(ctx context.Context) {
-		ontology.NewMaintenanceScheduler(topicMaintenance, rootSlogLogger(logger)).Start(ctx)
+		topics.NewMaintenanceScheduler(topicMaintenance, rootSlogLogger(logger)).Start(ctx)
 	})
 	if err := startupCheck(); err != nil {
 		return abortStartup(err)

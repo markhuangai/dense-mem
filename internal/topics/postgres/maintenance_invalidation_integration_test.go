@@ -12,7 +12,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -28,11 +28,11 @@ func TestOntologyMaintenanceInvalidationFamilies(t *testing.T) {
 			return count
 		}
 		before := markers()
-		override := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind,
-			Override: &ontology.Override{Action: ontology.KeepSeparate, Members: []ontology.SourceHandle{first, second}},
-			Sources:  []ontology.SourceDependency{f.source(t, first), f.source(t, second)}}
-		_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("retired-override", 0, ontology.Change{Record: override}))
-		require.ErrorIs(t, err, ontology.ErrOverride)
+		override := topic.Record{ID: uuid.NewString(), Kind: topic.OverrideKind,
+			Override: &topic.Override{Action: topic.KeepSeparate, Members: []topic.SourceHandle{first, second}},
+			Sources:  []topic.SourceDependency{f.source(t, first), f.source(t, second)}}
+		_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("retired-override", 0, topic.Change{Record: override}))
+		require.ErrorIs(t, err, topic.ErrOverride)
 		require.Equal(t, before, markers())
 	})
 	families := []string{"evidence_fragments", "knowledge_ingests", "evidence_sources", "evidence_occurrences", "evidence_quarantines", "ontology_definition", "teams"}
@@ -43,17 +43,17 @@ func TestOntologyMaintenanceInvalidationFamilies(t *testing.T) {
 			config := maintenanceSettings(t, f)
 			_, err := config.UpdateTopicMaintenanceSettings(ctx, map[string]string{domain.AppConfigTopicMaintenanceContextWindow: "300000"}, "control", "", "")
 			require.NoError(t, err)
-			var target ontology.SourceHandle
+			var target topic.SourceHandle
 			var mutation func()
 			unavailable := false
 			markerFamily := family
 			system := func(fn func(*gorm.DB) error) { require.NoError(t, f.rls.WithSystemTx(ctx, f.app, fn)) }
 			switch family {
 			case "evidence_sources":
-				source := func(revision, previous string) ontology.SourceHandle {
+				source := func(revision, previous string) topic.SourceHandle {
 					result, err := f.knowledge.CreateIngestForTest(ctx, knowledge.CreateIngestInput{TeamID: f.team, OwnerProfileID: f.owners[0], IdempotencyKey: "source-" + revision, RequestHash: testHash(revision), Evidence: []knowledge.EvidenceInput{{Content: "Atlas uses PostgreSQL " + revision, SourceType: "document", Authority: "primary", SourceKey: "doc://maintenance-policy", SourceRevisionToken: revision, ExpectedPreviousRevisionToken: previous}}})
 					require.NoError(t, err)
-					return ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: result.Evidence[0].FragmentID, Version: 1}
+					return topic.SourceHandle{Kind: topic.EvidenceSource, ID: result.Evidence[0].FragmentID, Version: 1}
 				}
 				target = source("rev-1", "")
 				unavailable = true
@@ -64,10 +64,10 @@ func TestOntologyMaintenanceInvalidationFamilies(t *testing.T) {
 				mutation = func() {
 					page, err := f.store.ListRecords(ctx, f.team, "", "", 1)
 					require.NoError(t, err)
-					view, err := f.store.GetRecord(ctx, f.team, ontology.OrganizationRecordID(f.team, ontology.Topic, "postgresql"), 0)
+					view, err := f.store.GetRecord(ctx, f.team, topic.OrganizationRecordID(f.team, topic.Topic, "postgresql"), 0)
 					require.NoError(t, err)
 					view.Definition.Label = "Database systems"
-					_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("definition-change", page.Revision, ontology.Change{ExpectedVersion: view.Version, Record: view.Record}))
+					_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("definition-change", page.Revision, topic.Change{ExpectedVersion: view.Version, Record: view.Record}))
 					require.NoError(t, err)
 				}
 			case "knowledge_ingests":
@@ -79,7 +79,7 @@ func TestOntologyMaintenanceInvalidationFamilies(t *testing.T) {
 					}
 					return tx.Exec(`INSERT INTO evidence_fragments SELECT (jsonb_populate_record(NULL::evidence_fragments,to_jsonb(fragment)||jsonb_build_object('fragment_id',?::uuid,'ingest_id',?::uuid,'force_insert',true))).* FROM evidence_fragments AS fragment WHERE team_id=?::uuid AND fragment_id=?::uuid`, fragmentID, ingestID, f.team, initial.Evidence[0].FragmentID).Error
 				})
-				target = ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: fragmentID, Version: 1}
+				target = topic.SourceHandle{Kind: topic.EvidenceSource, ID: fragmentID, Version: 1}
 				mutation = func() {
 					system(func(tx *gorm.DB) error {
 						return tx.Exec(`UPDATE knowledge_ingests SET status='completed',completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE team_id=?::uuid AND ingest_id=?::uuid`, f.team, ingestID).Error
@@ -87,7 +87,7 @@ func TestOntologyMaintenanceInvalidationFamilies(t *testing.T) {
 				}
 			default:
 				initial := f.evidence(t, 0, "Atlas uses PostgreSQL.")
-				target = ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: initial.Evidence[0].FragmentID, Version: 1}
+				target = topic.SourceHandle{Kind: topic.EvidenceSource, ID: initial.Evidence[0].FragmentID, Version: 1}
 				switch family {
 				case "evidence_fragments":
 					mutation = func() { target = f.organizationEvidence(t, 0, "Atlas uses PostgreSQL for a new workload.", nil) }
@@ -142,7 +142,7 @@ func TestOntologyMaintenanceInvalidationFamilies(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, turn)
 			for range 20 {
-				require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, ontology.MaintenancePageSize))
+				require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, topic.MaintenancePageSize))
 			}
 			var currentRevision int64
 			var state string
@@ -196,7 +196,7 @@ func TestOntologyMaintenancePrivateGenerationAndABCIsolation(t *testing.T) {
 	}))
 	require.Zero(t, leaked)
 	_, err = service.Status(other.actor(0, "manager"))
-	require.ErrorIs(t, err, ontology.ErrUnauthorized)
+	require.ErrorIs(t, err, topic.ErrUnauthorized)
 	require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
 		return tx.Exec(`UPDATE memory_spaces SET generation=generation+1 WHERE team_id=?::uuid AND id=?::uuid`, f.team, f.space).Error
 	}))

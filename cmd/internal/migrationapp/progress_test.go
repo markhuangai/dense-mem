@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -68,7 +68,7 @@ func TestMigrationProgressLegacyFailureRealLogger(t *testing.T) {
 	}{
 		{"identity", &pgconn.PgError{Code: "P0001", Message: "identity cleanup blocked: usage history missing ownership aliases (7 rows)", Detail: "private-memory-canary"}, "identity cleanup blocked: usage history missing ownership aliases"},
 		{"lock timeout", &pgconn.PgError{Code: "55P03", Message: "canceling statement due to lock timeout", Where: "private-memory-canary"}, "lock timeout"},
-		{"ontology", fmt.Errorf("private-memory-canary: %w: 7 unreconciled attempts require terminal evidence", ontology.ErrMaintenanceUpgradeBlocked), "ontology upgrade blocked: unreconciled attempts require terminal evidence"},
+		{"ontology", fmt.Errorf("private-memory-canary: %w: 7 unreconciled attempts require terminal evidence", topic.ErrMaintenanceUpgradeBlocked), "ontology upgrade blocked: unreconciled attempts require terminal evidence"},
 		{"unknown", errors.New("private-memory-canary migration-credential-canary"), "migration operation failed; database payload omitted"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

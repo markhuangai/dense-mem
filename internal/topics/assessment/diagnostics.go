@@ -6,19 +6,19 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 )
 
 type Diagnostic struct {
 	Stage               string
 	TeamID              string
 	OperationKey        string
-	Input               *ontology.OrganizationInput
-	SourceContext       *ontology.OrganizationContext
-	SourceDependencies  []ontology.SourceDependency
+	Input               *topic.OrganizationInput
+	SourceContext       *topic.OrganizationContext
+	SourceDependencies  []topic.SourceDependency
 	Request             *Request
 	Response            *Response
-	Result              *ontology.OrganizationResult
+	Result              *topic.OrganizationResult
 	Policy              *domain.TopicMaintenanceConfig
 	ProviderIdentity    string
 	Model               string

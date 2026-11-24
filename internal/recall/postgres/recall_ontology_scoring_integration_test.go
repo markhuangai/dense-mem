@@ -10,21 +10,21 @@ import (
 
 	"github.com/google/uuid"
 
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
 func TestRecallOntologyScoringDoesNotBoostExistingCandidates(t *testing.T) {
 	f := newRecallOntologyFixture(t)
-	var last ontology.SourceHandle
+	var last topic.SourceHandle
 	for index := range 60 {
 		last = f.evidence(t, index%2, fmt.Sprintf("Record %d describes an unrelated source.", index), nil)
 	}
 	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.admin, func(tx *gorm.DB) error {
 		return tx.Exec(`UPDATE search_documents SET embedding='[0,1,0]'::vector WHERE team_id=?::uuid AND source_id=?::uuid`, f.team, last.ID).Error
 	}))
-	definition := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "ranking catalog", Label: "Ranking catalog"}}
+	definition := topic.Record{ID: uuid.NewString(), Kind: topic.Topic, Definition: &topic.Definition{Key: "ranking catalog", Label: "Ranking catalog"}}
 	f.publication(t, definition, f.assignment(t, definition.ID, last))
 	input := RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, Query: "ranking catalog", QueryEmbedding: []float32{1, 0, 0}, Limit: 10}
 	ordinary, err := f.search.RecallEvidence(f.actor(2, "member"), input)
@@ -40,9 +40,9 @@ func TestRecallOntologyScoringDoesNotBoostExistingCandidates(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, batch.TextHits)
 	require.Empty(t, batch.ExpansionHits)
-	require.Len(t, batch.OntologyHits, 1)
+	require.Len(t, batch.OrganizationHits, 1)
 	require.Len(t, batch.VectorHits, 60)
-	require.Equal(t, last.ID, batch.OntologyHits[0].SourceID)
+	require.Equal(t, last.ID, batch.OrganizationHits[0].SourceID)
 	require.Equal(t, last.ID, batch.VectorHits[59].SourceID)
 }
 
@@ -98,13 +98,13 @@ func TestRecallOntologyScoringKeepsSourceLookupsBounded(t *testing.T) {
 	input := RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, Query: "bounded scoring", QueryEmbedding: []float32{1, 0, 0}}
 	ordinary, err := f.search.ReadEvidenceCandidates(ctx, input, contract, 60)
 	require.NoError(t, err)
-	definition := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: input.Query, Label: input.Query}}
-	f.publication(t, definition, f.assignment(t, definition.ID, ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: allIDs[0], Version: 1}))
+	definition := topic.Record{ID: uuid.NewString(), Kind: topic.Topic, Definition: &topic.Definition{Key: input.Query, Label: input.Query}}
+	f.publication(t, definition, f.assignment(t, definition.ID, topic.SourceHandle{Kind: topic.EvidenceSource, ID: allIDs[0], Version: 1}))
 	input.OrganizationEnabled = true
 	organized, err := f.search.ReadEvidenceCandidates(ctx, input, contract, 60)
 	require.NoError(t, err)
 	require.Empty(t, organized.OrganizationDegradation)
-	require.Len(t, organized.OntologyHits, 1)
+	require.Len(t, organized.OrganizationHits, 1)
 	require.Equal(t, ordinary.TextHits, organized.TextHits, "exhaustive text ranking already includes every eligible discovery in its scored pool")
 	require.Equal(t, ordinary.VectorHits, organized.VectorHits, "exhaustive vector ranking already includes every eligible discovery in its scored pool")
 	require.NoError(t, f.rls.WithTeamReadOnlyRepeatableTx(ctx, db, f.team, func(tx *gorm.DB) error {

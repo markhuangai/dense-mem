@@ -7,14 +7,14 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 )
 
 const managementPublicationColumns = `result,origin,COALESCE(actor_id::text,''),reason,created_at,COALESCE(rollback_of::text,'')`
 
-func scanManagementPublication(row maintenanceScanner) (ontology.ManagementPublication, error) {
-	var item ontology.ManagementPublication
+func scanManagementPublication(row maintenanceScanner) (topic.ManagementPublication, error) {
+	var item topic.ManagementPublication
 	var body []byte
 	err := row.Scan(&body, &item.Origin, &item.ActorID, &item.Reason, &item.CreatedAt, &item.RollbackOf)
 	if err == nil {
@@ -23,10 +23,10 @@ func scanManagementPublication(row maintenanceScanner) (ontology.ManagementPubli
 	return item, err
 }
 
-func (s *Store) ListManagementPublications(ctx context.Context, teamID string, after int64, limit int) (ontology.ManagementPublicationPage, error) {
-	page := ontology.ManagementPublicationPage{Publications: []ontology.ManagementPublication{}}
-	if after < 0 || limit < 1 || limit > ontology.MaxPageSize {
-		return page, ontology.ErrInvalid
+func (s *Store) ListManagementPublications(ctx context.Context, teamID string, after int64, limit int) (topic.ManagementPublicationPage, error) {
+	page := topic.ManagementPublicationPage{Publications: []topic.ManagementPublication{}}
+	if after < 0 || limit < 1 || limit > topic.MaxPageSize {
+		return page, topic.ErrInvalid
 	}
 	err := s.withManagerScope(ctx, teamID, false, func(tx *gorm.DB, fence scope, _ string) error {
 		rows, err := tx.Raw(`SELECT `+managementPublicationColumns+` FROM topic_publications WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND revision>? ORDER BY revision LIMIT ?`, fence.TeamID, fence.SpaceID, fence.Generation, after, limit+1).Rows()
@@ -50,16 +50,16 @@ func (s *Store) ListManagementPublications(ctx context.Context, teamID string, a
 	return page, err
 }
 
-func (s *Store) GetManagementPublication(ctx context.Context, teamID, id string) (ontology.ManagementPublication, error) {
-	var result ontology.ManagementPublication
+func (s *Store) GetManagementPublication(ctx context.Context, teamID, id string) (topic.ManagementPublication, error) {
+	var result topic.ManagementPublication
 	if parsed, err := uuid.Parse(id); err != nil || parsed == uuid.Nil || parsed.String() != id {
-		return result, ontology.ErrInvalid
+		return result, topic.ErrInvalid
 	}
 	err := s.withManagerScope(ctx, teamID, false, func(tx *gorm.DB, fence scope, _ string) error {
 		var err error
 		result, err = scanManagementPublication(tx.Raw(`SELECT `+managementPublicationColumns+` FROM topic_publications WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND publication_id=?::uuid`, fence.TeamID, fence.SpaceID, fence.Generation, id).Row())
 		if errors.Is(err, sql.ErrNoRows) {
-			return ontology.ErrNotFound
+			return topic.ErrNotFound
 		}
 		if err != nil {
 			return err
@@ -84,17 +84,17 @@ func (s *Store) GetManagementPublication(ctx context.Context, teamID, id string)
 	return result, err
 }
 
-func (s *Store) RollbackManagementPublication(ctx context.Context, teamID, id string, input ontology.DraftCommand, audit ontology.ManagementAudit) (ontology.PublicationResult, error) {
-	var result ontology.PublicationResult
+func (s *Store) RollbackManagementPublication(ctx context.Context, teamID, id string, input topic.DraftCommand, audit topic.ManagementAudit) (topic.PublicationResult, error) {
+	var result topic.PublicationResult
 	if parsed, err := uuid.Parse(id); err != nil || parsed == uuid.Nil || parsed.String() != id {
-		return result, ontology.ErrInvalid
+		return result, topic.ErrInvalid
 	}
-	if err := ontology.ValidateOperation(input.OperationKey, input.ExpectedRevision, input.Reason); err != nil {
+	if err := topic.ValidateOperation(input.OperationKey, input.ExpectedRevision, input.Reason); err != nil {
 		return result, err
 	}
 	err := s.withManagerScope(ctx, teamID, true, func(tx *gorm.DB, fence scope, owner string) error {
-		publication := ontology.Publication{OperationKey: input.OperationKey, ExpectedRevision: input.ExpectedRevision, Reason: input.Reason, RollbackOf: id}
-		hash, err := ontology.RequestHash(publication, "rollback", owner)
+		publication := topic.Publication{OperationKey: input.OperationKey, ExpectedRevision: input.ExpectedRevision, Reason: input.Reason, RollbackOf: id}
+		hash, err := topic.RequestHash(publication, "rollback", owner)
 		if err != nil {
 			return err
 		}
@@ -109,18 +109,18 @@ func (s *Store) RollbackManagementPublication(ctx context.Context, teamID, id st
 		var origin string
 		err = tx.Raw(`SELECT origin FROM topic_publications WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND publication_id=?::uuid`, fence.TeamID, fence.SpaceID, fence.Generation, id).Row().Scan(&origin)
 		if errors.Is(err, sql.ErrNoRows) {
-			return ontology.ErrNotFound
+			return topic.ErrNotFound
 		}
 		if err != nil {
 			return err
 		}
-		if diagnostic := ontology.PublicationDiagnosticFromContext(ctx); diagnostic != nil {
+		if diagnostic := topic.PublicationDiagnosticFromContext(ctx); diagnostic != nil {
 			diagnostic.RollbackOf = id
 		}
 		if origin != "manager" && origin != "rollback" {
-			return ontology.ErrInvalid
+			return topic.ErrInvalid
 		}
-		publication, err = prepareOntologyRollback(tx, fence, publication)
+		publication, err = prepareTopicRollback(tx, fence, publication)
 		if err != nil {
 			return err
 		}
@@ -131,7 +131,7 @@ func (s *Store) RollbackManagementPublication(ctx context.Context, teamID, id st
 		if err != nil {
 			return err
 		}
-		return insertManagementAudit(ctx, tx, audit, ontology.ManagementAuditEvent{Operation: "TOPIC_ROLLBACK", EntityID: result.ID, Reason: input.Reason, Revision: result.Revision})
+		return insertManagementAudit(ctx, tx, audit, topic.ManagementAuditEvent{Operation: "TOPIC_ROLLBACK", EntityID: result.ID, Reason: input.Reason, Revision: result.Revision})
 	})
 	return result, err
 }

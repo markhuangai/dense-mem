@@ -29,7 +29,7 @@ const (
 var _ recallcontract.Repository = (*Store)(nil)
 
 func (r *Store) ReadEvidenceCandidates(ctx context.Context, input RecallEvidenceInput, contract *ActiveSearchContract, candidateLimit int) (*recallcontract.RecallCandidateBatch, error) {
-	var textHits, vectorHits, ontologyHits []SearchHit
+	var textHits, vectorHits, organizationHits []SearchHit
 	searchState := string(domain.SearchProjectionCurrent)
 	organizationCode := ""
 	err := r.withRecallTx(ctx, input.TeamID, input.OrganizationEnabled, func(tx *gorm.DB) error {
@@ -58,7 +58,7 @@ func (r *Store) ReadEvidenceCandidates(ctx context.Context, input RecallEvidence
 			}
 		}
 		if input.Query == "" && input.TopicIDs != nil {
-			ontologyHits, err = r.topicEvidenceCandidates(ctx, tx, input, contract, candidateLimit)
+			organizationHits, err = r.topicEvidenceCandidates(ctx, tx, input, contract, candidateLimit)
 			if err != nil {
 				return err
 			}
@@ -84,26 +84,26 @@ func (r *Store) ReadEvidenceCandidates(ctx context.Context, input RecallEvidence
 		organizationCode = organization.Degradation
 		discovered, discoverErr := r.organizationEvidenceCandidates(ctx, tx, input, contract, organization, candidateLimit)
 		if discoverErr != nil {
-			return &ontologyReadError{cause: discoverErr}
+			return &organizationReadError{cause: discoverErr}
 		}
-		ontologyHits = mergeRecallExpansion(ontologyHits, discovered, candidateLimit)
+		organizationHits = mergeRecallExpansion(organizationHits, discovered, candidateLimit)
 		// Exhaustive text and exact-vector searches already rank the full eligible pool in this snapshot.
 		if len(input.QueryEmbedding) > 0 && contract.IndexStrategy != string(domain.VectorIndexExact) {
-			vectorHits, err = augmentRecallVectorChannel(vectorHits, ontologyHits, candidateLimit, func(ids []string) ([]SearchHit, error) {
+			vectorHits, err = augmentRecallVectorChannel(vectorHits, organizationHits, candidateLimit, func(ids []string) ([]SearchHit, error) {
 				return searchRecallExactVectorSources(ctx, tx, input, contract, candidateLimit, ids)
 			})
 			if err != nil {
-				return &ontologyReadError{cause: err}
+				return &organizationReadError{cause: err}
 			}
 		}
 		return nil
 	})
-	var optional *ontologyReadError
+	var optional *organizationReadError
 	if errors.As(err, &optional) && r.snapshot == nil {
 		input.OrganizationEnabled = false
 		batch, requiredErr := r.ReadEvidenceCandidates(ctx, input, contract, candidateLimit)
 		if batch != nil {
-			batch.OrganizationDegradation = ontologyFailureCode(optional.cause)
+			batch.OrganizationDegradation = organizationReadFailureCode(optional.cause)
 		}
 		return batch, requiredErr
 	}
@@ -112,7 +112,7 @@ func (r *Store) ReadEvidenceCandidates(ctx context.Context, input RecallEvidence
 	}
 	return &recallcontract.RecallCandidateBatch{
 		OrganizationDegradation: organizationCode,
-		TextHits:                textHits, VectorHits: vectorHits, OntologyHits: ontologyHits, SearchState: searchState,
+		TextHits:                textHits, VectorHits: vectorHits, OrganizationHits: organizationHits, SearchState: searchState,
 	}, nil
 }
 

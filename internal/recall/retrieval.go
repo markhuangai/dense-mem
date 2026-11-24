@@ -193,7 +193,7 @@ func fuseRecallCandidates(batch *recallcontract.RecallCandidateBatch, kind strin
 			candidate.SearchState = domain.CombineSearchProjectionStates(candidate.SearchState, hit.SearchState)
 		}
 	}
-	for _, hit := range batch.OntologyHits {
+	for _, hit := range batch.OrganizationHits {
 		if hit.SourceKind != kind || hit.SourceID == "" {
 			continue
 		}

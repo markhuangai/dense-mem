@@ -13,7 +13,7 @@ import (
 	"github.com/google/uuid"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	evalharness "github.com/markhuangai/dense-mem/internal/testfixture/evaluation"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,7 +37,7 @@ func TestRecallOntologyFrozenCohort(t *testing.T) {
 	for _, testCase := range cohort {
 		t.Run(testCase.ID, func(t *testing.T) {
 			f := newRecallOntologyFixture(t)
-			handles := []ontology.SourceHandle{}
+			handles := []topic.SourceHandle{}
 			meanings, goldIDs := map[string]string{}, map[string]string{}
 			for i, source := range testCase.Sources {
 				owner := i % 2
@@ -49,10 +49,10 @@ func TestRecallOntologyFrozenCohort(t *testing.T) {
 				meanings[source.Text], goldIDs[handle.ID] = source.EquivalenceKey, source.ID
 			}
 			if testCase.Override != "" {
-				f.rejectHistoricalOverride(t, ontology.OverrideAction(testCase.Override), handles)
+				f.rejectHistoricalOverride(t, topic.OverrideAction(testCase.Override), handles)
 			}
 			provider, calls := f.organizer(t, meanings)
-			_, err := provider.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
+			_, err := provider.Organize(context.Background(), f.team, topic.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
 			require.NoError(t, err)
 			priorCalls := calls.Load()
 			input := RecallEvidenceInput{TeamID: f.team, Query: "PostgreSQL", Limit: 50, SpaceID: f.space, QueryEmbedding: []float32{1, 0, 0}}

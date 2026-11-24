@@ -9,15 +9,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
 // Historical fixtures write the persisted representation of their release before running the actual upgrade.
-func seedHistoricalRecords(t *testing.T, f *ontologyFixture, key string, records ...ontology.Record) map[string]ontology.Record {
+func seedHistoricalRecords(t *testing.T, f *ontologyFixture, key string, records ...topic.Record) map[string]topic.Record {
 	t.Helper()
-	catalog := map[string]ontology.Record{}
+	catalog := map[string]topic.Record{}
 	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.app, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`SELECT r.body FROM ontology_revision_records r JOIN ontology_record_heads h USING(team_id,shared_space_id,space_generation,record_id,version)
 			WHERE h.team_id=? AND h.shared_space_id=? AND h.space_generation=?`, f.team, f.space, f.generation).Rows()
@@ -55,10 +55,10 @@ func seedHistoricalRecords(t *testing.T, f *ontologyFixture, key string, records
 		}
 		for _, record := range records {
 			record.Version = catalog[record.ID].Version + 1
-			for _, ref := range ontology.ReferenceIDs(record) {
-				record.Dependencies = append(record.Dependencies, ontology.RevisionRef{ID: ref, Version: catalog[ref].Version})
+			for _, ref := range topic.ReferenceIDs(record) {
+				record.Dependencies = append(record.Dependencies, topic.RevisionRef{ID: ref, Version: catalog[ref].Version})
 			}
-			record.Fingerprint, err = ontology.RecordFingerprintWithAcceptedSources(record, catalog)
+			record.Fingerprint, err = topic.RecordFingerprintWithAcceptedSources(record, catalog)
 			if err != nil {
 				return err
 			}
@@ -69,7 +69,7 @@ func seedHistoricalRecords(t *testing.T, f *ontologyFixture, key string, records
 			if err := tx.Exec(`SELECT dense_mem_insert_ontology_revision(?,?,?,?,?::jsonb)`, f.team, f.space, f.generation, id, string(body)).Error; err != nil {
 				return err
 			}
-			names := ontology.DefinitionNames(record)
+			names := topic.DefinitionNames(record)
 			if names == nil {
 				names = []string{}
 			}

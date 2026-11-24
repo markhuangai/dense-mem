@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/evalharness"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,7 +25,7 @@ func runnerMaintenanceSnapshot(t *testing.T, f *ontologyFixture) (evalharness.Na
 	require.NoError(t, pool.QueryRowContext(ctx, evalharness.MaintenanceSnapshotSQL, f.team, f.owners[0], f.space, f.generation, f.credentials[0].ID).Scan(&raw))
 	var observation evalharness.NativeObservation
 	require.NoError(t, json.Unmarshal(raw, &observation))
-	observation.Ontology, err = f.store.MaintenanceStatus(ctx, time.Now())
+	observation.TopicMaintenance, err = f.store.MaintenanceStatus(ctx, time.Now())
 	require.NoError(t, err)
 	return observation, raw
 }
@@ -37,8 +37,8 @@ func TestRunnerCampaignTerminalUnknownUsageAndReceiptIdentity(t *testing.T) {
 			canonical := x.f.canonicalSnapshot(t)
 			x.stageOutcome(t, mode)
 			before, raw := runnerMaintenanceSnapshot(t, x.f)
-			require.Positive(t, before.Ontology.Usage.UnavailableUsageAttempts)
-			require.Zero(t, before.Ontology.Usage.UnreconciledAttempts)
+			require.Positive(t, before.TopicMaintenance.Usage.UnavailableUsageAttempts)
+			require.Zero(t, before.TopicMaintenance.Usage.UnreconciledAttempts)
 			require.Positive(t, before.ActiveBatches, "unfinished durable work must block capture")
 			require.NoError(t, x.f.store.CompleteMaintenanceBatch(context.Background(), *x.claim, x.result, x.result.FailureCode, time.Now()))
 			completed, retained := runnerMaintenanceSnapshot(t, x.f)
@@ -56,8 +56,8 @@ func TestRunnerCampaignTerminalUnknownUsageAndReceiptIdentity(t *testing.T) {
 			joined, _ := runnerMaintenanceSnapshot(t, x.f)
 			require.Equal(t, completed.ProviderAttempts, joined.ProviderAttempts, "assessment ID reuse must not multiply durable attempts")
 			if mode == "failed_unknown_usage" {
-				require.Positive(t, completed.Ontology.Counts.Failed)
-				require.False(t, completed.Ontology.CoverageComplete)
+				require.Positive(t, completed.TopicMaintenance.Counts.Failed)
+				require.False(t, completed.TopicMaintenance.CoverageComplete)
 			}
 		})
 	}
@@ -75,11 +75,11 @@ func TestRunnerCampaignCapacityActivationAndPausedAdmission(t *testing.T) {
 			_, err := f.store.MaintenanceCommand(ctx, domain.TopicMaintenanceCommand{Action: "pause", OperationKey: uuid.NewString()}, time.Now(), nil)
 			require.NoError(t, err)
 			claim, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now(), time.Minute)
-			require.ErrorIs(t, err, ontology.ErrMaintenancePaused)
+			require.ErrorIs(t, err, topic.ErrMaintenancePaused)
 			require.Nil(t, claim)
 			active, _ := runnerMaintenanceSnapshot(t, f)
-			require.Equal(t, capacity, active.Ontology.Window.Policy.MaxConcurrency)
-			require.Equal(t, capacity, active.Ontology.Window.Policy.TeamConcurrency(f.team))
+			require.Equal(t, capacity, active.TopicMaintenance.Window.Policy.MaxConcurrency)
+			require.Equal(t, capacity, active.TopicMaintenance.Window.Policy.TeamConcurrency(f.team))
 			nextCapacity := 4
 			if capacity == 4 {
 				nextCapacity = 8
@@ -87,7 +87,7 @@ func TestRunnerCampaignCapacityActivationAndPausedAdmission(t *testing.T) {
 			_, err = config.UpdateTopicMaintenanceSettings(ctx, map[string]string{domain.AppConfigTopicMaintenanceConcurrency: fmt.Sprint(nextCapacity), domain.AppConfigTopicMaintenanceTeamConcurrency: fmt.Sprint(nextCapacity)}, "control", "", "")
 			require.NoError(t, err)
 			queued, _ := runnerMaintenanceSnapshot(t, f)
-			require.Equal(t, active.Ontology.Window.Policy, queued.Ontology.Window.Policy, "pending settings cannot be reported as effective capacity")
+			require.Equal(t, active.TopicMaintenance.Window.Policy, queued.TopicMaintenance.Window.Policy, "pending settings cannot be reported as effective capacity")
 			policy, err := config.TopicMaintenanceRuntimeConfig(ctx)
 			require.NoError(t, err)
 			next, err := f.store.EnsureMaintenanceWindow(ctx, policy, window.EndsAt)

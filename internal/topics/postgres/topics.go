@@ -3,26 +3,26 @@ package postgres
 import (
 	"context"
 	"github.com/lib/pq"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 	"sort"
 )
 
-func (s *Store) NewTopicReader() func(context.Context, *gorm.DB, string, ontology.TopicReadInput) (ontology.TopicReadResult, error) {
+func (s *Store) NewTopicReader() func(context.Context, *gorm.DB, string, topiccontract.TopicReadInput) (topiccontract.TopicReadResult, error) {
 	return s.ReadEvidenceTopics
 }
 
-func (s *Store) ReadEvidenceTopics(ctx context.Context, tx *gorm.DB, teamID string, input ontology.TopicReadInput) (ontology.TopicReadResult, error) {
-	result := ontology.TopicReadResult{Topics: []ontology.EvidenceTopic{}, Rejected: map[string]string{}}
+func (s *Store) ReadEvidenceTopics(ctx context.Context, tx *gorm.DB, teamID string, input topiccontract.TopicReadInput) (topiccontract.TopicReadResult, error) {
+	result := topiccontract.TopicReadResult{Topics: []topiccontract.EvidenceTopic{}, Rejected: map[string]string{}}
 	fence, err := sharedScope(ctx, tx, teamID)
 	if err != nil {
 		return result, err
 	}
 	result.SpaceID, result.Generation = fence.SpaceID, fence.Generation
 	if input.SpaceID != "" && input.SpaceID != fence.SpaceID {
-		return result, ontology.ErrTopicUnavailable
+		return result, topiccontract.ErrTopicUnavailable
 	}
-	var records []ontology.Record
+	var records []topiccontract.Record
 	if input.TopicIDs != nil {
 		heads, loadErr := loadHeads(tx, fence, input.TopicIDs, nil)
 		if loadErr != nil {
@@ -30,7 +30,7 @@ func (s *Store) ReadEvidenceTopics(ctx context.Context, tx *gorm.DB, teamID stri
 		}
 		for _, id := range input.TopicIDs {
 			topic, ok := heads[id]
-			if !ok || topic.Kind != ontology.Topic || topic.Retired {
+			if !ok || topic.Kind != topiccontract.Topic || topic.Retired {
 				result.Rejected[id] = "unavailable"
 				continue
 			}
@@ -41,7 +41,7 @@ func (s *Store) ReadEvidenceTopics(ctx context.Context, tx *gorm.DB, teamID stri
 			SELECT assignment.topic_id FROM topic_record_heads assignment
 			WHERE assignment.team_id=head.team_id AND assignment.shared_space_id=head.shared_space_id
 			  AND assignment.space_generation=head.space_generation AND assignment.kind='assignment'
-			  AND NOT assignment.retired AND assignment.evidence_id=ANY(?::uuid[]))`, []any{pq.Array(input.EvidenceIDs)}, ontology.MaxPageSize)
+			  AND NOT assignment.retired AND assignment.evidence_id=ANY(?::uuid[]))`, []any{pq.Array(input.EvidenceIDs)}, topiccontract.MaxPageSize)
 		if err != nil {
 			return result, err
 		}
@@ -53,7 +53,7 @@ func (s *Store) ReadEvidenceTopics(ctx context.Context, tx *gorm.DB, teamID stri
 		if len(ids) == 0 {
 			return result, nil
 		}
-		records, err = recallRecords(tx, fence, `head.kind='topic' AND head.record_id=ANY(?::uuid[])`, []any{pq.Array(ids)}, ontology.MaxPageSize)
+		records, err = recallRecords(tx, fence, `head.kind='topic' AND head.record_id=ANY(?::uuid[])`, []any{pq.Array(ids)}, topiccontract.MaxPageSize)
 		if err != nil {
 			return result, err
 		}
@@ -75,15 +75,15 @@ func (s *Store) ReadEvidenceTopics(ctx context.Context, tx *gorm.DB, teamID stri
 		}
 		topics[view.ID] = len(result.Topics)
 		ids = append(ids, view.ID)
-		result.Topics = append(result.Topics, ontology.EvidenceTopic{ID: view.ID, Version: view.Version, Name: name, Description: view.Definition.Description, EvidenceIDs: []string{}, AssignmentIDs: []string{}})
+		result.Topics = append(result.Topics, topiccontract.EvidenceTopic{ID: view.ID, Version: view.Version, Name: name, Description: view.Definition.Description, EvidenceIDs: []string{}, AssignmentIDs: []string{}})
 	}
 	if input.TopicIDs != nil && len(result.Rejected) > 0 {
-		return result, ontology.ErrTopicUnavailable
+		return result, topiccontract.ErrTopicUnavailable
 	}
 	if len(ids) == 0 {
 		return result, nil
 	}
-	assignments, err := recallRecords(tx, fence, `head.kind='assignment' AND head.topic_id=ANY(?::uuid[])`, []any{pq.Array(ids)}, ontology.MaxDependencyRecords)
+	assignments, err := recallRecords(tx, fence, `head.kind='assignment' AND head.topic_id=ANY(?::uuid[])`, []any{pq.Array(ids)}, topiccontract.MaxDependencyRecords)
 	if err != nil {
 		return result, err
 	}
@@ -92,7 +92,7 @@ func (s *Store) ReadEvidenceTopics(ctx context.Context, tx *gorm.DB, teamID stri
 		return result, err
 	}
 	for _, view := range views {
-		if !view.Current || view.Assignment == nil || view.Assignment.Source.Kind != ontology.EvidenceSource {
+		if !view.Current || view.Assignment == nil || view.Assignment.Source.Kind != topiccontract.EvidenceSource {
 			result.Rejected[view.ID] = view.StaleReason
 			continue
 		}
@@ -110,10 +110,10 @@ func (s *Store) ReadEvidenceTopics(ctx context.Context, tx *gorm.DB, teamID stri
 	return result, nil
 }
 
-func smallTopicsForEvidence(tx *gorm.DB, fence scope, input ontology.TopicReadInput) ([]string, error) {
+func smallTopicsForEvidence(tx *gorm.DB, fence scope, input topiccontract.TopicReadInput) ([]string, error) {
 	var ids []string
-	if input.MaxMembers < 1 || input.MaxMembers > ontology.MaxPageSize {
-		return nil, ontology.ErrInvalid
+	if input.MaxMembers < 1 || input.MaxMembers > topiccontract.MaxPageSize {
+		return nil, topiccontract.ErrInvalid
 	}
 	err := tx.Raw(`WITH scope AS (SELECT ?::uuid AS team_id,?::uuid AS shared_space_id,?::bigint AS space_generation),
 		seeds AS (SELECT unnest(?::uuid[]) AS evidence_id),
@@ -138,7 +138,7 @@ func smallTopicsForEvidence(tx *gorm.DB, fence scope, input ontology.TopicReadIn
 			SELECT links.topic_id,row_number() OVER (PARTITION BY links.evidence_id ORDER BY sizes.members,links.topic_id) AS rank
 			FROM links JOIN sizes USING(topic_id) WHERE members BETWEEN 2 AND ?
 		)
-		SELECT DISTINCT topic_id::text FROM ranked WHERE rank<=? ORDER BY topic_id::text`, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(input.EvidenceIDs), ontology.MaxVocabularyCandidates,
-		input.MaxMembers+1, input.MaxMembers, ontology.MaxRecallPeerTopics).Scan(&ids).Error
+		SELECT DISTINCT topic_id::text FROM ranked WHERE rank<=? ORDER BY topic_id::text`, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(input.EvidenceIDs), topiccontract.MaxVocabularyCandidates,
+		input.MaxMembers+1, input.MaxMembers, topiccontract.MaxRecallPeerTopics).Scan(&ids).Error
 	return ids, err
 }

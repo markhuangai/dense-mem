@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 )
 
@@ -19,7 +19,7 @@ func (s *Store) withMaintenanceSystem(ctx context.Context, fn func(*gorm.DB) err
 		return err
 	}
 	if s == nil || s.db == nil || s.rls == nil {
-		return fmt.Errorf("%w: database and RLS required", ontology.ErrAccounting)
+		return fmt.Errorf("%w: database and RLS required", topic.ErrAccounting)
 	}
 	return s.rls.WithSystemTx(ctx, s.db, fn)
 }
@@ -29,7 +29,7 @@ func (s *Store) readMaintenanceSystem(ctx context.Context, fn func(*gorm.DB) err
 		return err
 	}
 	if s == nil || s.db == nil || s.rls == nil {
-		return fmt.Errorf("%w: database and RLS required", ontology.ErrAccounting)
+		return fmt.Errorf("%w: database and RLS required", topic.ErrAccounting)
 	}
 	return s.rls.WithSystemReadOnlyRepeatableTx(ctx, s.db, fn)
 }
@@ -39,8 +39,8 @@ const maintenanceRunColumns = `run_id::text,COALESCE(window_id::text,''),kind,st
 
 type maintenanceScanner interface{ Scan(...any) error }
 
-func scanMaintenanceWindow(row maintenanceScanner) (*ontology.MaintenanceWindow, error) {
-	result := &ontology.MaintenanceWindow{}
+func scanMaintenanceWindow(row maintenanceScanner) (*topic.MaintenanceWindow, error) {
+	result := &topic.MaintenanceWindow{}
 	var policy []byte
 	err := row.Scan(&result.ID, &result.StartsAt, &result.EndsAt, &policy)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -66,8 +66,8 @@ func maintenanceWindowPolicy(policy domain.TopicMaintenanceConfig) domain.TopicM
 	return policy
 }
 
-func scanMaintenanceRun(row maintenanceScanner) (ontology.MaintenanceRun, error) {
-	var value ontology.MaintenanceRun
+func scanMaintenanceRun(row maintenanceScanner) (topic.MaintenanceRun, error) {
+	var value topic.MaintenanceRun
 	err := row.Scan(&value.ID, &value.WindowID, &value.Kind, &value.Status, &value.OperationKey, &value.MaxBatches, &value.CompletedBatches, &value.FailureCode, &value.CreatedAt, &value.UpdatedAt, &value.InputTokens, &value.OutputTokens)
 	return value, err
 }
@@ -87,13 +87,13 @@ func maintenanceState(tx *gorm.DB) (bool, error) {
 	return paused, err
 }
 
-func currentMaintenanceWindow(tx *gorm.DB, now time.Time) (*ontology.MaintenanceWindow, error) {
+func currentMaintenanceWindow(tx *gorm.DB, now time.Time) (*topic.MaintenanceWindow, error) {
 	return scanMaintenanceWindow(tx.Raw(`SELECT `+maintenanceWindowColumns+` FROM topic_maintenance_windows
 	 WHERE starts_at<=? AND ends_at>? AND jsonb_exists(policy,'context_window_tokens') ORDER BY starts_at DESC LIMIT 1`, now, now).Row())
 }
 
-func (s *Store) CurrentMaintenanceWindow(ctx context.Context, now time.Time) (*ontology.MaintenanceWindow, error) {
-	var result *ontology.MaintenanceWindow
+func (s *Store) CurrentMaintenanceWindow(ctx context.Context, now time.Time) (*topic.MaintenanceWindow, error) {
+	var result *topic.MaintenanceWindow
 	err := s.readMaintenanceSystem(ctx, func(tx *gorm.DB) error {
 		var err error
 		result, err = currentMaintenanceWindow(tx, now)
@@ -102,9 +102,9 @@ func (s *Store) CurrentMaintenanceWindow(ctx context.Context, now time.Time) (*o
 	return result, err
 }
 
-func (s *Store) EnsureMaintenanceWindow(ctx context.Context, policy domain.TopicMaintenanceConfig, now time.Time) (*ontology.MaintenanceWindow, error) {
+func (s *Store) EnsureMaintenanceWindow(ctx context.Context, policy domain.TopicMaintenanceConfig, now time.Time) (*topic.MaintenanceWindow, error) {
 	policy = maintenanceWindowPolicy(policy)
-	var result *ontology.MaintenanceWindow
+	var result *topic.MaintenanceWindow
 	err := s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
 		if _, err := maintenanceState(tx); err != nil {
 			return err
@@ -114,7 +114,7 @@ func (s *Store) EnsureMaintenanceWindow(ctx context.Context, policy domain.Topic
 			return err
 		}
 		if policy.SettingsVersion == "" || version != policy.SettingsVersion {
-			return ontology.ErrConflict
+			return topic.ErrConflict
 		}
 		previous, err := scanMaintenanceWindow(tx.Raw(`SELECT ` + maintenanceWindowColumns + ` FROM topic_maintenance_windows ORDER BY starts_at DESC LIMIT 1`).Row())
 		if err != nil {
@@ -128,9 +128,9 @@ func (s *Store) EnsureMaintenanceWindow(ctx context.Context, policy domain.Topic
 			return nil
 		}
 		if policy.ContextWindowTokens < 1 || policy.ContextWindowTokens > 1000000000 {
-			return ontology.ErrConfiguration
+			return topic.ErrConfiguration
 		}
-		start, end, err := ontology.MaintenanceWindowBounds(policy, now, previous)
+		start, end, err := topic.MaintenanceWindowBounds(policy, now, previous)
 		if err != nil {
 			return err
 		}
@@ -141,7 +141,7 @@ func (s *Store) EnsureMaintenanceWindow(ctx context.Context, policy domain.Topic
 		if err != nil {
 			return err
 		}
-		result = &ontology.MaintenanceWindow{ID: uuid.NewString(), StartsAt: start, EndsAt: end, Policy: policy}
+		result = &topic.MaintenanceWindow{ID: uuid.NewString(), StartsAt: start, EndsAt: end, Policy: policy}
 		if err := tx.Exec(`INSERT INTO topic_maintenance_windows(window_id,starts_at,ends_at,policy) VALUES(?::uuid,?,?,?::jsonb)`, result.ID, start, end, string(encoded)).Error; err != nil {
 			return err
 		}
@@ -160,38 +160,38 @@ func seedMaintenanceTeams(tx *gorm.DB) error {
 	 ON space.team_id=team.id AND space.kind='team_shared' AND space.lifecycle_state='active'
 	 WHERE team.status='active' AND team.deleted_at IS NULL AND NOT EXISTS(
 	 SELECT 1 FROM topic_maintenance_teams AS state WHERE state.team_id=team.id AND state.shared_space_id=space.id AND state.space_generation=space.generation)
-	 ORDER BY team.id LIMIT ? ON CONFLICT DO NOTHING`, ontology.MaintenancePageSize).Error
+	 ORDER BY team.id LIMIT ? ON CONFLICT DO NOTHING`, topic.MaintenancePageSize).Error
 }
 
-func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now time.Time, lease time.Duration) (*ontology.MaintenanceTurn, error) {
+func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now time.Time, lease time.Duration) (*topic.MaintenanceTurn, error) {
 	if _, err := uuid.Parse(windowID); err != nil || lease <= 0 {
-		return nil, ontology.ErrInvalid
+		return nil, topic.ErrInvalid
 	}
 	if err := s.recoverMaintenanceBatches(ctx, now); err != nil {
 		return nil, err
 	}
-	var result *ontology.MaintenanceTurn
+	var result *topic.MaintenanceTurn
 	err := s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
 		paused, err := maintenanceState(tx)
 		if err != nil {
 			return err
 		}
 		if paused {
-			return ontology.ErrMaintenancePaused
+			return topic.ErrMaintenancePaused
 		}
 		enabled, err := maintenanceEnabled(tx)
 		if err != nil {
 			return err
 		}
 		if !enabled {
-			return ontology.ErrMaintenanceDisabled
+			return topic.ErrMaintenanceDisabled
 		}
 		window, err := scanMaintenanceWindow(tx.Raw(`SELECT `+maintenanceWindowColumns+` FROM topic_maintenance_windows WHERE window_id=?::uuid`, windowID).Row())
 		if err != nil {
 			return err
 		}
 		if window == nil || !now.Before(window.EndsAt) {
-			return ontology.ErrWindowClosed
+			return topic.ErrWindowClosed
 		}
 		if err = seedMaintenanceTeams(tx); err != nil {
 			return err
@@ -206,7 +206,7 @@ func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now t
 		if active >= window.Policy.MaxConcurrency {
 			return nil
 		}
-		candidate := &ontology.MaintenanceTurn{LeaseToken: uuid.NewString(), LeaseUntil: now.Add(lease)}
+		candidate := &topic.MaintenanceTurn{LeaseToken: uuid.NewString(), LeaseUntil: now.Add(lease)}
 		err = tx.Raw(`SELECT run_id::text,COALESCE(command->>'retry_run_id','') FROM topic_maintenance_runs AS run
 		 WHERE window_id=?::uuid AND kind IN ('scheduled','run','retry') AND status IN ('pending','running')
 		 AND (max_batches=0 OR completed_batches+(SELECT count(*) FROM topic_maintenance_batches AS batch WHERE batch.run_id=run.run_id AND batch.status='running')<max_batches)
@@ -277,44 +277,44 @@ func maintenanceTeamLimits(policy domain.TopicMaintenanceConfig) (string, error)
 	return string(encoded), err
 }
 
-func (s *Store) ReleaseMaintenanceTurn(ctx context.Context, turn ontology.MaintenanceTurn) error {
+func (s *Store) ReleaseMaintenanceTurn(ctx context.Context, turn topic.MaintenanceTurn) error {
 	return s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
 		return releaseMaintenanceTurnTx(tx, turn)
 	})
 }
 
-func releaseMaintenanceTurnTx(tx *gorm.DB, turn ontology.MaintenanceTurn) error {
+func releaseMaintenanceTurnTx(tx *gorm.DB, turn topic.MaintenanceTurn) error {
 	return tx.Exec(`UPDATE topic_maintenance_teams SET lease_token=NULL,lease_until=NULL WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND lease_token=?::uuid`, turn.TeamID, turn.SpaceID, turn.Generation, turn.LeaseToken).Error
 }
 
-func checkMaintenanceTurn(tx *gorm.DB, turn ontology.MaintenanceTurn) error {
+func checkMaintenanceTurn(tx *gorm.DB, turn topic.MaintenanceTurn) error {
 	var found bool
 	if err := tx.Raw(`SELECT EXISTS(SELECT 1 FROM topic_maintenance_teams WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND lease_token=?::uuid AND lease_until>clock_timestamp())`, turn.TeamID, turn.SpaceID, turn.Generation, turn.LeaseToken).Row().Scan(&found); err != nil {
 		return err
 	}
 	if !found {
-		return ontology.ErrLeaseLost
+		return topic.ErrLeaseLost
 	}
 	return nil
 }
 
 func maintenancePublicationFence(ctx context.Context, tx *gorm.DB, fence scope) error {
-	claim, ok := ontology.MaintenanceClaimFromContext(ctx)
+	claim, ok := topic.MaintenanceClaimFromContext(ctx)
 	if !ok {
 		return nil
 	}
 	if claim.TeamID != fence.TeamID || claim.SpaceID != fence.SpaceID || claim.Generation != fence.Generation {
-		return ontology.ErrUnauthorized
+		return topic.ErrUnauthorized
 	}
 	var status string
 	err := tx.Raw(`SELECT status FROM topic_maintenance_batches WHERE batch_id=?::uuid AND team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND lease_token=?::uuid AND lease_until>clock_timestamp() FOR UPDATE`, claim.ID, fence.TeamID, fence.SpaceID, fence.Generation, claim.LeaseToken).Row().Scan(&status)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && status != "running") {
-		return ontology.ErrLeaseLost
+		return topic.ErrLeaseLost
 	}
 	return err
 }
 
-var _ ontology.MaintenanceRepository = (*Store)(nil)
+var _ topic.MaintenanceRepository = (*Store)(nil)
 
 func expireMaintenanceBatches(tx *gorm.DB, now time.Time) (int64, error) {
 	result := tx.Exec(`UPDATE topic_maintenance_batches SET status='lost',failure_code='lease_lost' WHERE status='running' AND lease_until<=?`, now)

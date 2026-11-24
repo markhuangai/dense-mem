@@ -16,7 +16,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/evalharness"
 	"github.com/markhuangai/dense-mem/internal/recall"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 )
@@ -25,7 +25,7 @@ const (
 	originalPacingEvidence  = "Obsidian cools."
 	correctedPacingEvidence = "Fluorite fluoresces."
 	pacingBatches           = 3
-	pacingBacklog           = (pacingBatches - 1) * ontology.MaxOrganizationSources
+	pacingBacklog           = (pacingBatches - 1) * topic.MaxOrganizationSources
 	pacingSamplesPerBatch   = 16
 	pacingSampleInterval    = 150 * time.Millisecond
 )
@@ -72,7 +72,7 @@ func measureOntologyPacing(t *testing.T, mode string, tick time.Duration) ontolo
 	defer cancel()
 	client := f.native.Client
 	drain := func() {
-		var status ontology.MaintenanceStatus
+		var status topic.MaintenanceStatus
 		for range 8 {
 			var err error
 			status, err = f.maintenance.Status(ctx)
@@ -109,11 +109,11 @@ func measureOntologyPacing(t *testing.T, mode string, tick time.Duration) ontolo
 	require.NoError(t, err)
 	require.NotNil(t, status.Window)
 	discover := func() {
-		turn, err := f.ontology.ClaimMaintenanceTurn(ctx, status.Window.ID, time.Now(), time.Minute)
+		turn, err := f.topicStore.ClaimMaintenanceTurn(ctx, status.Window.ID, time.Now(), time.Minute)
 		require.NoError(t, err)
 		require.NotNil(t, turn)
-		_, err = f.ontology.DiscoverMaintenance(ctx, *turn, ontology.MaintenancePageSize)
-		releaseErr := f.ontology.ReleaseMaintenanceTurn(ctx, *turn)
+		_, err = f.topicStore.DiscoverMaintenance(ctx, *turn, topic.MaintenancePageSize)
+		releaseErr := f.topicStore.ReleaseMaintenanceTurn(ctx, *turn)
 		require.NoError(t, errors.Join(err, releaseErr))
 	}
 	for index := range pacingBacklog {

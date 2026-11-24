@@ -13,7 +13,7 @@ import (
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -30,9 +30,9 @@ func TestOntologyOrganizationBatchedSources(t *testing.T) {
 	_, err = f.knowledge.RetractEvidence(f.actor(0, "member"), knowledge.RetractEvidenceInput{
 		TeamID: f.team, OwnerProfileID: f.owners[0], EvidenceIDs: []string{stale.ID}, Reason: "withdraw batch fixture", IdempotencyKey: uuid.NewString(), RequestHash: testHash("initial batch source retraction")})
 	require.NoError(t, err)
-	input := []ontology.SourceHandle{handles[3], handles[2], handles[0], handles[1], handles[4], handles[3], stale,
-		{Kind: ontology.EvidenceSource, ID: uuid.NewString(), Version: 1}, foreign,
-		{Kind: ontology.EvidenceSource, ID: private.Evidence[0].FragmentID, Version: 1}}
+	input := []topic.SourceHandle{handles[3], handles[2], handles[0], handles[1], handles[4], handles[3], stale,
+		{Kind: topic.EvidenceSource, ID: uuid.NewString(), Version: 1}, foreign,
+		{Kind: topic.EvidenceSource, ID: private.Evidence[0].FragmentID, Version: 1}}
 	check := func(eligible int) {
 		t.Helper()
 		before := f.canonicalSnapshot(t)
@@ -52,14 +52,14 @@ func TestOntologyOrganizationBatchedSources(t *testing.T) {
 				require.Equal(t, expected, actual)
 				invalid := handles[0]
 				invalid.Version++
-				_, err = organizationSources(tx, fence, []ontology.SourceHandle{invalid})
-				require.ErrorIs(t, err, ontology.ErrInvalid)
+				_, err = organizationSources(tx, fence, []topic.SourceHandle{invalid})
+				require.ErrorIs(t, err, topic.ErrInvalid)
 				count := 0
 				for i, snapshot := range actual {
 					require.Equal(t, input[i], snapshot.SourceHandle)
-					fingerprint, err := ontology.SourceFingerprint(snapshot)
+					fingerprint, err := topic.SourceFingerprint(snapshot)
 					require.NoError(t, err)
-					expectedFingerprint, err := ontology.SourceFingerprint(expected[i])
+					expectedFingerprint, err := topic.SourceFingerprint(expected[i])
 					require.NoError(t, err)
 					require.Equal(t, expectedFingerprint, fingerprint)
 					if snapshot.Eligible {
@@ -108,7 +108,7 @@ func TestOntologyOrganizationBatchedQueryCounts(t *testing.T) {
 		require.EqualValues(t, 1, counter.queries.Load())
 		require.Less(t, counter.queries.Load(), individualSources)
 		counter.queries.Store(0)
-		var expectedViews []ontology.RecordView
+		var expectedViews []topic.RecordView
 		for _, record := range records {
 			view, err := f.store.currentView(tx, fence, record)
 			require.NoError(t, err)
@@ -125,37 +125,37 @@ func TestOntologyOrganizationBatchedQueryCounts(t *testing.T) {
 }
 
 func TestOntologyOrganizationFreshnessStopsAfterStaleBatch(t *testing.T) {
-	for _, staleIndex := range []int{-1, 0, ontology.MaxOrganizationSources, 2 * ontology.MaxOrganizationSources} {
+	for _, staleIndex := range []int{-1, 0, topic.MaxOrganizationSources, 2 * topic.MaxOrganizationSources} {
 		t.Run(fmt.Sprintf("stale_index_%d", staleIndex), func(t *testing.T) {
-			f, handles, _ := organizationReadFixture(t, 2*ontology.MaxOrganizationSources+1)
+			f, handles, _ := organizationReadFixture(t, 2*topic.MaxOrganizationSources+1)
 			handles = handles[3:4]
 			contextData, err := f.store.ReadOrganization(context.Background(), f.team, handles)
 			require.NoError(t, err)
 			require.Len(t, contextData.Records, 41)
-			var support ontology.SourceHandle
+			var support topic.SourceHandle
 			if staleIndex >= 0 {
 				support = f.organizationEvidence(t, 1, "Additional support for one freshness dependency.", nil)
 				record := contextData.Records[staleIndex].Record
 				record.Sources = append(record.Sources, f.source(t, support))
 				_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication(uuid.NewString(), contextData.Revision,
-					ontology.Change{Record: record, ExpectedVersion: record.Version}))
+					topic.Change{Record: record, ExpectedVersion: record.Version}))
 				require.NoError(t, err)
 				contextData, err = f.store.ReadOrganization(context.Background(), f.team, handles)
 				require.NoError(t, err)
 			}
-			receipt := ontology.OrganizationReceipt{ID: uuid.NewString(), OperationKey: uuid.NewString(), ProviderIdentity: "freshness-fixture",
-				Sources: []ontology.SourceDependency{f.source(t, handles[0])}}
-			receipt.InputHash, err = ontology.OrganizationInputHash(ontology.OrganizationInput{OperationKey: receipt.OperationKey, Sources: handles}, receipt.ProviderIdentity)
+			receipt := topic.OrganizationReceipt{ID: uuid.NewString(), OperationKey: uuid.NewString(), ProviderIdentity: "freshness-fixture",
+				Sources: []topic.SourceDependency{f.source(t, handles[0])}}
+			receipt.InputHash, err = topic.OrganizationInputHash(topic.OrganizationInput{OperationKey: receipt.OperationKey, Sources: handles}, receipt.ProviderIdentity)
 			require.NoError(t, err)
-			receipt.BatchHash, err = ontology.OrganizationBatchHash(receipt.Sources, receipt.ProviderIdentity)
+			receipt.BatchHash, err = topic.OrganizationBatchHash(receipt.Sources, receipt.ProviderIdentity)
 			require.NoError(t, err)
-			receipt.ContextHash, err = ontology.OrganizationContextHash(contextData)
+			receipt.ContextHash, err = topic.OrganizationContextHash(contextData)
 			require.NoError(t, err)
-			receipt.Dependencies, err = ontology.OrganizationDependencies(contextData)
+			receipt.Dependencies, err = topic.OrganizationDependencies(contextData)
 			require.NoError(t, err)
 			require.Len(t, receipt.Dependencies, 41)
-			receipt.Result = ontology.OrganizationResult{AssessmentID: receipt.ID, Outcomes: []ontology.OrganizationOutcome{{Source: handles[0], Status: "unchanged"}}}
-			require.NoError(t, ontology.ValidateOrganizationReceipt(receipt))
+			receipt.Result = topic.OrganizationResult{AssessmentID: receipt.ID, Outcomes: []topic.OrganizationOutcome{{Source: handles[0], Status: "unchanged"}}}
+			require.NoError(t, topic.ValidateOrganizationReceipt(receipt))
 			if staleIndex >= 0 {
 				require.NotEqual(t, handles[0], support)
 				_, err = f.knowledge.RetractEvidence(f.actor(1, "member"), knowledge.RetractEvidenceInput{TeamID: f.team, OwnerProfileID: f.owners[1], EvidenceIDs: []string{support.ID},
@@ -170,7 +170,7 @@ func TestOntologyOrganizationFreshnessStopsAfterStaleBatch(t *testing.T) {
 				counter.queries.Store(0)
 				sources, err := organizationSources(tx, fence, handles)
 				require.NoError(t, err)
-				fingerprint, err := ontology.SourceFingerprint(sources[0])
+				fingerprint, err := topic.SourceFingerprint(sources[0])
 				require.NoError(t, err)
 				require.Equal(t, receipt.Sources[0].Fingerprint, fingerprint)
 				ids := make([]string, len(receipt.Dependencies))
@@ -179,7 +179,7 @@ func TestOntologyOrganizationFreshnessStopsAfterStaleBatch(t *testing.T) {
 				}
 				catalog, err := loadHeads(tx, fence, ids, nil)
 				require.NoError(t, err)
-				records := make([]ontology.Record, len(receipt.Dependencies))
+				records := make([]topic.Record, len(receipt.Dependencies))
 				for i, dependency := range receipt.Dependencies {
 					record, ok := catalog[dependency.ID]
 					require.True(t, ok)
@@ -210,7 +210,7 @@ func TestOntologyOrganizationFreshnessStopsAfterStaleBatch(t *testing.T) {
 				}
 				require.False(t, current)
 				prefix := receipt
-				end := min((staleIndex/ontology.MaxOrganizationSources+1)*ontology.MaxOrganizationSources, len(records))
+				end := min((staleIndex/topic.MaxOrganizationSources+1)*topic.MaxOrganizationSources, len(records))
 				prefix.Dependencies = prefix.Dependencies[:end]
 				counter.queries.Store(0)
 				current, err = f.store.organizationInputsCurrent(tx, fence, prefix)
@@ -234,9 +234,9 @@ func TestOntologyOrganizationBatchedDependencyBounds(t *testing.T) {
 	f := newOrganizationFixture(t)
 	ctx := f.actor(0, "manager")
 	before := f.canonicalSnapshot(t)
-	var roots []ontology.Record
+	var roots []topic.Record
 	var revision int64
-	publish := func(changes ...ontology.Change) {
+	publish := func(changes ...topic.Change) {
 		t.Helper()
 		result, err := f.store.PublishManager(ctx, f.team, testPublication(uuid.NewString(), revision, changes...))
 		require.NoError(t, err)
@@ -244,18 +244,18 @@ func TestOntologyOrganizationBatchedDependencyBounds(t *testing.T) {
 	}
 	for _, key := range []string{"bounded-left", "bounded-right"} {
 		root := testTopic(key)
-		for batch := range ontology.MaxDependencyRecords / (2 * ontology.MaxChanges) {
-			var changes []ontology.Change
+		for batch := range topic.MaxDependencyRecords / (2 * topic.MaxChanges) {
+			var changes []topic.Change
 			branch := testTopic(fmt.Sprintf("%s-branch-%02d", key, batch))
-			for leaf := range ontology.MaxChanges - 1 {
+			for leaf := range topic.MaxChanges - 1 {
 				child := testTopic(fmt.Sprintf("%s-leaf-%02d-%02d", key, batch, leaf))
-				branch.Dependencies = append(branch.Dependencies, ontology.RevisionRef{ID: child.ID, Version: 1})
-				changes = append(changes, ontology.Change{Record: child})
+				branch.Dependencies = append(branch.Dependencies, topic.RevisionRef{ID: child.ID, Version: 1})
+				changes = append(changes, topic.Change{Record: child})
 			}
-			publish(append(changes, ontology.Change{Record: branch})...)
-			root.Dependencies = append(root.Dependencies, ontology.RevisionRef{ID: branch.ID, Version: 1})
+			publish(append(changes, topic.Change{Record: branch})...)
+			root.Dependencies = append(root.Dependencies, topic.RevisionRef{ID: branch.ID, Version: 1})
 		}
-		publish(ontology.Change{Record: root})
+		publish(topic.Change{Record: root})
 		view, err := f.store.GetRecord(ctx, f.team, root.ID, 0)
 		require.NoError(t, err)
 		require.True(t, view.Current)
@@ -263,7 +263,7 @@ func TestOntologyOrganizationBatchedDependencyBounds(t *testing.T) {
 	}
 	require.NoError(t, f.store.withScope(ctx, f.team, true, func(tx *gorm.DB, fence scope) error {
 		_, err := f.store.currentViews(tx, fence, roots)
-		require.ErrorIs(t, err, ontology.ErrContextBound)
+		require.ErrorIs(t, err, topic.ErrContextBound)
 		views, err := f.store.organizationViews(tx, fence, roots)
 		require.NoError(t, err)
 		require.Len(t, views, len(roots))
@@ -273,7 +273,7 @@ func TestOntologyOrganizationBatchedDependencyBounds(t *testing.T) {
 			require.Equal(t, singleton, view)
 			require.True(t, view.Current)
 		}
-		dependencies, err := ontology.OrganizationDependencies(ontology.OrganizationContext{Candidates: views})
+		dependencies, err := topic.OrganizationDependencies(topic.OrganizationContext{Candidates: views})
 		require.NoError(t, err)
 		require.Len(t, dependencies, len(roots))
 		return nil
@@ -287,11 +287,11 @@ func TestOntologyOrganizationBatchedVocabulary(t *testing.T) {
 	source := f.organizationEvidence(t, 1, "PostgreSQL relational storage", nil)
 	before := f.canonicalSnapshot(t)
 	require.NoError(t, f.store.withScope(context.Background(), f.team, true, func(tx *gorm.DB, fence scope) error {
-		sources, err := organizationSources(tx, fence, []ontology.SourceHandle{source})
+		sources, err := organizationSources(tx, fence, []topic.SourceHandle{source})
 		require.NoError(t, err)
 		actual, err := f.store.organizationVocabulary(tx, fence, sources, []string{current[24].ID})
 		require.NoError(t, err)
-		require.Len(t, actual, ontology.MaxVocabularyCandidates)
+		require.Len(t, actual, topic.MaxVocabularyCandidates)
 		require.Equal(t, current[24].ID, actual[0].ID)
 		for i, view := range actual[1:] {
 			require.Equal(t, current[i].ID, view.ID)
@@ -331,12 +331,12 @@ func TestOntologyOrganizationBatchedPublicationFences(t *testing.T) {
 						record = testTopic("postgresql")
 						expectedVersion = 0
 					}
-					_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication(uuid.NewString(), 1, ontology.Change{Record: record, ExpectedVersion: expectedVersion}))
+					_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication(uuid.NewString(), 1, topic.Change{Record: record, ExpectedVersion: expectedVersion}))
 					require.NoError(t, err)
 				}
 				canonical = f.canonicalSnapshot(t)
 			})
-			result, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: fmt.Sprintf("batch-race-%s", mutation), Sources: sources})
+			result, err := service.Organize(context.Background(), f.team, topic.OrganizationInput{OperationKey: fmt.Sprintf("batch-race-%s", mutation), Sources: sources})
 			require.Error(t, err)
 			require.Equal(t, "stale_input", result.FailureCode)
 			require.False(t, result.Current)

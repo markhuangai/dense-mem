@@ -16,7 +16,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/provider/structured"
 	organization "github.com/markhuangai/dense-mem/internal/topics"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 )
@@ -35,11 +35,11 @@ func newOrganizationFixtureWithMaintenance(t *testing.T, maintenance bool) *onto
 	return newOntologyFixtureWithMaintenance(t, maintenance)
 }
 
-func (f *ontologyFixture) organizationEvidence(t *testing.T, owner int, text string, metadata map[string]any) ontology.SourceHandle {
+func (f *ontologyFixture) organizationEvidence(t *testing.T, owner int, text string, metadata map[string]any) topic.SourceHandle {
 	t.Helper()
 	result, err := f.knowledge.CreateIngestForTest(context.Background(), knowledge.CreateIngestInput{TeamID: f.team, OwnerProfileID: f.owners[owner], IdempotencyKey: uuid.NewString(), RequestHash: testHash(text + uuid.NewString()), Evidence: []knowledge.EvidenceInput{{FragmentID: uuid.NewString(), Content: text, ForceInsert: true, Metadata: metadata}}})
 	require.NoError(t, err)
-	return ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: result.Evidence[0].FragmentID, Version: 1}
+	return topic.SourceHandle{Kind: topic.EvidenceSource, ID: result.Evidence[0].FragmentID, Version: 1}
 }
 
 func organizationFixtureResponse(request assessment.Request, equivalent func(assessment.Item, assessment.Item) bool) assessment.Response {
@@ -54,14 +54,14 @@ func organizationFixtureResponse(request assessment.Request, equivalent func(ass
 		ref := item.PreferredDefinitionRef
 		if ref == "" {
 			for _, d := range request.Definitions {
-				if item.Kind == ontology.EvidenceSource && d.Kind == ontology.Topic {
+				if item.Kind == topic.EvidenceSource && d.Kind == topic.Topic {
 					ref = d.Ref
 					break
 				}
 			}
 		}
 		if ref == "" {
-			kind, key := ontology.Topic, "postgresql"
+			kind, key := topic.Topic, "postgresql"
 			if definitions[key] == "" {
 				ref = "new-" + key
 				definitions[key] = ref

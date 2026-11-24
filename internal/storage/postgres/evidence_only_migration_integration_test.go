@@ -16,7 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -217,17 +217,17 @@ CREATE EVENT TRIGGER require_evidence_only_hold_statistics ON ddl_command_start
 
 func seedEvidenceOnlyOntology(t *testing.T, ctx context.Context, db *sql.DB, fixture evidenceOnlyMigrationFixture) {
 	t.Helper()
-	topic := ontology.Record{ID: uuid.NewString(), Version: 1, Kind: ontology.Topic,
-		Definition: &ontology.Definition{Key: "retained-topic", Label: "Retained topic", Description: "Evidence organization survives graph removal"}}
-	fingerprint, err := ontology.RecordFingerprintWithAcceptedSources(topic, nil)
+	topic := topiccontract.Record{ID: uuid.NewString(), Version: 1, Kind: topiccontract.Topic,
+		Definition: &topiccontract.Definition{Key: "retained-topic", Label: "Retained topic", Description: "Evidence organization survives graph removal"}}
+	fingerprint, err := topiccontract.RecordFingerprintWithAcceptedSources(topic, nil)
 	require.NoError(t, err)
 	topic.Fingerprint = fingerprint
-	source := ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: fixture.evidence, Version: 1}
-	assignment := ontology.Record{ID: uuid.NewString(), Version: 1, Kind: ontology.AssignmentKind,
-		Assignment:   &ontology.Assignment{Source: source, DefinitionID: topic.ID},
-		Sources:      []ontology.SourceDependency{{SourceHandle: source, Fingerprint: "sha256:" + strings.Repeat("a", 64)}},
-		Dependencies: []ontology.RevisionRef{{ID: topic.ID, Version: 1}}}
-	assignment.Fingerprint, err = ontology.RecordFingerprintWithAcceptedSources(assignment, map[string]ontology.Record{topic.ID: topic})
+	source := topiccontract.SourceHandle{Kind: topiccontract.EvidenceSource, ID: fixture.evidence, Version: 1}
+	assignment := topiccontract.Record{ID: uuid.NewString(), Version: 1, Kind: topiccontract.AssignmentKind,
+		Assignment:   &topiccontract.Assignment{Source: source, DefinitionID: topic.ID},
+		Sources:      []topiccontract.SourceDependency{{SourceHandle: source, Fingerprint: "sha256:" + strings.Repeat("a", 64)}},
+		Dependencies: []topiccontract.RevisionRef{{ID: topic.ID, Version: 1}}}
+	assignment.Fingerprint, err = topiccontract.RecordFingerprintWithAcceptedSources(assignment, map[string]topiccontract.Record{topic.ID: topic})
 	require.NoError(t, err)
 	publicationID := uuid.NewString()
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
@@ -237,8 +237,8 @@ func seedEvidenceOnlyOntology(t *testing.T, ctx context.Context, db *sql.DB, fix
 		if _, err := tx.ExecContext(ctx, `INSERT INTO ontology_publications(team_id,shared_space_id,space_generation,publication_id,revision,operation_key,request_hash,origin,reason,result) VALUES($1::uuid,$2::uuid,$3,$4::uuid,1,'retained-topic-publication',$5,'automatic','Retained Evidence topic','{}')`, fixture.team, fixture.space, fixture.generation, publicationID, topic.Fingerprint); err != nil {
 			return err
 		}
-		for _, record := range []ontology.Record{topic, assignment} {
-			require.NoError(t, ontology.ValidateRecord(record))
+		for _, record := range []topiccontract.Record{topic, assignment} {
+			require.NoError(t, topiccontract.ValidateRecord(record))
 			body, err := json.Marshal(record)
 			if err != nil {
 				return err
@@ -500,21 +500,21 @@ func TestEvidenceOnlyPostgresNullableOntologyCollections(t *testing.T) {
 	fixture := insertEvidenceOnlyMigrationFixture(t, ctx, db, false)
 	digest := "sha256:" + strings.Repeat("a", 64)
 	assessmentID, publicationID, draftID := uuid.NewString(), uuid.NewString(), uuid.NewString()
-	source := ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: fixture.evidence, Version: 1}
-	publication := ontology.PublicationResult{ID: publicationID, Revision: 1}
-	receipt := ontology.OrganizationReceipt{ID: assessmentID, OperationKey: "nullable-receipt", InputHash: digest, BatchHash: digest, ContextHash: digest, ProviderIdentity: "original-provider",
-		Sources: []ontology.SourceDependency{{SourceHandle: source, Fingerprint: digest}},
-		Result:  ontology.OrganizationResult{AssessmentID: assessmentID, Current: true, Outcomes: []ontology.OrganizationOutcome{{Source: source, Status: "unchanged"}}, Publication: &publication}}
-	require.NoError(t, ontology.ValidateOrganizationReceipt(receipt))
+	source := topiccontract.SourceHandle{Kind: topiccontract.EvidenceSource, ID: fixture.evidence, Version: 1}
+	publication := topiccontract.PublicationResult{ID: publicationID, Revision: 1}
+	receipt := topiccontract.OrganizationReceipt{ID: assessmentID, OperationKey: "nullable-receipt", InputHash: digest, BatchHash: digest, ContextHash: digest, ProviderIdentity: "original-provider",
+		Sources: []topiccontract.SourceDependency{{SourceHandle: source, Fingerprint: digest}},
+		Result:  topiccontract.OrganizationResult{AssessmentID: assessmentID, Current: true, Outcomes: []topiccontract.OrganizationOutcome{{Source: source, Status: "unchanged"}}, Publication: &publication}}
+	require.NoError(t, topiccontract.ValidateOrganizationReceipt(receipt))
 	receiptBody, err := json.Marshal(receipt)
 	require.NoError(t, err)
 	publicationBody, err := json.Marshal(publication)
 	require.NoError(t, err)
 	draftBody, err := json.Marshal(struct {
-		Draft    ontology.ManagementDraft `json:"draft"`
-		Prepared ontology.Publication     `json:"prepared"`
-	}{Draft: ontology.ManagementDraft{ID: draftID, Version: 1, State: "open", Reason: "Prepare later",
-		Edits: []ontology.ManagementEdit{{Action: "define", Kind: ontology.Topic, Definition: &ontology.Definition{Key: "nullable", Label: "Nullable", Description: "A topic awaiting preparation"}}}}})
+		Draft    topiccontract.ManagementDraft `json:"draft"`
+		Prepared topiccontract.Publication     `json:"prepared"`
+	}{Draft: topiccontract.ManagementDraft{ID: draftID, Version: 1, State: "open", Reason: "Prepare later",
+		Edits: []topiccontract.ManagementEdit{{Action: "define", Kind: topiccontract.Topic, Definition: &topiccontract.Definition{Key: "nullable", Label: "Nullable", Description: "A topic awaiting preparation"}}}}})
 	require.NoError(t, err)
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO ontology_catalog_heads(team_id,shared_space_id,space_generation,revision) VALUES($1::uuid,$2::uuid,$3,1)`, fixture.team, fixture.space, fixture.generation); err != nil {
@@ -568,25 +568,25 @@ func TestEvidenceOnlyPostgresMixedOntologyReceiptsAndDrafts(t *testing.T) {
 	assessmentID, publicationID, groupID, retiredID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
 	overrideID, oldOverridePublication, newOverridePublication := uuid.NewString(), uuid.NewString(), uuid.NewString()
 	digest := "sha256:" + strings.Repeat("a", 64)
-	evidence := ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: fixture.evidence, Version: 1}
-	other := ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: uuid.NewString(), Version: 1}
-	group := ontology.Record{ID: groupID, Version: 1, Kind: ontology.EvidenceGroup, Group: &ontology.Group{Members: []ontology.SourceHandle{evidence, other}, AssessmentID: assessmentID},
-		Sources:      []ontology.SourceDependency{{SourceHandle: evidence, Fingerprint: digest}, {SourceHandle: other, Fingerprint: digest}, {SourceHandle: ontology.SourceHandle{Kind: "entity", ID: retiredID, Version: 1}, Fingerprint: digest}},
-		Dependencies: []ontology.RevisionRef{{ID: retiredID, Version: 1}, {ID: overrideID, Version: 1}}, Fingerprint: digest}
-	legacyOverride := ontology.Record{ID: overrideID, Version: 1, Kind: ontology.OverrideKind,
-		Override: &ontology.Override{Action: ontology.SetClassification, DefinitionID: retiredID, Members: []ontology.SourceHandle{{Kind: "entity", ID: retiredID, Version: 1}}},
-		Sources:  []ontology.SourceDependency{{SourceHandle: ontology.SourceHandle{Kind: "entity", ID: retiredID, Version: 1}, Fingerprint: digest}}, Dependencies: []ontology.RevisionRef{{ID: retiredID, Version: 1}}, Fingerprint: digest}
-	retainedOverride := ontology.Record{ID: overrideID, Version: 2, Kind: ontology.OverrideKind,
-		Override: &ontology.Override{Action: ontology.GroupTogether, Members: []ontology.SourceHandle{evidence, other}},
+	evidence := topiccontract.SourceHandle{Kind: topiccontract.EvidenceSource, ID: fixture.evidence, Version: 1}
+	other := topiccontract.SourceHandle{Kind: topiccontract.EvidenceSource, ID: uuid.NewString(), Version: 1}
+	group := topiccontract.Record{ID: groupID, Version: 1, Kind: topiccontract.EvidenceGroup, Group: &topiccontract.Group{Members: []topiccontract.SourceHandle{evidence, other}, AssessmentID: assessmentID},
+		Sources:      []topiccontract.SourceDependency{{SourceHandle: evidence, Fingerprint: digest}, {SourceHandle: other, Fingerprint: digest}, {SourceHandle: topiccontract.SourceHandle{Kind: "entity", ID: retiredID, Version: 1}, Fingerprint: digest}},
+		Dependencies: []topiccontract.RevisionRef{{ID: retiredID, Version: 1}, {ID: overrideID, Version: 1}}, Fingerprint: digest}
+	legacyOverride := topiccontract.Record{ID: overrideID, Version: 1, Kind: topiccontract.OverrideKind,
+		Override: &topiccontract.Override{Action: topiccontract.SetClassification, DefinitionID: retiredID, Members: []topiccontract.SourceHandle{{Kind: "entity", ID: retiredID, Version: 1}}},
+		Sources:  []topiccontract.SourceDependency{{SourceHandle: topiccontract.SourceHandle{Kind: "entity", ID: retiredID, Version: 1}, Fingerprint: digest}}, Dependencies: []topiccontract.RevisionRef{{ID: retiredID, Version: 1}}, Fingerprint: digest}
+	retainedOverride := topiccontract.Record{ID: overrideID, Version: 2, Kind: topiccontract.OverrideKind,
+		Override: &topiccontract.Override{Action: topiccontract.GroupTogether, Members: []topiccontract.SourceHandle{evidence, other}},
 		Sources:  group.Sources[:2]}
-	fingerprint, err := ontology.RecordFingerprintWithAcceptedSources(retainedOverride, map[string]ontology.Record{overrideID: retainedOverride})
+	fingerprint, err := topiccontract.RecordFingerprintWithAcceptedSources(retainedOverride, map[string]topiccontract.Record{overrideID: retainedOverride})
 	require.NoError(t, err)
 	retainedOverride.Fingerprint = fingerprint
-	receipt := ontology.OrganizationReceipt{ID: assessmentID, OperationKey: "mixed-receipt", InputHash: digest, BatchHash: digest, ContextHash: digest, ProviderIdentity: "original-provider",
-		Sources: group.Sources, Dependencies: group.Dependencies, Result: ontology.OrganizationResult{AssessmentID: assessmentID, Current: true,
-			Outcomes:    []ontology.OrganizationOutcome{{Source: evidence, Status: "organized", RecordIDs: []string{groupID, retiredID}}, {Source: other, Status: "organized", RecordIDs: []string{groupID}}, {Source: group.Sources[2].SourceHandle, Status: "organized", RecordIDs: []string{retiredID}}},
-			Attempts:    []ontology.AssessmentAttempt{{Number: 1, ReportedUsageAvailable: true, ReportedInputTokens: 123, ReportedOutputTokens: 17, ReportedTotalTokens: 140}},
-			Publication: &ontology.PublicationResult{ID: publicationID, Revision: 1, Records: []ontology.RevisionRef{{ID: groupID, Version: 1}, {ID: retiredID, Version: 1}}}}}
+	receipt := topiccontract.OrganizationReceipt{ID: assessmentID, OperationKey: "mixed-receipt", InputHash: digest, BatchHash: digest, ContextHash: digest, ProviderIdentity: "original-provider",
+		Sources: group.Sources, Dependencies: group.Dependencies, Result: topiccontract.OrganizationResult{AssessmentID: assessmentID, Current: true,
+			Outcomes:    []topiccontract.OrganizationOutcome{{Source: evidence, Status: "organized", RecordIDs: []string{groupID, retiredID}}, {Source: other, Status: "organized", RecordIDs: []string{groupID}}, {Source: group.Sources[2].SourceHandle, Status: "organized", RecordIDs: []string{retiredID}}},
+			Attempts:    []topiccontract.AssessmentAttempt{{Number: 1, ReportedUsageAvailable: true, ReportedInputTokens: 123, ReportedOutputTokens: 17, ReportedTotalTokens: 140}},
+			Publication: &topiccontract.PublicationResult{ID: publicationID, Revision: 1, Records: []topiccontract.RevisionRef{{ID: groupID, Version: 1}, {ID: retiredID, Version: 1}}}}}
 	draftIDs := []string{uuid.NewString(), uuid.NewString()}
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO ontology_catalog_heads(team_id,shared_space_id,space_generation,revision) VALUES($1::uuid,$2::uuid,$3,3)`, fixture.team, fixture.space, fixture.generation); err != nil {
@@ -596,7 +596,7 @@ func TestEvidenceOnlyPostgresMixedOntologyReceiptsAndDrafts(t *testing.T) {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO ontology_publications(team_id,shared_space_id,space_generation,publication_id,revision,operation_key,request_hash,origin,reason,result) VALUES($1::uuid,$2::uuid,$3,$4::uuid,1,'mixed-publication',$5,'automatic','original mixed publication',$6::jsonb)`, fixture.team, fixture.space, fixture.generation, publicationID, digest, string(result)); err != nil {
 			return err
 		}
-		for _, record := range []ontology.Record{group, {ID: retiredID, Version: 1, Kind: "entity_class", Definition: &ontology.Definition{Key: "retired", Label: "Retired", Description: "Factual class"}, Fingerprint: digest}} {
+		for _, record := range []topiccontract.Record{group, {ID: retiredID, Version: 1, Kind: "entity_class", Definition: &topiccontract.Definition{Key: "retired", Label: "Retired", Description: "Factual class"}, Fingerprint: digest}} {
 			body, err := json.Marshal(record)
 			if err != nil {
 				return err
@@ -608,13 +608,13 @@ func TestEvidenceOnlyPostgresMixedOntologyReceiptsAndDrafts(t *testing.T) {
 				return err
 			}
 		}
-		for index, record := range []ontology.Record{legacyOverride, retainedOverride} {
+		for index, record := range []topiccontract.Record{legacyOverride, retainedOverride} {
 			id := []string{oldOverridePublication, newOverridePublication}[index]
 			body, err := json.Marshal(record)
 			if err != nil {
 				return err
 			}
-			result, err := json.Marshal(ontology.PublicationResult{ID: id, Revision: int64(index + 2), Records: []ontology.RevisionRef{{ID: overrideID, Version: record.Version}}})
+			result, err := json.Marshal(topiccontract.PublicationResult{ID: id, Revision: int64(index + 2), Records: []topiccontract.RevisionRef{{ID: overrideID, Version: record.Version}}})
 			if err != nil {
 				return err
 			}

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
-	ontologycontract "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"time"
 )
 
@@ -67,14 +67,14 @@ type RecallCandidateBatch struct {
 	TextHits                []searchcontract.SearchHit
 	VectorHits              []searchcontract.SearchHit
 	ExpansionHits           []searchcontract.SearchHit
-	OntologyHits            []searchcontract.SearchHit
+	OrganizationHits        []searchcontract.SearchHit
 	SearchState             string
 	OrganizationDegradation string
 }
 
 type EvidenceHydration struct {
 	Hits                    map[string]RecallEvidenceHit
-	Groups                  []ontologycontract.RecallEvidenceGroup
+	Groups                  []topic.RecallEvidenceGroup
 	OrganizationDegradation string
 }
 
@@ -83,7 +83,7 @@ type RecallEvidenceInput struct {
 	TopicIDs            []string
 	TopicEvidenceIDs    []string
 	OrganizationEnabled bool
-	OrganizationSources []ontologycontract.SourceHandle
+	OrganizationSources []topic.SourceHandle
 	TeamID              string
 	Query               string
 	QueryEmbedding      []float32

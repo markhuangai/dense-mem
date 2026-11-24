@@ -14,7 +14,7 @@ import (
 	mw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
-	ontology "github.com/markhuangai/dense-mem/internal/topics"
+	topics "github.com/markhuangai/dense-mem/internal/topics"
 	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
@@ -43,10 +43,10 @@ func TestOntologyManagementHTTPClosedInputsAndPermissions(t *testing.T) {
 			router := echo.New()
 			router.HTTPErrorHandler = httperr.ErrorHandler
 			var diagnostics []contract.PublicationDiagnostic
-			service := ontology.NewManagementService(nil, nil).WithPublicationDiagnostics(func(_ context.Context, diagnostic contract.PublicationDiagnostic) {
+			service := topics.NewManagementService(nil, nil).WithPublicationDiagnostics(func(_ context.Context, diagnostic contract.PublicationDiagnostic) {
 				diagnostics = append(diagnostics, diagnostic)
 			})
-			registerOntologyManagementRoutes(router.Group("/ui/api"), service)
+			registerTopicManagementRoutes(router.Group("/ui/api"), service)
 			req := httptest.NewRequest(tc.method, "/ui/api/topics"+tc.path, strings.NewReader(tc.body))
 			req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 			ctx := mw.SetPrincipalForTest(req.Context(), &mw.Principal{Role: tc.role, Grants: tc.grants})

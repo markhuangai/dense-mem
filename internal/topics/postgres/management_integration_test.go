@@ -23,7 +23,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"github.com/markhuangai/dense-mem/internal/storage/inmem"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -46,7 +46,7 @@ func TestOntologyManagementHTTPPersistedWorkflow(t *testing.T) {
 	router := echo.New()
 	router.HTTPErrorHandler = httperr.ErrorHandler
 	densehttp.RegisterUserPortal(router, densehttp.UserPortalDeps{
-		OntologyManagement: managementService(f), CredentialRepo: repository,
+		TopicManagement: managementService(f), CredentialRepo: repository,
 		CredentialVerifier: crypto.NewArgon2Verifier(0), CredentialLookupPrefixes: crypto.GetLookupPrefixes,
 		RateLimitSvc: accessservice.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
 		Config:       &config.Config{RateLimitPerMinute: 100},
@@ -74,20 +74,20 @@ func TestOntologyManagementHTTPPersistedWorkflow(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &envelope))
 		require.NoError(t, json.Unmarshal(envelope.Data, target))
 	}
-	var status ontology.TeamOntologyStatus
+	var status topiccontract.TeamTopicStatus
 	decode(request(0, http.MethodGet, "/status", nil), &status)
 	require.Zero(t, status.Revision)
-	var sources ontology.ManagementSourcePage
+	var sources topiccontract.ManagementSourcePage
 	decode(request(0, http.MethodGet, "/sources?q="+evidence.Evidence[0].FragmentID, nil), &sources)
 	require.Len(t, sources.Sources, 1)
 	require.Equal(t, evidence.Evidence[0].FragmentID, sources.Sources[0].ID)
-	input := managementInput(status.Revision, ontology.ManagementEdit{Action: "define", Kind: ontology.Topic, Definition: &ontology.Definition{Key: "http-storage", Label: "Storage", Description: "Durable storage"}})
-	var draft ontology.ManagementDraft
+	input := managementInput(status.Revision, topiccontract.ManagementEdit{Action: "define", Kind: topiccontract.Topic, Definition: &topiccontract.Definition{Key: "http-storage", Label: "Storage", Description: "Durable storage"}})
+	var draft topiccontract.ManagementDraft
 	decode(request(0, http.MethodPost, "/drafts", input), &draft)
-	var drafts ontology.DraftPage
+	var drafts topiccontract.DraftPage
 	decode(request(0, http.MethodGet, "/drafts", nil), &drafts)
-	require.Equal(t, []ontology.ManagementDraft{draft}, drafts.Drafts)
-	var stored ontology.ManagementDraft
+	require.Equal(t, []topiccontract.ManagementDraft{draft}, drafts.Drafts)
+	var stored topiccontract.ManagementDraft
 	decode(request(0, http.MethodGet, "/drafts/"+draft.ID, nil), &stored)
 	require.Equal(t, draft, stored)
 	require.Equal(t, http.StatusNotFound, request(1, http.MethodGet, "/drafts/"+draft.ID, nil).Code)
@@ -98,32 +98,32 @@ func TestOntologyManagementHTTPPersistedWorkflow(t *testing.T) {
 	require.Equal(t, http.StatusConflict, request(0, http.MethodPut, "/drafts/"+draft.ID, input).Code)
 	decode(request(0, http.MethodGet, "/drafts/"+draft.ID, nil), &stored)
 	require.Equal(t, draft, stored)
-	var preview ontology.ImpactPreview
+	var preview topiccontract.ImpactPreview
 	decode(request(0, http.MethodPost, "/drafts/"+draft.ID+"/preview", map[string]any{"expected_version": draft.Version}), &preview)
 	require.True(t, preview.Complete)
 	require.Equal(t, 1, preview.ChangedRecords)
 	decode(request(0, http.MethodPost, "/drafts/"+draft.ID+"/publish", managementCommand(draft)), &draft)
 	require.Equal(t, "published", draft.State)
 	require.NotNil(t, draft.Publication)
-	var publications ontology.ManagementPublicationPage
+	var publications topiccontract.ManagementPublicationPage
 	decode(request(0, http.MethodGet, "/publications", nil), &publications)
 	require.Len(t, publications.Publications, 1)
-	var publication ontology.ManagementPublication
+	var publication topiccontract.ManagementPublication
 	decode(request(0, http.MethodGet, "/publications/"+draft.Publication.ID, nil), &publication)
 	require.Len(t, publication.RecordsView, 1)
-	var records ontology.ManagementRecordPage
+	var records topiccontract.ManagementRecordPage
 	decode(request(0, http.MethodGet, "/records?kind=topic", nil), &records)
 	require.Len(t, records.Records, 1)
-	var record ontology.RecordView
+	var record topiccontract.RecordView
 	decode(request(0, http.MethodGet, "/records/"+records.Records[0].ID+"?version=1", nil), &record)
 	require.Equal(t, "http-storage", record.Definition.Key)
-	var rollback ontology.PublicationResult
+	var rollback topiccontract.PublicationResult
 	decode(request(0, http.MethodPost, "/publications/"+publication.ID+"/rollback", map[string]any{"operation_key": uuid.NewString(), "expected_revision": publication.Revision, "reason": "Reverse HTTP correction"}), &rollback)
 	require.NotEqual(t, publication.ID, rollback.ID)
 	decode(request(0, http.MethodGet, "/publications/"+rollback.ID, nil), &publication)
 	require.Equal(t, draft.Publication.ID, publication.RollbackOf)
-	input = managementInput(rollback.Revision, ontology.ManagementEdit{Action: "define", Kind: ontology.Topic, Definition: &ontology.Definition{Key: "discard-http", Label: "Discarded"}})
-	var discarded ontology.ManagementDraft
+	input = managementInput(rollback.Revision, topiccontract.ManagementEdit{Action: "define", Kind: topiccontract.Topic, Definition: &topiccontract.Definition{Key: "discard-http", Label: "Discarded"}})
+	var discarded topiccontract.ManagementDraft
 	decode(request(0, http.MethodPost, "/drafts", input), &discarded)
 	decode(request(0, http.MethodPost, "/drafts/"+discarded.ID+"/discard", managementCommand(discarded)), &discarded)
 	require.Equal(t, "discarded", discarded.State)
@@ -139,7 +139,7 @@ func TestOntologyManagementDraftIsolationReplayAndRLS(t *testing.T) {
 	service := managementService(f)
 	ctx := f.actor(0, "manager")
 	before := f.canonicalSnapshot(t)
-	input := managementInput(0, ontology.ManagementEdit{Action: "define", Kind: ontology.Topic, Definition: &ontology.Definition{Key: "storage", Label: "Storage", Description: "Durable storage"}})
+	input := managementInput(0, topiccontract.ManagementEdit{Action: "define", Kind: topiccontract.Topic, Definition: &topiccontract.Definition{Key: "storage", Label: "Storage", Description: "Durable storage"}})
 	draft, err := service.SaveDraft(ctx, "", input)
 	require.NoError(t, err)
 	stored, err := managementService(f).Draft(ctx, draft.ID)
@@ -151,21 +151,21 @@ func TestOntologyManagementDraftIsolationReplayAndRLS(t *testing.T) {
 	changed := input
 	changed.Reason = "Changed retry"
 	_, err = service.SaveDraft(ctx, "", changed)
-	require.ErrorIs(t, err, ontology.ErrConflict)
+	require.ErrorIs(t, err, topiccontract.ErrConflict)
 	_, err = service.Draft(f.actor(1, "manager"), draft.ID)
-	require.ErrorIs(t, err, ontology.ErrNotFound)
+	require.ErrorIs(t, err, topiccontract.ErrNotFound)
 	_, err = service.Draft(f.actor(2, "member"), draft.ID)
-	require.ErrorIs(t, err, ontology.ErrUnauthorized)
+	require.ErrorIs(t, err, topiccontract.ErrUnauthorized)
 	actor, _ := requestctx.ActorFromContext(ctx)
 	actor.Grants = []string{"read"}
 	readOnly := requestctx.WithActor(context.Background(), actor)
 	_, err = service.Draft(readOnly, draft.ID)
 	require.NoError(t, err)
 	_, err = service.CommandDraft(readOnly, draft.ID, "publish", managementCommand(draft))
-	require.ErrorIs(t, err, ontology.ErrUnauthorized)
+	require.ErrorIs(t, err, topiccontract.ErrUnauthorized)
 	foreign := maintenanceOtherTeam(t, f)
 	_, err = service.Draft(foreign.actor(0, "manager"), draft.ID)
-	require.ErrorIs(t, err, ontology.ErrNotFound)
+	require.ErrorIs(t, err, topiccontract.ErrNotFound)
 	var count, forced int
 	require.NoError(t, f.rls.WithTeamProfileReadOnlyRepeatableTx(ctx, f.app, f.team, f.owners[1], func(tx *gorm.DB) error { return tx.Raw(`SELECT count(*) FROM topic_draft_heads`).Row().Scan(&count) }))
 	require.Zero(t, count)
@@ -183,7 +183,7 @@ func TestOntologyManagementDraftIsolationReplayAndRLS(t *testing.T) {
 	input.ExpectedVersion = draft.Version
 	input.OperationKey = uuid.NewString()
 	_, err = service.SaveDraft(ctx, draft.ID, input)
-	require.ErrorIs(t, err, ontology.ErrConflict)
+	require.ErrorIs(t, err, topiccontract.ErrConflict)
 	require.Equal(t, before, f.canonicalSnapshot(t))
 }
 
@@ -191,14 +191,14 @@ func TestOntologyManagementAuditFailureIsAtomic(t *testing.T) {
 	f := newOntologyFixture(t)
 	service := managementService(f)
 	ctx := f.actor(0, "manager")
-	draft, err := service.SaveDraft(ctx, "", managementInput(0, ontology.ManagementEdit{Action: "define", Kind: ontology.Topic, Definition: &ontology.Definition{Key: "atomic", Label: "Atomic", Description: "Audit atomicity"}}))
+	draft, err := service.SaveDraft(ctx, "", managementInput(0, topiccontract.ManagementEdit{Action: "define", Kind: topiccontract.Topic, Definition: &topiccontract.Definition{Key: "atomic", Label: "Atomic", Description: "Audit atomicity"}}))
 	require.NoError(t, err)
 	before := f.canonicalSnapshot(t)
 	require.NoError(t, f.admin.Exec(`CREATE FUNCTION reject_management_publication_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.operation='TOPIC_PUBLISH' THEN RAISE EXCEPTION 'fixture audit rejection'; END IF; RETURN NEW; END $$;
  CREATE TRIGGER reject_management_publication_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION reject_management_publication_audit()`).Error)
 	command := managementCommand(draft)
 	_, err = service.CommandDraft(ctx, draft.ID, "publish", command)
-	require.ErrorIs(t, err, ontology.ErrAuditUnavailable)
+	require.ErrorIs(t, err, topiccontract.ErrAuditUnavailable)
 	stored, err := service.Draft(ctx, draft.ID)
 	require.NoError(t, err)
 	require.Equal(t, draft, stored)
@@ -221,9 +221,9 @@ func TestOntologyManagementCompetingDraftsAndPublications(t *testing.T) {
 	f := newOntologyFixture(t)
 	service := managementService(f)
 	ctx := f.actor(0, "manager")
-	input := managementInput(0, ontology.ManagementEdit{Action: "define", Kind: ontology.Topic, Definition: &ontology.Definition{Key: "races", Label: "Races"}})
+	input := managementInput(0, topiccontract.ManagementEdit{Action: "define", Kind: topiccontract.Topic, Definition: &topiccontract.Definition{Key: "races", Label: "Races"}})
 	var group sync.WaitGroup
-	drafts := make([]ontology.ManagementDraft, 2)
+	drafts := make([]topiccontract.ManagementDraft, 2)
 	errs := make([]error, 2)
 	for i := range 2 {
 		group.Add(1)
@@ -233,7 +233,7 @@ func TestOntologyManagementCompetingDraftsAndPublications(t *testing.T) {
 	require.NoError(t, errs[0])
 	require.NoError(t, errs[1])
 	require.Equal(t, drafts[0], drafts[1])
-	input2 := managementInput(0, ontology.ManagementEdit{Action: "define", Kind: ontology.Topic, Definition: &ontology.Definition{Key: "other", Label: "Other"}})
+	input2 := managementInput(0, topiccontract.ManagementEdit{Action: "define", Kind: topiccontract.Topic, Definition: &topiccontract.Definition{Key: "other", Label: "Other"}})
 	second, err := service.SaveDraft(f.actor(1, "manager"), "", input2)
 	require.NoError(t, err)
 	drafts[1] = second
@@ -246,9 +246,9 @@ func TestOntologyManagementCompetingDraftsAndPublications(t *testing.T) {
 	}
 	group.Wait()
 	if errs[0] == nil {
-		require.ErrorIs(t, errs[1], ontology.ErrConflict)
+		require.ErrorIs(t, errs[1], topiccontract.ErrConflict)
 	} else {
-		require.ErrorIs(t, errs[0], ontology.ErrConflict)
+		require.ErrorIs(t, errs[0], topiccontract.ErrConflict)
 		require.NoError(t, errs[1])
 	}
 	page, err := service.Publications(ctx, 0, 20)
@@ -268,26 +268,26 @@ func TestOntologyManagementPrivateForeignAndStaleSources(t *testing.T) {
 	foreign := maintenanceOtherTeam(t, f)
 	foreignEvidence := foreign.evidence(t, 0, "Foreign canary")
 	shared := f.evidence(t, 1, "Atlas uses PostgreSQL.")
-	handle := ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: shared.Evidence[0].FragmentID, Version: 1}
+	handle := topiccontract.SourceHandle{Kind: topiccontract.EvidenceSource, ID: shared.Evidence[0].FragmentID, Version: 1}
 	topic := testTopic("storage")
-	_, err = f.store.PublishAutomatic(context.Background(), f.team, testPublication("seed", 0, ontology.Change{Record: topic}))
+	_, err = f.store.PublishAutomatic(context.Background(), f.team, testPublication("seed", 0, topiccontract.Change{Record: topic}))
 	require.NoError(t, err)
 	for _, id := range []string{privateEvidence.Evidence[0].FragmentID, foreignEvidence.Evidence[0].FragmentID} {
-		source := ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: id, Version: 1}
-		_, err = service.SaveDraft(ctx, "", managementInput(1, ontology.ManagementEdit{Action: "classify", Source: &source, DefinitionID: topic.ID}))
-		require.ErrorIs(t, err, ontology.ErrInvalid)
-		page, err := service.Sources(ctx, ontology.EvidenceSource, "", id, 50)
+		source := topiccontract.SourceHandle{Kind: topiccontract.EvidenceSource, ID: id, Version: 1}
+		_, err = service.SaveDraft(ctx, "", managementInput(1, topiccontract.ManagementEdit{Action: "classify", Source: &source, DefinitionID: topic.ID}))
+		require.ErrorIs(t, err, topiccontract.ErrInvalid)
+		page, err := service.Sources(ctx, topiccontract.EvidenceSource, "", id, 50)
 		require.NoError(t, err)
 		require.Empty(t, page.Sources)
 	}
-	_, err = service.SaveDraft(ctx, "", managementInput(1, ontology.ManagementEdit{Action: "classify", Source: &handle, DefinitionID: topic.ID}))
-	require.ErrorIs(t, err, ontology.ErrInvalid)
-	visible, err := service.Sources(ctx, ontology.EvidenceSource, "", handle.ID, 50)
+	_, err = service.SaveDraft(ctx, "", managementInput(1, topiccontract.ManagementEdit{Action: "classify", Source: &handle, DefinitionID: topic.ID}))
+	require.ErrorIs(t, err, topiccontract.ErrInvalid)
+	visible, err := service.Sources(ctx, topiccontract.EvidenceSource, "", handle.ID, 50)
 	require.NoError(t, err)
 	require.Len(t, visible.Sources, 1)
 	_, err = f.knowledge.RetractEvidence(f.actor(1, "member"), knowledge.RetractEvidenceInput{TeamID: f.team, OwnerProfileID: f.owners[1], EvidenceIDs: []string{handle.ID}, IdempotencyKey: uuid.NewString(), RequestHash: testHash("retract"), Reason: "Source retired"})
 	require.NoError(t, err)
-	visible, err = service.Sources(ctx, ontology.EvidenceSource, "", handle.ID, 50)
+	visible, err = service.Sources(ctx, topiccontract.EvidenceSource, "", handle.ID, 50)
 	require.NoError(t, err)
 	require.Empty(t, visible.Sources)
 

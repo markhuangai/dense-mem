@@ -12,7 +12,7 @@ import (
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -42,17 +42,17 @@ func TestOntologyMaintenanceCurrentReceiptCompletion(t *testing.T) {
 			config := concurrencyConfig(t, f, 2, 2)
 			window := maintenanceWindow(t, f, config)
 			_, claim := maintenanceClaim(t, f, window)
-			require.ElementsMatch(t, []ontology.SourceHandle{a, b}, claim.Sources)
+			require.ElementsMatch(t, []topiccontract.SourceHandle{a, b}, claim.Sources)
 			topic := testTopic("postgresql")
-			var support ontology.SourceHandle
+			var support topiccontract.SourceHandle
 			if testCase.change == "support" {
 				support = f.organizationEvidence(t, 0, "PostgreSQL definition support.", nil)
-				topic.Sources = []ontology.SourceDependency{f.source(t, support)}
+				topic.Sources = []topiccontract.SourceDependency{f.source(t, support)}
 			}
-			revalidationPublish(t, f, ontology.Change{Record: topic})
+			revalidationPublish(t, f, topiccontract.Change{Record: topic})
 			revalidationDiscover(t, f, window)
 			for _, source := range claim.Sources {
-				require.Greater(t, revalidationQueue(t, f, source).Revision, claim.Revisions[ontology.SourceKey(source)], "definition discovery must overlap the dispatched claim")
+				require.Greater(t, revalidationQueue(t, f, source).Revision, claim.Revisions[topiccontract.SourceKey(source)], "definition discovery must overlap the dispatched claim")
 			}
 			service, calls := organizationFixtureService(t, f, nil, func(_ assessment.Request, response *assessment.Response) {
 				if testCase.change == "ambiguous" {
@@ -64,7 +64,7 @@ func TestOntologyMaintenanceCurrentReceiptCompletion(t *testing.T) {
 				key = "different-operation"
 			}
 			ctx := context.Background()
-			result, err := service.Organize(ontology.WithMaintenanceClaim(ctx, *claim), f.team, ontology.OrganizationInput{OperationKey: key, Sources: claim.Sources})
+			result, err := service.Organize(topiccontract.WithMaintenanceClaim(ctx, *claim), f.team, topiccontract.OrganizationInput{OperationKey: key, Sources: claim.Sources})
 			require.NoError(t, err)
 			require.True(t, result.Current)
 			require.Equal(t, int32(1), calls.Load())
@@ -83,19 +83,19 @@ func TestOntologyMaintenanceCurrentReceiptCompletion(t *testing.T) {
 				require.NoError(t, err)
 			case "definition":
 				topic.Definition.Description = "A changed required storage definition"
-				revalidationPublish(t, f, ontology.Change{ExpectedVersion: 1, Record: topic})
+				revalidationPublish(t, f, topiccontract.Change{ExpectedVersion: 1, Record: topic})
 			case "retired":
 				view, err := f.store.GetRecord(ctx, f.team, topic.ID, 0)
 				require.NoError(t, err)
 				view.Record.Retired = true
-				revalidationPublish(t, f, ontology.Change{ExpectedVersion: view.Version, Record: view.Record})
+				revalidationPublish(t, f, topiccontract.Change{ExpectedVersion: view.Version, Record: view.Record})
 			case "override":
 				other := testTopic("manager-replacement")
-				override := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.SetClassification, DefinitionID: other.ID, Members: []ontology.SourceHandle{a}}, Sources: []ontology.SourceDependency{f.source(t, a)}}
-				require.ErrorIs(t, revalidationPublishChanges(f, ontology.Change{Record: other}, ontology.Change{Record: override}), ontology.ErrOverride)
+				override := topiccontract.Record{ID: uuid.NewString(), Kind: topiccontract.OverrideKind, Override: &topiccontract.Override{Action: topiccontract.SetClassification, DefinitionID: other.ID, Members: []topiccontract.SourceHandle{a}}, Sources: []topiccontract.SourceDependency{f.source(t, a)}}
+				require.ErrorIs(t, revalidationPublishChanges(f, topiccontract.Change{Record: other}, topiccontract.Change{Record: override}), topiccontract.ErrOverride)
 			case "grouping":
-				override := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.KeepSeparate, Members: []ontology.SourceHandle{a, b}}, Sources: []ontology.SourceDependency{f.source(t, a), f.source(t, b)}}
-				require.ErrorIs(t, revalidationPublishChanges(f, ontology.Change{Record: override}), ontology.ErrOverride)
+				override := topiccontract.Record{ID: uuid.NewString(), Kind: topiccontract.OverrideKind, Override: &topiccontract.Override{Action: topiccontract.KeepSeparate, Members: []topiccontract.SourceHandle{a, b}}, Sources: []topiccontract.SourceDependency{f.source(t, a), f.source(t, b)}}
+				require.ErrorIs(t, revalidationPublishChanges(f, topiccontract.Change{Record: override}), topiccontract.ErrOverride)
 			case "expired":
 				require.NoError(t, f.admin.Exec(`UPDATE topic_maintenance_batches SET lease_until=clock_timestamp()-interval '1 second' WHERE batch_id=?::uuid`, claim.ID).Error)
 			case "identity":
@@ -118,7 +118,7 @@ func TestOntologyMaintenanceCurrentReceiptCompletion(t *testing.T) {
 			beforeReceipts := revalidationReceiptHistory(t, f)
 			err = f.store.CompleteMaintenanceBatch(ctx, *claim, result, "", time.Now().UTC())
 			if testCase.change == "expired" {
-				require.ErrorIs(t, err, ontology.ErrLeaseLost)
+				require.ErrorIs(t, err, topiccontract.ErrLeaseLost)
 			} else {
 				require.NoError(t, err)
 			}
@@ -143,10 +143,10 @@ func TestOntologyMaintenanceCurrentReceiptCompletion(t *testing.T) {
 		window := maintenanceWindow(t, f, config)
 		_, claim := maintenanceClaim(t, f, window)
 		topic := testTopic("postgresql")
-		revalidationPublish(t, f, ontology.Change{Record: topic})
+		revalidationPublish(t, f, topiccontract.Change{Record: topic})
 		revalidationDiscover(t, f, window)
 		service, calls := organizationFixtureService(t, f, nil, nil)
-		result, err := service.Organize(ontology.WithMaintenanceClaim(context.Background(), *claim), f.team, ontology.OrganizationInput{OperationKey: "maintenance:" + claim.ID, Sources: claim.Sources})
+		result, err := service.Organize(topiccontract.WithMaintenanceClaim(context.Background(), *claim), f.team, topiccontract.OrganizationInput{OperationKey: "maintenance:" + claim.ID, Sources: claim.Sources})
 		require.NoError(t, err)
 		before := revalidationQueue(t, f, source)
 		finished := make(chan error, 1)
@@ -183,10 +183,10 @@ func TestOntologyMaintenanceCurrentReceiptCompletion(t *testing.T) {
 		config := concurrencyConfig(t, f, 3, 2)
 		window := maintenanceWindow(t, f, config)
 		_, claim := maintenanceClaim(t, f, window)
-		revalidationPublish(t, f, ontology.Change{Record: testTopic("postgresql")})
+		revalidationPublish(t, f, topiccontract.Change{Record: testTopic("postgresql")})
 		revalidationDiscover(t, f, window)
 		service, _ := organizationFixtureService(t, f, nil, nil)
-		result, err := service.Organize(ontology.WithMaintenanceClaim(context.Background(), *claim), f.team, ontology.OrganizationInput{OperationKey: "maintenance:" + claim.ID, Sources: claim.Sources})
+		result, err := service.Organize(topiccontract.WithMaintenanceClaim(context.Background(), *claim), f.team, topiccontract.OrganizationInput{OperationKey: "maintenance:" + claim.ID, Sources: claim.Sources})
 		require.NoError(t, err)
 		other := maintenanceOtherTeam(t, f)
 		foreign := other.organizationEvidence(t, 0, "Atlas PostgreSQL foreign storage.", nil)
@@ -194,8 +194,8 @@ func TestOntologyMaintenanceCurrentReceiptCompletion(t *testing.T) {
 		privateContext := requestctx.WithAllowedSpaces(context.Background(), []domain.MemorySpaceAccess{{ID: private.MemorySpaceID, Kind: domain.MemorySpacePrivate, Generation: private.MemorySpaceGeneration}})
 		ingest, err := f.knowledge.CreateIngestForTest(privateContext, knowledge.CreateIngestInput{TeamID: f.team, OwnerProfileID: private.ID.String(), SpaceID: private.MemorySpaceID.String(), SpaceGeneration: private.MemorySpaceGeneration, IdempotencyKey: uuid.NewString(), RequestHash: testHash("private-revalidation"), Evidence: []knowledge.EvidenceInput{{Content: "Atlas PostgreSQL private storage."}}})
 		require.NoError(t, err)
-		privateSource := ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: ingest.Evidence[0].FragmentID, Version: 1}
-		read, err := f.store.ReadOrganization(context.Background(), f.team, []ontology.SourceHandle{foreign, privateSource})
+		privateSource := topiccontract.SourceHandle{Kind: topiccontract.EvidenceSource, ID: ingest.Evidence[0].FragmentID, Version: 1}
+		read, err := f.store.ReadOrganization(context.Background(), f.team, []topiccontract.SourceHandle{foreign, privateSource})
 		require.NoError(t, err)
 		for _, snapshot := range read.Sources {
 			require.False(t, snapshot.Eligible)
@@ -207,15 +207,15 @@ func TestOntologyMaintenanceCurrentReceiptCompletion(t *testing.T) {
 		}))
 		require.Zero(t, visible)
 		before := revalidationQueue(t, f, source)
-		for _, mutate := range []func(*ontology.MaintenanceClaim){
-			func(c *ontology.MaintenanceClaim) { c.TeamID = other.team },
-			func(c *ontology.MaintenanceClaim) { c.SpaceID = other.space },
-			func(c *ontology.MaintenanceClaim) { c.Generation++ },
-			func(c *ontology.MaintenanceClaim) { c.LeaseToken = uuid.NewString() },
+		for _, mutate := range []func(*topiccontract.MaintenanceClaim){
+			func(c *topiccontract.MaintenanceClaim) { c.TeamID = other.team },
+			func(c *topiccontract.MaintenanceClaim) { c.SpaceID = other.space },
+			func(c *topiccontract.MaintenanceClaim) { c.Generation++ },
+			func(c *topiccontract.MaintenanceClaim) { c.LeaseToken = uuid.NewString() },
 		} {
 			wrong := *claim
 			mutate(&wrong)
-			require.ErrorIs(t, f.store.CompleteMaintenanceBatch(context.Background(), wrong, result, "", time.Now().UTC()), ontology.ErrLeaseLost)
+			require.ErrorIs(t, f.store.CompleteMaintenanceBatch(context.Background(), wrong, result, "", time.Now().UTC()), topiccontract.ErrLeaseLost)
 			require.Equal(t, before, revalidationQueue(t, f, source))
 		}
 		require.NoError(t, f.store.CompleteMaintenanceBatch(context.Background(), *claim, result, "", time.Now().UTC()))

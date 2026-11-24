@@ -7,18 +7,18 @@ import (
 	"database/sql"
 	"errors"
 
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 )
 
 // These sequential drivers are frozen from base 09d16398005f0a8ba3ca0fe6c31e08c4341eca9f for isolated paired measurements.
-func (s *Store) discoverSequentialMaintenance(ctx context.Context, turn ontology.MaintenanceTurn, limit int) error {
-	if limit < 1 || limit > ontology.MaintenancePageSize {
-		return ontology.ErrInvalid
+func (s *Store) discoverSequentialMaintenance(ctx context.Context, turn topic.MaintenanceTurn, limit int) error {
+	if limit < 1 || limit > topic.MaintenancePageSize {
+		return topic.ErrInvalid
 	}
 	return s.withScope(ctx, turn.TeamID, false, func(tx *gorm.DB, fence scope) error {
 		if fence.SpaceID != turn.SpaceID || fence.Generation != turn.Generation {
-			return ontology.ErrLeaseLost
+			return topic.ErrLeaseLost
 		}
 		if err := checkMaintenanceTurn(tx, turn); err != nil {
 			return err
@@ -90,7 +90,7 @@ func expandSequentialMaintenanceMarkers(tx *gorm.DB, fence scope, limit int) err
 			if err != nil {
 				return err
 			}
-			marker.Cursor = ontology.SourceKey(handle)
+			marker.Cursor = topic.SourceKey(handle)
 			remaining--
 		}
 		if more {

@@ -12,7 +12,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -46,14 +46,14 @@ func TestOntologyMaintenanceLargeBacklogAndFairTurns(t *testing.T) {
 	require.NotNil(t, first)
 	_, err = f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now().UTC(), time.Minute)
 	require.NoError(t, err)
-	require.NoError(t, f.store.discoverMaintenanceError(ctx, *first, ontology.MaintenancePageSize))
+	require.NoError(t, f.store.discoverMaintenanceError(ctx, *first, topic.MaintenancePageSize))
 	require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *first))
 	second, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now().UTC(), time.Hour)
 	require.NoError(t, err)
 	require.NotNil(t, second)
 	require.NotEqual(t, first.TeamID, second.TeamID, "one team turn cannot consume another team's position")
 	require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *second))
-	var big *ontology.MaintenanceTurn
+	var big *topic.MaintenanceTurn
 	for range 4 {
 		turn, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now().UTC(), time.Hour)
 		require.NoError(t, err)
@@ -62,13 +62,13 @@ func TestOntologyMaintenanceLargeBacklogAndFairTurns(t *testing.T) {
 			big = turn
 			break
 		}
-		require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, ontology.MaintenancePageSize))
+		require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, topic.MaintenancePageSize))
 		require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn))
 	}
 	require.NotNil(t, big)
 	var discovered bool
 	for range 800 {
-		require.NoError(t, f.store.discoverMaintenanceError(ctx, *big, ontology.MaintenancePageSize))
+		require.NoError(t, f.store.discoverMaintenanceError(ctx, *big, topic.MaintenancePageSize))
 		require.NoError(t, f.admin.Raw(`SELECT discovery_kind=1 FROM topic_maintenance_teams WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?`, f.team, f.space, f.generation).Row().Scan(&discovered))
 		if discovered {
 			break
@@ -82,7 +82,7 @@ func TestOntologyMaintenanceLargeBacklogAndFairTurns(t *testing.T) {
 	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM topic_maintenance_sources WHERE team_id=?::uuid AND eligible AND source_kind='evidence'`, f.team).Row().Scan(&evidenceCount))
 	require.Greater(t, evidenceCount, 25000)
 	unrelated := testTopic("unrelated-large-marker")
-	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("sparse-large-marker", 0, ontology.Change{Record: unrelated}))
+	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("sparse-large-marker", 0, topic.Change{Record: unrelated}))
 	require.NoError(t, err)
 	require.NoError(t, f.store.withScope(ctx, f.team, true, func(tx *gorm.DB, fence scope) error {
 		handles, err := maintenanceMarkerSources(tx, fence, maintenanceMarker{AnchorKind: "topic_record_heads", TargetKind: "definition", TargetID: unrelated.ID}, 100)
@@ -99,7 +99,7 @@ func TestOntologyMaintenanceLargeBacklogAndFairTurns(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, claim)
 	require.LessOrEqual(t, len(claim.Sources), 20)
-	require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, ontology.OrganizationResult{}, "window_closed", time.Now().UTC()))
+	require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, topic.OrganizationResult{}, "window_closed", time.Now().UTC()))
 	require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *big))
 	restarted := NewStore(f.app, f.rls)
 	next, err := restarted.ClaimMaintenanceTurn(ctx, window.ID, time.Now().UTC(), time.Minute)
@@ -142,22 +142,22 @@ func TestOntologyMaintenanceOversizedGroupClosure(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newOrganizationFixture(t)
 			ctx := t.Context()
-			size := ontology.MaxOrganizationSources + tc.excess
-			require.LessOrEqual(t, size, ontology.MaxMembers)
-			var sources []ontology.SourceHandle
-			var dependencies []ontology.SourceDependency
+			size := topic.MaxOrganizationSources + tc.excess
+			require.LessOrEqual(t, size, topic.MaxMembers)
+			var sources []topic.SourceHandle
+			var dependencies []topic.SourceDependency
 			for range size {
 				handle := f.organizationEvidence(t, 0, "Complete group source.", nil)
 				sources = append(sources, handle)
 				dependencies = append(dependencies, f.source(t, handle))
 			}
-			group := ontology.Record{ID: uuid.NewString(), Kind: ontology.EvidenceGroup, Group: &ontology.Group{Members: sources}, Sources: dependencies}
-			_, err := f.store.PublishAutomatic(ctx, f.team, testPublication("large-group", 0, ontology.Change{Record: group}))
+			group := topic.Record{ID: uuid.NewString(), Kind: topic.EvidenceGroup, Group: &topic.Group{Members: sources}, Sources: dependencies}
+			_, err := f.store.PublishAutomatic(ctx, f.team, testPublication("large-group", 0, topic.Change{Record: group}))
 			require.NoError(t, err)
 
 			window := maintenanceWindow(t, f, maintenanceSettings(t, f))
 			_, claim := maintenanceClaim(t, f, window)
-			require.Len(t, claim.Sources, ontology.MaxOrganizationSources, "Topic assignment proceeds independently within its batch bound")
+			require.Len(t, claim.Sources, topic.MaxOrganizationSources, "Topic assignment proceeds independently within its batch bound")
 			neighborhoods, err := f.store.ReadEquivalenceNeighborhoods(ctx, *claim)
 			require.NoError(t, err)
 			if tc.excess == 0 {
@@ -175,7 +175,7 @@ func TestOntologyMaintenanceOversizedGroupClosure(t *testing.T) {
 			require.EqualValues(t, size, status.Counts.Pending)
 			require.Zero(t, status.Counts.Ambiguous)
 			require.False(t, status.CoverageComplete)
-			require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, ontology.OrganizationResult{}, "maintenance_paused", time.Now()))
+			require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, topic.OrganizationResult{}, "maintenance_paused", time.Now()))
 		})
 	}
 }

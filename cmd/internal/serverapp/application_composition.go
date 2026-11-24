@@ -83,14 +83,14 @@ func buildApplicationBundle(deps applicationCompositionDependencies) application
 		Logger: deps.Logger, DiagnosticProtector: deps.DiagnosticProtector, Audit: deps.Audit,
 	}, deps.Knowledge, deps.GeneratorTransport, deps.RememberModel, deps.SessionEnabled)
 	recallService := buildRecallApplication(recallApplicationDependencies{
-		DiagnosticProtector:   deps.DiagnosticProtector,
-		Search:                deps.RecallSearch,
-		ExpansionEnabled:      deps.RecallExpansionEnabled,
-		DisableQueryEmbedding: deps.RecallDisableQueryEmbedding,
-		Provider:              deps.RetryEmbeddingProvider,
-		OntologyConfig:        deps.AppConfig,
-		Metrics:               deps.Metrics,
-		Decisions:             deps.Decisions, DecisionSettings: deps.DecisionSettings, Logger: deps.Logger,
+		DiagnosticProtector:    deps.DiagnosticProtector,
+		Search:                 deps.RecallSearch,
+		ExpansionEnabled:       deps.RecallExpansionEnabled,
+		DisableQueryEmbedding:  deps.RecallDisableQueryEmbedding,
+		Provider:               deps.RetryEmbeddingProvider,
+		TopicMaintenanceConfig: deps.AppConfig,
+		Metrics:                deps.Metrics,
+		Decisions:              deps.Decisions, DecisionSettings: deps.DecisionSettings, Logger: deps.Logger,
 	})
 	lifecycleService := buildLifecycleApplication(lifecycleApplicationDependencies{
 		Port: deps.Knowledge,

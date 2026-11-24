@@ -6,12 +6,12 @@ import (
 
 	"github.com/google/uuid"
 	evalharness "github.com/markhuangai/dense-mem/internal/testfixture/evaluation"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
-func seedMatchingCohortVocabulary(t *testing.T, f *ontologyFixture, testCase evalharness.OrganizationMatchingCase, handles []ontology.SourceHandle) map[string]any {
+func seedMatchingCohortVocabulary(t *testing.T, f *ontologyFixture, testCase evalharness.OrganizationMatchingCase, handles []topic.SourceHandle) map[string]any {
 	t.Helper()
 	ctx := context.Background()
 	record := testTopic(testCase.DefinitionKey)
@@ -19,14 +19,14 @@ func seedMatchingCohortVocabulary(t *testing.T, f *ontologyFixture, testCase eva
 	record.Definition.Aliases = testCase.DefinitionAliases
 	page, err := f.store.ListRecords(ctx, f.team, "", "", 1)
 	require.NoError(t, err)
-	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication(uuid.NewString(), page.Revision, ontology.Change{Record: record}))
+	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication(uuid.NewString(), page.Revision, topic.Change{Record: record}))
 	require.NoError(t, err)
 	expected := 0
 	if testCase.ExpectedCandidate {
 		expected = 1
 	}
 	for _, handle := range handles {
-		contextData, err := f.store.ReadOrganization(ctx, f.team, []ontology.SourceHandle{handle})
+		contextData, err := f.store.ReadOrganization(ctx, f.team, []topic.SourceHandle{handle})
 		require.NoError(t, err)
 		require.Len(t, contextData.Candidates, expected)
 		if expected > 0 {
@@ -41,11 +41,11 @@ func seedMatchingCohortVocabulary(t *testing.T, f *ontologyFixture, testCase eva
 			}
 		}
 		marker := maintenanceMarker{AnchorKind: "topic_record_heads", AnchorID: record.ID, TargetKind: "definition", TargetID: record.ID}
-		individual, err := maintenanceMarkerSources(tx, fence, marker, ontology.MaintenancePageSize)
+		individual, err := maintenanceMarkerSources(tx, fence, marker, topic.MaintenancePageSize)
 		if err != nil {
 			return err
 		}
-		grouped, err := maintenanceDefinitionGroupPage(tx, fence, []maintenanceMarker{marker}, ontology.MaintenancePageSize)
+		grouped, err := maintenanceDefinitionGroupPage(tx, fence, []maintenanceMarker{marker}, topic.MaintenancePageSize)
 		if err != nil {
 			return err
 		}

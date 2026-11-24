@@ -31,7 +31,7 @@ import (
 	settingspg "github.com/markhuangai/dense-mem/internal/settings/postgres"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	organization "github.com/markhuangai/dense-mem/internal/topics"
-	ontologypg "github.com/markhuangai/dense-mem/internal/topics/postgres"
+	topicpg "github.com/markhuangai/dense-mem/internal/topics/postgres"
 	containerapi "github.com/moby/moby/api/types/container"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -220,7 +220,7 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	require.False(t, crypto.VerifyKey("wrong-seed-key", loaded.KeyHash))
 	rls := storagepostgres.NewRLS()
 	restoredSettings := settings.NewAppConfigService(settingspg.NewAppConfigRepository(restored, rls), nil)
-	restoredMaintenance := buildTopicMaintenance(ontologypg.NewStore(restored, rls), restoredSettings, nil,
+	restoredMaintenance := buildTopicMaintenance(topicpg.NewStore(restored, rls), restoredSettings, nil,
 		assessor.DefaultSemanticAssessmentLimits(), manifest.Model, 0, nil, nil, organization.MaintenanceDiagnosticCapture{})
 	restoredControl := runnerControlServer(t, restoredMaintenance, restoredSettings, searchapp.NewSearchConvergenceService(
 		searchpg.NewStore(restored, rls), knowledgepg.NewStore(restored, rls),
@@ -230,7 +230,7 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	beforeCalls := f.provider.calls
 	_, _, _, cleanObservation, err := evalharness.VerifySeed(ctx, manifest, corpus, f.native.Client, &native)
 	require.NoError(t, err)
-	require.Empty(t, cleanObservation.Ontology.ConfigurationError)
+	require.Empty(t, cleanObservation.TopicMaintenance.ConfigurationError)
 	require.Equal(t, beforeCalls, f.provider.calls, "restoring and verifying a seed performs no Remember provider work")
 	require.Equal(t, seed.Scope, native.Scope)
 	setRestoredOntology := func(value string) {
@@ -240,11 +240,11 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	}
 	setRestoredOntology("true")
 	_, _, _, restoredObservation, err := evalharness.VerifySeed(ctx, manifest, corpus, f.native.Client, &native)
-	require.ErrorContains(t, err, "unexpected native ontology state")
-	require.True(t, restoredObservation.Ontology.Enabled)
+	require.ErrorContains(t, err, "unexpected native Topic maintenance state")
+	require.True(t, restoredObservation.TopicMaintenance.Enabled)
 	_, _, _, sourceObservation, err := evalharness.VerifySeed(ctx, manifest, corpus, f.native.Client, f.native)
 	require.NoError(t, err)
-	require.False(t, sourceObservation.Ontology.Enabled)
+	require.False(t, sourceObservation.TopicMaintenance.Enabled)
 	setRestoredOntology("false")
 	claimedSkip := seed
 	claimedSkip.AISecurityReview = "skipped"

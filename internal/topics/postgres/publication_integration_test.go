@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	privacy "github.com/markhuangai/dense-mem/internal/privacy/postgres"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -30,9 +30,9 @@ func TestOntologyMigrationRLSAndHistory(t *testing.T) {
 	require.NoError(t, f.app.Raw(`SELECT rolsuper,rolbypassrls FROM pg_roles WHERE rolname=current_user`).Row().Scan(&super, &bypass))
 	require.False(t, super)
 	require.False(t, bypass)
-	var changes []ontology.Change
+	var changes []topic.Change
 	for _, key := range []string{"one", "two", "three", "four", "five", "six", "seven", "eight"} {
-		changes = append(changes, ontology.Change{Record: testTopic(key)})
+		changes = append(changes, topic.Change{Record: testTopic(key)})
 	}
 	input := testPublication("initial-topics", 0, changes...)
 	initial, err := f.store.PublishManager(f.actor(0, "manager"), f.team, input)
@@ -44,12 +44,12 @@ func TestOntologyMigrationRLSAndHistory(t *testing.T) {
 	require.Equal(t, initial.ID, replay.ID)
 	input.Reason = "changed replay"
 	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, input)
-	require.ErrorIs(t, err, ontology.ErrConflict)
-	page, err := f.store.ListRecords(f.actor(1, "member"), f.team, ontology.Topic, "", 3)
+	require.ErrorIs(t, err, topic.ErrConflict)
+	page, err := f.store.ListRecords(f.actor(1, "member"), f.team, topic.Topic, "", 3)
 	require.NoError(t, err)
 	require.Len(t, page.Records, 3)
 	require.NotEmpty(t, page.NextID)
-	next, err := f.store.ListRecords(f.actor(1, "member"), f.team, ontology.Topic, page.NextID, 200)
+	next, err := f.store.ListRecords(f.actor(1, "member"), f.team, topic.Topic, page.NextID, 200)
 	require.NoError(t, err)
 	require.Len(t, next.Records, 5)
 	history, err := f.store.History(f.actor(0, "manager"), f.team, 0, 20)
@@ -66,7 +66,7 @@ func TestOntologyAtomicPublicationReplayAndRaces(t *testing.T) {
 	f := newOntologyFixture(t)
 	before := f.canonicalSnapshot(t)
 	first := testTopic("engineering")
-	initial := testPublication("first", 0, ontology.Change{Record: first})
+	initial := testPublication("first", 0, topic.Change{Record: first})
 	result, err := f.store.PublishManager(f.actor(0, "manager"), f.team, initial)
 	require.NoError(t, err)
 	replay, err := f.store.PublishManager(f.actor(0, "manager"), f.team, initial)
@@ -76,11 +76,11 @@ func TestOntologyAtomicPublicationReplayAndRaces(t *testing.T) {
 	changed := initial
 	changed.Reason = "different operation"
 	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, changed)
-	require.ErrorIs(t, err, ontology.ErrConflict)
+	require.ErrorIs(t, err, topic.ErrConflict)
 	collision := testTopic("databases")
 	collision.Definition.Aliases = []string{"ENGINEERING"}
-	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("collision", 1, ontology.Change{Record: testTopic("valid")}, ontology.Change{Record: collision}))
-	require.ErrorIs(t, err, ontology.ErrInvalid)
+	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("collision", 1, topic.Change{Record: testTopic("valid")}, topic.Change{Record: collision}))
+	require.ErrorIs(t, err, topic.ErrInvalid)
 	history, err := f.store.History(f.actor(0, "manager"), f.team, 0, 20)
 	require.NoError(t, err)
 	require.Len(t, history, 1)
@@ -92,7 +92,7 @@ func TestOntologyAtomicPublicationReplayAndRaces(t *testing.T) {
 		go func(key string) {
 			defer wait.Done()
 			<-start
-			_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication(key, 1, ontology.Change{Record: testTopic(key)}))
+			_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication(key, 1, topic.Change{Record: testTopic(key)}))
 			results <- err
 		}(key)
 	}
@@ -103,7 +103,7 @@ func TestOntologyAtomicPublicationReplayAndRaces(t *testing.T) {
 	for err := range results {
 		if err == nil {
 			passed++
-		} else if errors.Is(err, ontology.ErrConflict) {
+		} else if errors.Is(err, topic.ErrConflict) {
 			conflicts++
 		} else {
 			t.Fatal(err)
@@ -114,10 +114,10 @@ func TestOntologyAtomicPublicationReplayAndRaces(t *testing.T) {
 	view, err := f.store.GetRecord(f.actor(1, "member"), f.team, first.ID, 0)
 	require.NoError(t, err)
 	require.True(t, view.Current)
-	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("bad-version", 2, ontology.Change{ExpectedVersion: 0, Record: view.Record}))
-	require.ErrorIs(t, err, ontology.ErrConflict)
+	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("bad-version", 2, topic.Change{ExpectedVersion: 0, Record: view.Record}))
+	require.ErrorIs(t, err, topic.ErrConflict)
 	view.Definition.Label = "Engineering work"
-	updated, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("edit", 2, ontology.Change{ExpectedVersion: 1, Record: view.Record}))
+	updated, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("edit", 2, topic.Change{ExpectedVersion: 1, Record: view.Record}))
 	require.NoError(t, err)
 	rollback, err := f.store.Rollback(f.actor(0, "manager"), f.team, updated.ID, "rollback", 3, "restore previous label")
 	require.NoError(t, err)
@@ -139,12 +139,12 @@ func TestOntologyAtomicPublicationReplayAndRaces(t *testing.T) {
 
 func TestOntologyRejectedInputsDoNotCommit(t *testing.T) {
 	f := newOntologyFixture(t)
-	_, err := f.store.PublishAutomatic(context.Background(), f.team, testPublication("bad", 0, ontology.Change{Record: ontology.Record{ID: uuid.NewString(), Kind: ontology.AssignmentKind}}))
-	require.ErrorIs(t, err, ontology.ErrInvalid)
-	_, err = f.store.PublishManager(f.actor(1, "member"), f.team, testPublication("member", 0, ontology.Change{Record: testTopic("member")}))
-	require.ErrorIs(t, err, ontology.ErrUnauthorized)
-	_, err = f.store.PublishAutomatic(f.actor(0, "manager"), f.team, testPublication("request-automatic", 0, ontology.Change{Record: testTopic("automatic")}))
-	require.ErrorIs(t, err, ontology.ErrUnauthorized)
+	_, err := f.store.PublishAutomatic(context.Background(), f.team, testPublication("bad", 0, topic.Change{Record: topic.Record{ID: uuid.NewString(), Kind: topic.AssignmentKind}}))
+	require.ErrorIs(t, err, topic.ErrInvalid)
+	_, err = f.store.PublishManager(f.actor(1, "member"), f.team, testPublication("member", 0, topic.Change{Record: testTopic("member")}))
+	require.ErrorIs(t, err, topic.ErrUnauthorized)
+	_, err = f.store.PublishAutomatic(f.actor(0, "manager"), f.team, testPublication("request-automatic", 0, topic.Change{Record: testTopic("automatic")}))
+	require.ErrorIs(t, err, topic.ErrUnauthorized)
 	page, err := f.store.ListRecords(context.Background(), f.team, "", "", 20)
 	require.NoError(t, err)
 	require.Empty(t, page.Records)
@@ -155,6 +155,6 @@ func TestOntologyRejectedInputsDoNotCommit(t *testing.T) {
 	require.NoError(t, f.rls.WithTeamTx(context.Background(), f.app, f.team, func(tx *gorm.DB) error {
 		return tx.Exec(`INSERT INTO topic_catalog_heads(team_id,shared_space_id,space_generation) VALUES (?::uuid,?::uuid,?)`, f.team, f.space, f.generation).Error
 	}))
-	_, err = f.store.PublishAutomatic(context.Background(), f.team, testPublication("oversized", 0, ontology.Change{Record: ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "oversized", Label: "oversized", Description: strings.Repeat("x", 1001)}}}))
-	require.ErrorIs(t, err, ontology.ErrInvalid)
+	_, err = f.store.PublishAutomatic(context.Background(), f.team, testPublication("oversized", 0, topic.Change{Record: topic.Record{ID: uuid.NewString(), Kind: topic.Topic, Definition: &topic.Definition{Key: "oversized", Label: "oversized", Description: strings.Repeat("x", 1001)}}}))
+	require.ErrorIs(t, err, topic.ErrInvalid)
 }

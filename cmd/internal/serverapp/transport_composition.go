@@ -28,7 +28,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/sse"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
-	ontology "github.com/markhuangai/dense-mem/internal/topics"
+	topics "github.com/markhuangai/dense-mem/internal/topics"
 )
 
 // transportCompositionInputs contains the already-built application and
@@ -70,8 +70,8 @@ type transportCompositionInputs struct {
 	usageMetrics       operations.UsageMetricsService
 	evidenceConflicts  conflictevidence.Reader
 	recallFeedback     recall.RecallFeedbackEventReader
-	topicMaintenance   *ontology.MaintenanceService
-	ontologyManagement *ontology.ManagementService
+	topicMaintenance   *topics.MaintenanceService
+	topicManagement    *topics.ManagementService
 	recall             recall.RecallService
 }
 
@@ -328,7 +328,7 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 	})
 
 	userPortalDeps := densehttp.UserPortalDeps{
-		OntologyManagement:       deps.ontologyManagement,
+		TopicManagement:          deps.topicManagement,
 		CredentialRepo:           deps.credentialRepo,
 		TeamSvc:                  deps.teamService,
 		CredentialSvc:            deps.credentialService,
@@ -399,7 +399,7 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 				Decisions:           deps.decisionConfig,
 				Logs:                deps.operationLogs,
 				RecallFeedback:      deps.recallFeedback,
-				Ontology:            deps.topicMaintenance,
+				TopicMaintenance:    deps.topicMaintenance,
 				EvidenceConflicts:   deps.evidenceConflicts,
 				Convergence:         deps.convergence,
 				RememberAttempts:    deps.rememberAttempts,

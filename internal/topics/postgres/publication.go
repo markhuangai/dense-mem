@@ -9,45 +9,45 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 )
 
-func (s *Store) PublishAutomatic(ctx context.Context, teamID string, input ontology.Publication) (ontology.PublicationResult, error) {
+func (s *Store) PublishAutomatic(ctx context.Context, teamID string, input topic.Publication) (topic.PublicationResult, error) {
 	if err := requireAutomatic(ctx); err != nil {
-		return ontology.PublicationResult{}, err
+		return topic.PublicationResult{}, err
 	}
 	return s.publish(ctx, teamID, input, "automatic", "")
 }
 
-func (s *Store) PublishManager(ctx context.Context, teamID string, input ontology.Publication) (ontology.PublicationResult, error) {
+func (s *Store) PublishManager(ctx context.Context, teamID string, input topic.Publication) (topic.PublicationResult, error) {
 	actor, err := managerActor(ctx, teamID)
 	if err != nil {
-		return ontology.PublicationResult{}, err
+		return topic.PublicationResult{}, err
 	}
 	return s.publish(ctx, teamID, input, "manager", actor)
 }
 
-func (s *Store) publish(ctx context.Context, teamID string, input ontology.Publication, origin, actor string) (result ontology.PublicationResult, err error) {
-	ctx, diagnostic, finish := ontology.ObservePublication(ctx, s.publicationObserver, teamID, origin, input)
+func (s *Store) publish(ctx context.Context, teamID string, input topic.Publication, origin, actor string) (result topic.PublicationResult, err error) {
+	ctx, diagnostic, finish := topic.ObservePublication(ctx, s.publicationObserver, teamID, origin, input)
 	defer func() {
 		if diagnostic != nil && result.ID != "" {
 			diagnostic.Result = &result
 		}
 		finish(err)
 	}()
-	if err := ontology.ValidatePublication(input); err != nil {
-		return ontology.PublicationResult{}, err
+	if err := topic.ValidatePublication(input); err != nil {
+		return topic.PublicationResult{}, err
 	}
-	hash, err := ontology.RequestHash(input, origin, actor)
+	hash, err := topic.RequestHash(input, origin, actor)
 	if err != nil {
-		return ontology.PublicationResult{}, err
+		return topic.PublicationResult{}, err
 	}
 	return s.commit(ctx, teamID, input, origin, actor, hash)
 }
 
-func (s *Store) commit(ctx context.Context, teamID string, input ontology.Publication, origin, actor, hash string) (result ontology.PublicationResult, err error) {
-	ctx, diagnostic, finish := ontology.ObservePublication(ctx, s.publicationObserver, teamID, origin, input)
+func (s *Store) commit(ctx context.Context, teamID string, input topic.Publication, origin, actor, hash string) (result topic.PublicationResult, err error) {
+	ctx, diagnostic, finish := topic.ObservePublication(ctx, s.publicationObserver, teamID, origin, input)
 	defer func() {
 		if diagnostic != nil && result.ID != "" {
 			diagnostic.Result = &result
@@ -63,46 +63,46 @@ func (s *Store) commit(ctx context.Context, teamID string, input ontology.Public
 		return err
 	})
 	if err != nil {
-		return ontology.PublicationResult{}, fmt.Errorf("ontology: publish: %w", err)
+		return topic.PublicationResult{}, fmt.Errorf("topics: publish: %w", err)
 	}
 	return result, nil
 }
 
-func (s *Store) commitPublication(tx *gorm.DB, fence scope, input ontology.Publication, origin, actor, hash, assessmentID string) (ontology.PublicationResult, error) {
-	if diagnostic := ontology.PublicationDiagnosticFromContext(tx.Statement.Context); diagnostic != nil {
+func (s *Store) commitPublication(tx *gorm.DB, fence scope, input topic.Publication, origin, actor, hash, assessmentID string) (topic.PublicationResult, error) {
+	if diagnostic := topic.PublicationDiagnosticFromContext(tx.Statement.Context); diagnostic != nil {
 		diagnostic.Publication = &input
 		diagnostic.AssessmentID = assessmentID
 	}
 	if err := tx.Exec(`INSERT INTO topic_catalog_heads(team_id,shared_space_id,space_generation)
 		VALUES (?::uuid,?::uuid,?) ON CONFLICT DO NOTHING`, fence.TeamID, fence.SpaceID, fence.Generation).Error; err != nil {
-		return ontology.PublicationResult{}, err
+		return topic.PublicationResult{}, err
 	}
 	var revision int64
 	if err := tx.Raw(`SELECT revision FROM topic_catalog_heads WHERE team_id=?::uuid
 		AND shared_space_id=?::uuid AND space_generation=? FOR UPDATE`, fence.TeamID, fence.SpaceID, fence.Generation).Row().Scan(&revision); err != nil {
-		return ontology.PublicationResult{}, err
+		return topic.PublicationResult{}, err
 	}
 	existing, found, err := replayPublication(tx, fence, input.OperationKey, hash)
 	if err != nil {
-		return ontology.PublicationResult{}, err
+		return topic.PublicationResult{}, err
 	}
 	if found {
 		return existing, nil
 	}
 	notePublicationRevision(tx, revision)
 	if revision != input.ExpectedRevision {
-		return ontology.PublicationResult{}, ontology.PublicationVersionRejection("catalog_revision", "", input.ExpectedRevision, revision)
+		return topic.PublicationResult{}, topic.PublicationVersionRejection("catalog_revision", "", input.ExpectedRevision, revision)
 	}
-	records := make([]ontology.Record, 0, len(input.Changes))
+	records := make([]topic.Record, 0, len(input.Changes))
 	var changedDefinitions []string
 	for _, change := range input.Changes {
 		if change.Record.Group != nil && change.Record.Group.AssessmentID != "" && !change.Record.Retired {
 			if change.Record.Group.AssessmentID != assessmentID && origin != "rollback" {
-				return ontology.PublicationResult{}, fmt.Errorf("%w: assessed groups require organization publication", ontology.ErrInvalid)
+				return topic.PublicationResult{}, fmt.Errorf("%w: assessed groups require organization publication", topic.ErrInvalid)
 			}
 			if change.Record.Group.AssessmentID != assessmentID {
 				if err := validateAssessmentProvenance(tx, fence, change.Record); err != nil {
-					return ontology.PublicationResult{}, err
+					return topic.PublicationResult{}, err
 				}
 			}
 		}
@@ -113,9 +113,9 @@ func (s *Store) commitPublication(tx *gorm.DB, fence scope, input ontology.Publi
 	}
 	catalog, err := validationCatalog(tx, fence, records, changedDefinitions)
 	if err != nil {
-		return ontology.PublicationResult{}, err
+		return topic.PublicationResult{}, err
 	}
-	sourceCatalog := make(map[string]ontology.Record, len(catalog)+len(records))
+	sourceCatalog := make(map[string]topic.Record, len(catalog)+len(records))
 	for id, record := range catalog {
 		sourceCatalog[id] = record
 	}
@@ -124,48 +124,48 @@ func (s *Store) commitPublication(tx *gorm.DB, fence scope, input ontology.Publi
 	}
 	snapshots, err := sourceSnapshots(tx, fence, records, sourceCatalog)
 	if err != nil {
-		return ontology.PublicationResult{}, err
+		return topic.PublicationResult{}, err
 	}
-	var prepared []ontology.Record
+	var prepared []topic.Record
 	if len(input.Changes) > 0 {
-		prepared, err = ontology.PreparePublication(catalog, snapshots, input, origin == "automatic")
+		prepared, err = topic.PreparePublication(catalog, snapshots, input, origin == "automatic")
 		if err != nil {
-			return ontology.PublicationResult{}, err
+			return topic.PublicationResult{}, err
 		}
 	} else {
-		return ontology.PublicationResult{}, ontology.ErrInvalid
+		return topic.PublicationResult{}, topic.ErrInvalid
 	}
-	result := ontology.PublicationResult{ID: uuid.NewString(), Revision: revision + 1, Records: []ontology.RevisionRef{}}
+	result := topic.PublicationResult{ID: uuid.NewString(), Revision: revision + 1, Records: []topic.RevisionRef{}}
 	for _, record := range prepared {
-		result.Records = append(result.Records, ontology.RevisionRef{ID: record.ID, Version: record.Version})
+		result.Records = append(result.Records, topic.RevisionRef{ID: record.ID, Version: record.Version})
 	}
 	encoded, err := json.Marshal(result)
 	if err != nil {
-		return ontology.PublicationResult{}, err
+		return topic.PublicationResult{}, err
 	}
 	if err := tx.Exec(`INSERT INTO topic_publications(team_id,shared_space_id,space_generation,
 		publication_id,revision,operation_key,request_hash,origin,actor_id,reason,rollback_of,result)
 		VALUES (?::uuid,?::uuid,?,?::uuid,?,?,?,?,NULLIF(?,'')::uuid,?,NULLIF(?,'')::uuid,?::jsonb)`,
 		fence.TeamID, fence.SpaceID, fence.Generation, result.ID, result.Revision, input.OperationKey, hash, origin, actor, input.Reason, input.RollbackOf, string(encoded)).Error; err != nil {
-		return ontology.PublicationResult{}, err
+		return topic.PublicationResult{}, err
 	}
 	for _, record := range prepared {
 		body, err := marshalRecord(record)
 		if err != nil {
-			return ontology.PublicationResult{}, err
+			return topic.PublicationResult{}, err
 		}
 		if err := tx.Exec(`SELECT dense_mem_insert_topic_revision(?::uuid,?::uuid,?,?::uuid,?::jsonb)`,
 			fence.TeamID, fence.SpaceID, fence.Generation, result.ID, string(body)).Error; err != nil {
-			return ontology.PublicationResult{}, err
+			return topic.PublicationResult{}, err
 		}
 	}
 	for _, record := range prepared {
 		if err := insertDependencies(tx, fence, record); err != nil {
-			return ontology.PublicationResult{}, err
+			return topic.PublicationResult{}, err
 		}
 	}
 	for _, record := range prepared {
-		names := ontology.DefinitionNames(record)
+		names := topic.DefinitionNames(record)
 		if names == nil {
 			names = []string{}
 		}
@@ -176,10 +176,10 @@ func (s *Store) commitPublication(tx *gorm.DB, fence scope, input ontology.Publi
 			WHERE topic_record_heads.version=?`, fence.TeamID, fence.SpaceID, fence.Generation, record.ID, record.Version,
 			string(record.Kind), record.Retired, pq.Array(names), record.Version-1)
 		if updated.Error != nil {
-			return ontology.PublicationResult{}, updated.Error
+			return topic.PublicationResult{}, updated.Error
 		}
 		if updated.RowsAffected != 1 {
-			return ontology.PublicationResult{}, ontology.ErrConflict
+			return topic.PublicationResult{}, topic.ErrConflict
 		}
 	}
 	// Community placements are version-bound, so inspect the proposed heads after the entire publication has been written.
@@ -192,39 +192,39 @@ func (s *Store) commitPublication(tx *gorm.DB, fence scope, input ontology.Publi
 	}
 	conflict, err := conflictingCommunityEdge(tx, fence, edges)
 	if err != nil {
-		return ontology.PublicationResult{}, err
+		return topic.PublicationResult{}, err
 	}
 	if conflict != nil {
-		return ontology.PublicationResult{}, &ontology.PublicationRejection{
-			Cause: ontology.ErrConflict, Reason: "community_hierarchy_conflict", RecordID: conflict.topicID, ParentID: conflict.parentID,
+		return topic.PublicationResult{}, &topic.PublicationRejection{
+			Cause: topic.ErrConflict, Reason: "community_hierarchy_conflict", RecordID: conflict.topicID, ParentID: conflict.parentID,
 		}
 	}
 	updated := tx.Exec(`UPDATE topic_catalog_heads SET revision=? WHERE team_id=?::uuid
 		AND shared_space_id=?::uuid AND space_generation=? AND revision=?`, result.Revision, fence.TeamID, fence.SpaceID, fence.Generation, revision)
 	if updated.Error != nil {
-		return ontology.PublicationResult{}, updated.Error
+		return topic.PublicationResult{}, updated.Error
 	}
 	if updated.RowsAffected != 1 {
-		return ontology.PublicationResult{}, ontology.ErrConflict
+		return topic.PublicationResult{}, topic.ErrConflict
 	}
 	return result, nil
 }
 
-func replayPublication(tx *gorm.DB, fence scope, key, hash string) (ontology.PublicationResult, bool, error) {
+func replayPublication(tx *gorm.DB, fence scope, key, hash string) (topic.PublicationResult, bool, error) {
 	var storedHash string
 	var encoded []byte
 	err := tx.Raw(`SELECT request_hash,result FROM topic_publications WHERE team_id=?::uuid
 		AND shared_space_id=?::uuid AND space_generation=? AND operation_key=?`, fence.TeamID, fence.SpaceID, fence.Generation, key).Row().Scan(&storedHash, &encoded)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ontology.PublicationResult{}, false, nil
+		return topic.PublicationResult{}, false, nil
 	}
 	if err != nil {
-		return ontology.PublicationResult{}, false, err
+		return topic.PublicationResult{}, false, err
 	}
 	if hash != storedHash {
-		return ontology.PublicationResult{}, true, ontology.ErrConflict
+		return topic.PublicationResult{}, true, topic.ErrConflict
 	}
-	var result ontology.PublicationResult
+	var result topic.PublicationResult
 	if err := json.Unmarshal(encoded, &result); err != nil {
 		return result, true, err
 	}
@@ -232,7 +232,7 @@ func replayPublication(tx *gorm.DB, fence scope, key, hash string) (ontology.Pub
 	return result, true, nil
 }
 
-func insertDependencies(tx *gorm.DB, fence scope, record ontology.Record) error {
+func insertDependencies(tx *gorm.DB, fence scope, record topic.Record) error {
 	for _, source := range record.Sources {
 		if err := tx.Exec(`INSERT INTO topic_source_dependencies(team_id,shared_space_id,space_generation,
 			record_id,record_version,source_kind,source_id,source_version,fingerprint)

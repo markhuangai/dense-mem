@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -20,16 +20,16 @@ func TestOntologyMaintenanceRevalidationRecovery(t *testing.T) {
 			x := newFinalizationFixture(t)
 			f, source := x.f, x.claim.Sources[0]
 			topic := testTopic("postgresql")
-			revalidationPublish(t, f, ontology.Change{Record: topic})
+			revalidationPublish(t, f, topiccontract.Change{Record: topic})
 			revalidationDiscover(t, f, x.window)
-			require.Greater(t, revalidationQueue(t, f, source).Revision, x.claim.Revisions[ontology.SourceKey(source)])
+			require.Greater(t, revalidationQueue(t, f, source).Revision, x.claim.Revisions[topiccontract.SourceKey(source)])
 			x.stage(t)
 			switch change {
 			case "definition":
 				topic.Definition.Description = "Changed required storage definition"
-				revalidationPublish(t, f, ontology.Change{ExpectedVersion: 1, Record: topic})
+				revalidationPublish(t, f, topiccontract.Change{ExpectedVersion: 1, Record: topic})
 			case "source":
-				snapshots, err := f.store.ReadSources(context.Background(), f.team, []ontology.SourceHandle{source})
+				snapshots, err := f.store.ReadSources(context.Background(), f.team, []topiccontract.SourceHandle{source})
 				require.NoError(t, err)
 				owner := 0
 				if snapshots[0].OwnerID == f.owners[1] {
@@ -39,8 +39,8 @@ func TestOntologyMaintenanceRevalidationRecovery(t *testing.T) {
 				require.NoError(t, err)
 			case "override":
 				other := testTopic("manager-recovery-replacement")
-				override := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.SetClassification, DefinitionID: other.ID, Members: []ontology.SourceHandle{source}}, Sources: []ontology.SourceDependency{f.source(t, source)}}
-				require.ErrorIs(t, revalidationPublishChanges(f, ontology.Change{Record: other}, ontology.Change{Record: override}), ontology.ErrOverride)
+				override := topiccontract.Record{ID: uuid.NewString(), Kind: topiccontract.OverrideKind, Override: &topiccontract.Override{Action: topiccontract.SetClassification, DefinitionID: other.ID, Members: []topiccontract.SourceHandle{source}}, Sources: []topiccontract.SourceDependency{f.source(t, source)}}
+				require.ErrorIs(t, revalidationPublishChanges(f, topiccontract.Change{Record: other}, topiccontract.Change{Record: override}), topiccontract.ErrOverride)
 			}
 			if change == "definition" || change == "source" {
 				revalidationRefresh(t, f, source)

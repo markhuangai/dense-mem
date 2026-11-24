@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -19,7 +19,7 @@ func TestOntologyMaintenanceParallelSchedulerUnavailableCapacity(t *testing.T) {
 	other.organizationEvidence(t, 0, "Other team's pending source.", nil)
 	config := schedulerConfig(t, f, 2, 1)
 	window := maintenanceWindow(t, f, config)
-	var turns []ontology.MaintenanceTurn
+	var turns []topic.MaintenanceTurn
 	for range 2 {
 		turn, err := f.store.ClaimMaintenanceTurn(context.Background(), window.ID, time.Now(), time.Minute)
 		require.NoError(t, err)

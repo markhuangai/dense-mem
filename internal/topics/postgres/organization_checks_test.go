@@ -14,7 +14,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -25,13 +25,13 @@ func testOntologyOrganizationAtomicReplayAndIsolation(t *testing.T) {
 	b := f.organizationEvidence(t, 1, "PostgreSQL is Atlas's data store.", nil)
 	before := f.canonicalSnapshot(t)
 	service, calls := organizationFixtureService(t, f, func(assessment.Item, assessment.Item) bool { return true }, nil)
-	input := ontology.OrganizationInput{OperationKey: "organize", Sources: []ontology.SourceHandle{b, a}}
+	input := topic.OrganizationInput{OperationKey: "organize", Sources: []topic.SourceHandle{b, a}}
 	result, err := service.Organize(context.Background(), f.team, input)
 	require.NoError(t, err)
 	require.Equal(t, int32(1), calls.Load())
 	require.NotNil(t, result.Publication)
 	require.True(t, result.Current)
-	groups, err := f.store.ListRecords(context.Background(), f.team, ontology.EvidenceGroup, "", 20)
+	groups, err := f.store.ListRecords(context.Background(), f.team, topic.EvidenceGroup, "", 20)
 	require.NoError(t, err)
 	require.Len(t, groups.Records, 1)
 	require.True(t, groups.Records[0].Current)
@@ -43,7 +43,7 @@ func testOntologyOrganizationAtomicReplayAndIsolation(t *testing.T) {
 	require.Equal(t, result.AssessmentID, replay.AssessmentID)
 	require.Equal(t, int32(1), calls.Load())
 	input.OperationKey = "another-key"
-	input.Sources = []ontology.SourceHandle{a, b}
+	input.Sources = []topic.SourceHandle{a, b}
 	replay, err = service.Organize(context.Background(), f.team, input)
 	require.NoError(t, err)
 	require.True(t, replay.Existing)
@@ -52,9 +52,9 @@ func testOntologyOrganizationAtomicReplayAndIsolation(t *testing.T) {
 	require.Equal(t, 2, receiptCount(t, f))
 	input.Sources = input.Sources[:1]
 	_, err = service.Organize(context.Background(), f.team, input)
-	require.ErrorIs(t, err, ontology.ErrConflict)
-	_, err = service.Organize(f.actor(1, "member"), f.team, ontology.OrganizationInput{OperationKey: "request-mode", Sources: []ontology.SourceHandle{a}})
-	require.ErrorIs(t, err, ontology.ErrUnauthorized)
+	require.ErrorIs(t, err, topic.ErrConflict)
+	_, err = service.Organize(f.actor(1, "member"), f.team, topic.OrganizationInput{OperationKey: "request-mode", Sources: []topic.SourceHandle{a}})
+	require.ErrorIs(t, err, topic.ErrUnauthorized)
 	other := &domain.Team{Name: "organization-c-" + uuid.NewString()}
 	require.NoError(t, access.NewTeamRepository(f.admin, f.rls).Create(context.Background(), other))
 	var count int
@@ -62,7 +62,7 @@ func testOntologyOrganizationAtomicReplayAndIsolation(t *testing.T) {
 		return tx.Raw(`SELECT count(*) FROM historical_organization_assessments WHERE team_id=?::uuid`, f.team).Row().Scan(&count)
 	}))
 	require.Zero(t, count)
-	_, err = service.Organize(context.Background(), other.ID.String(), ontology.OrganizationInput{OperationKey: "foreign-source", Sources: []ontology.SourceHandle{a}})
+	_, err = service.Organize(context.Background(), other.ID.String(), topic.OrganizationInput{OperationKey: "foreign-source", Sources: []topic.SourceHandle{a}})
 	require.NoError(t, err)
 	require.Equal(t, int32(1), calls.Load())
 	require.Equal(t, before, f.canonicalSnapshot(t))
@@ -82,13 +82,13 @@ func testOntologyOrganizationRejectsStaleAndMalformedPublication(t *testing.T) {
 			service, calls := organizationFixtureService(t, f, nil, func(_ assessment.Request, response *assessment.Response) {
 				turn := turns.Add(1)
 				if mode == "definition_record" {
-					response.Definitions[0].Kind = ontology.Kind("predicate_concept")
+					response.Definitions[0].Kind = topic.Kind("predicate_concept")
 				} else {
-					response.Definitions = append(response.Definitions, assessment.Definition{Ref: fmt.Sprintf("unused%d", turn), Kind: ontology.Topic,
+					response.Definitions = append(response.Definitions, assessment.Definition{Ref: fmt.Sprintf("unused%d", turn), Kind: topic.Topic,
 						Key: fmt.Sprintf("unused_topic_%d", turn), Label: "Unused proposal", Description: "New unused definition", Aliases: []string{}})
 				}
 			})
-			input := ontology.OrganizationInput{OperationKey: "exhausted-" + mode, Sources: []ontology.SourceHandle{a, b}}
+			input := topic.OrganizationInput{OperationKey: "exhausted-" + mode, Sources: []topic.SourceHandle{a, b}}
 			result, err := service.Organize(context.Background(), f.team, input)
 			require.ErrorContains(t, err, "provider_response_invalid")
 			require.Equal(t, int32(3), calls.Load())
@@ -116,7 +116,7 @@ func testOntologyOrganizationRejectsStaleAndMalformedPublication(t *testing.T) {
 			_, err := f.knowledge.RetractEvidence(f.actor(0, "member"), knowledge.RetractEvidenceInput{TeamID: f.team, OwnerProfileID: f.owners[0], EvidenceIDs: []string{source.ID}, Reason: "withdrawn during assessment", IdempotencyKey: "withdraw", RequestHash: testHash("withdraw")})
 			require.NoError(t, err)
 		})
-		result, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "stale", Sources: []ontology.SourceHandle{source}})
+		result, err := service.Organize(context.Background(), f.team, topic.OrganizationInput{OperationKey: "stale", Sources: []topic.SourceHandle{source}})
 		require.Error(t, err)
 		require.Equal(t, "stale_input", result.FailureCode)
 		require.NotNil(t, result.FreshnessRejection)
@@ -136,7 +136,7 @@ func testOntologyOrganizationRejectsStaleAndMalformedPublication(t *testing.T) {
 		b := f.organizationEvidence(t, 1, "Atlas uses Redis.", nil)
 		before := f.canonicalSnapshot(t)
 		service, calls := organizationFixtureService(t, f, nil, func(request assessment.Request, response *assessment.Response) { response.Items = response.Items[:1] })
-		input := ontology.OrganizationInput{OperationKey: "invalid", Sources: []ontology.SourceHandle{a, b}}
+		input := topic.OrganizationInput{OperationKey: "invalid", Sources: []topic.SourceHandle{a, b}}
 		result, err := service.Organize(context.Background(), f.team, input)
 		require.Error(t, err)
 		require.Equal(t, "provider_response_invalid", result.FailureCode)
@@ -161,11 +161,11 @@ func testOntologyOrganizationRejectsStaleAndMalformedPublication(t *testing.T) {
 		service, _ := organizationFixtureService(t, f, nil, func(request assessment.Request, response *assessment.Response) { arrived.Done(); <-barrier })
 		results := make(chan error, 2)
 		var completed sync.WaitGroup
-		for _, source := range []ontology.SourceHandle{a, b} {
+		for _, source := range []topic.SourceHandle{a, b} {
 			completed.Add(1)
-			go func(source ontology.SourceHandle) {
+			go func(source topic.SourceHandle) {
 				defer completed.Done()
-				_, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: source.ID, Sources: []ontology.SourceHandle{source}})
+				_, err := service.Organize(context.Background(), f.team, topic.OrganizationInput{OperationKey: source.ID, Sources: []topic.SourceHandle{source}})
 				results <- err
 			}(source)
 		}
@@ -177,7 +177,7 @@ func testOntologyOrganizationRejectsStaleAndMalformedPublication(t *testing.T) {
 		for err := range results {
 			if err == nil {
 				passed++
-			} else if errors.Is(err, ontology.ErrConflict) || errors.Is(err, ontology.ErrSourceStale) {
+			} else if errors.Is(err, topic.ErrConflict) || errors.Is(err, topic.ErrSourceStale) {
 				conflicts++
 			} else {
 				t.Fatal(err)
@@ -193,33 +193,33 @@ func testOntologyOrganizationOverridesAndIncompleteGroups(t *testing.T) {
 	f := newOrganizationFixture(t)
 	a := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
 	b := f.organizationEvidence(t, 1, "Atlas uses PostgreSQL.", nil)
-	separation := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.KeepSeparate, Members: []ontology.SourceHandle{a, b}}, Sources: []ontology.SourceDependency{f.source(t, a), f.source(t, b)}}
-	_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("separate", 0, ontology.Change{Record: separation}))
-	require.ErrorIs(t, err, ontology.ErrOverride)
+	separation := topic.Record{ID: uuid.NewString(), Kind: topic.OverrideKind, Override: &topic.Override{Action: topic.KeepSeparate, Members: []topic.SourceHandle{a, b}}, Sources: []topic.SourceDependency{f.source(t, a), f.source(t, b)}}
+	_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("separate", 0, topic.Change{Record: separation}))
+	require.ErrorIs(t, err, topic.ErrOverride)
 	_, err = f.store.GetRecord(context.Background(), f.team, separation.ID, 0)
-	require.ErrorIs(t, err, ontology.ErrNotFound)
+	require.ErrorIs(t, err, topic.ErrNotFound)
 	c := f.organizationEvidence(t, 0, "Atlas stores data in PostgreSQL.", nil)
 	d := f.organizationEvidence(t, 1, "PostgreSQL is Atlas's data store.", nil)
 	service, calls := organizationFixtureService(t, f, func(assessment.Item, assessment.Item) bool { return true }, nil)
-	result, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "group", Sources: []ontology.SourceHandle{c, d}})
+	result, err := service.Organize(context.Background(), f.team, topic.OrganizationInput{OperationKey: "group", Sources: []topic.SourceHandle{c, d}})
 	require.NoError(t, err)
 	require.NotNil(t, result.Publication)
 	beforeCalls := calls.Load()
-	result, err = service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "incomplete", Sources: []ontology.SourceHandle{c}})
+	result, err = service.Organize(context.Background(), f.team, topic.OrganizationInput{OperationKey: "incomplete", Sources: []topic.SourceHandle{c}})
 	require.NoError(t, err)
 	require.Equal(t, "ambiguous", result.Outcomes[0].Status)
 	require.Equal(t, "resubmit_complete_group", result.Outcomes[0].Reason)
 	require.Equal(t, beforeCalls, calls.Load())
-	_, err = service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "unavailable", Sources: []ontology.SourceHandle{{Kind: ontology.EvidenceSource, ID: uuid.NewString(), Version: 1}}})
+	_, err = service.Organize(context.Background(), f.team, topic.OrganizationInput{OperationKey: "unavailable", Sources: []topic.SourceHandle{{Kind: topic.EvidenceSource, ID: uuid.NewString(), Version: 1}}})
 	require.NoError(t, err)
-	_, err = service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "too-many", Sources: append(make([]ontology.SourceHandle, 20), a)})
-	require.ErrorIs(t, err, ontology.ErrInvalid)
+	_, err = service.Organize(context.Background(), f.team, topic.OrganizationInput{OperationKey: "too-many", Sources: append(make([]topic.SourceHandle, 20), a)})
+	require.ErrorIs(t, err, topic.ErrInvalid)
 }
 
 func testOntologyOrganizationRejectsSplitGroupIdentityConflict(t *testing.T) {
 	f := newOrganizationFixture(t)
 	ctx := context.Background()
-	var handles []ontology.SourceHandle
+	var handles []topic.SourceHandle
 	for _, text := range []string{
 		"Atlas uses PostgreSQL.",
 		"PostgreSQL stores Atlas data.",
@@ -228,12 +228,12 @@ func testOntologyOrganizationRejectsSplitGroupIdentityConflict(t *testing.T) {
 	} {
 		handles = append(handles, f.organizationEvidence(t, 0, text, nil))
 	}
-	input := ontology.OrganizationInput{OperationKey: "original-four-member-group", Sources: handles}
+	input := topic.OrganizationInput{OperationKey: "original-four-member-group", Sources: handles}
 	originalService, _ := organizationFixtureService(t, f, func(assessment.Item, assessment.Item) bool { return true }, nil)
 	original, err := originalService.Organize(ctx, f.team, input)
 	require.NoError(t, err)
 	require.NotNil(t, original.Publication)
-	groups, err := f.store.ListRecords(ctx, f.team, ontology.EvidenceGroup, "", 20)
+	groups, err := f.store.ListRecords(ctx, f.team, topic.EvidenceGroup, "", 20)
 	require.NoError(t, err)
 	require.Len(t, groups.Records, 1)
 	group := groups.Records[0].Record
@@ -249,7 +249,7 @@ func testOntologyOrganizationRejectsSplitGroupIdentityConflict(t *testing.T) {
 	require.NoError(t, err)
 	input.OperationKey = "reject-conflicting-group-reuse"
 	result, err := service.Organize(context.Background(), f.team, input)
-	require.ErrorIs(t, err, ontology.ErrConflict)
+	require.ErrorIs(t, err, topic.ErrConflict)
 	require.Equal(t, "commit_conflict", result.FailureCode)
 	require.Nil(t, result.Publication)
 	for _, outcome := range result.Outcomes {
@@ -297,11 +297,11 @@ func testIncrementalEquivalence(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, result.Current)
 	require.EqualValues(t, 1, calls.Load())
-	groups, err := f.store.ListRecords(ctx, f.team, ontology.EvidenceGroup, "", 20)
+	groups, err := f.store.ListRecords(ctx, f.team, topic.EvidenceGroup, "", 20)
 	require.NoError(t, err)
 	require.Len(t, groups.Records, 1)
 	require.True(t, groups.Records[0].Current)
-	require.ElementsMatch(t, []ontology.SourceHandle{a, b}, groups.Records[0].Group.Members)
+	require.ElementsMatch(t, []topic.SourceHandle{a, b}, groups.Records[0].Group.Members)
 	var activeProofs, historicalProofs int
 	require.NoError(t, f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
 		return tx.Raw(`SELECT (SELECT count(*) FROM evidence_equivalence_outcomes WHERE team_id=? AND assessment_id=?),
@@ -310,7 +310,7 @@ func testIncrementalEquivalence(t *testing.T) {
 	}))
 	require.Equal(t, 1, activeProofs)
 	require.Zero(t, historicalProofs)
-	for _, kind := range []ontology.Kind{ontology.Topic, ontology.AssignmentKind} {
+	for _, kind := range []topic.Kind{topic.Topic, topic.AssignmentKind} {
 		records, err := f.store.ListRecords(ctx, f.team, kind, "", 20)
 		require.NoError(t, err)
 		require.Empty(t, records.Records)
@@ -322,7 +322,7 @@ func testIncrementalEquivalence(t *testing.T) {
 	badLease := *claim
 	badLease.LeaseToken = uuid.NewString()
 	_, err = service.AssessMaintenanceEquivalence(ctx, badLease)
-	require.ErrorIs(t, err, ontology.ErrLeaseLost)
+	require.ErrorIs(t, err, topic.ErrLeaseLost)
 	_, err = service.AssessMaintenanceEquivalence(f.actor(0, "member"), *claim)
-	require.ErrorIs(t, err, ontology.ErrUnauthorized)
+	require.ErrorIs(t, err, topic.ErrUnauthorized)
 }

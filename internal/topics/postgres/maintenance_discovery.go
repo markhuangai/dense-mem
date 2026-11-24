@@ -8,23 +8,23 @@ import (
 	"time"
 
 	"github.com/lib/pq"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 )
 
-var maintenanceSourceKinds = []ontology.SourceKind{ontology.EvidenceSource}
+var maintenanceSourceKinds = []topic.SourceKind{topic.EvidenceSource}
 
-func (s *Store) DiscoverMaintenance(ctx context.Context, turn ontology.MaintenanceTurn, limit int) (result ontology.MaintenanceDiscoveryResult, err error) {
+func (s *Store) DiscoverMaintenance(ctx context.Context, turn topic.MaintenanceTurn, limit int) (result topic.MaintenanceDiscoveryResult, err error) {
 	started := time.Now()
 	defer func() { result.Duration = time.Since(started) }()
-	if limit < 1 || limit > ontology.MaintenancePageSize {
-		return result, ontology.ErrInvalid
+	if limit < 1 || limit > topic.MaintenancePageSize {
+		return result, topic.ErrInvalid
 	}
 	stats := newMaintenanceDiscoveryStats()
 	ctx = context.WithValue(ctx, maintenanceDiscoveryStatsKey{}, stats)
 	err = s.withScope(ctx, turn.TeamID, false, func(tx *gorm.DB, fence scope) error {
 		if fence.SpaceID != turn.SpaceID || fence.Generation != turn.Generation {
-			return ontology.ErrLeaseLost
+			return topic.ErrLeaseLost
 		}
 		if err := checkMaintenanceTurn(tx, turn); err != nil {
 			return err
@@ -80,9 +80,9 @@ func (s *Store) DiscoverMaintenance(ctx context.Context, turn ontology.Maintenan
 	return result, err
 }
 
-func maintenanceSourcePage(tx *gorm.DB, fence scope, kind ontology.SourceKind, cursor string, limit int) ([]ontology.SourceHandle, error) {
-	if kind != ontology.EvidenceSource {
-		return nil, ontology.ErrInvalid
+func maintenanceSourcePage(tx *gorm.DB, fence scope, kind topic.SourceKind, cursor string, limit int) ([]topic.SourceHandle, error) {
+	if kind != topic.EvidenceSource {
+		return nil, topic.ErrInvalid
 	}
 	query := maintenanceEvidencePageSQL
 	rows, err := tx.Raw(query, fence.TeamID, fence.SpaceID, fence.Generation, cursor, limit).Rows()
@@ -90,9 +90,9 @@ func maintenanceSourcePage(tx *gorm.DB, fence scope, kind ontology.SourceKind, c
 		return nil, err
 	}
 	defer rows.Close()
-	result := []ontology.SourceHandle{}
+	result := []topic.SourceHandle{}
 	for rows.Next() {
-		handle := ontology.SourceHandle{Kind: kind}
+		handle := topic.SourceHandle{Kind: kind}
 		if err := rows.Scan(&handle.ID, &handle.Version); err != nil {
 			return nil, err
 		}
@@ -101,7 +101,7 @@ func maintenanceSourcePage(tx *gorm.DB, fence scope, kind ontology.SourceKind, c
 	return result, rows.Err()
 }
 
-func knownMaintenanceSources(tx *gorm.DB, fence scope, handles []ontology.SourceHandle) (map[string]int64, error) {
+func knownMaintenanceSources(tx *gorm.DB, fence scope, handles []topic.SourceHandle) (map[string]int64, error) {
 	known := make(map[string]int64, len(handles))
 	if len(handles) == 0 {
 		return known, nil
@@ -137,19 +137,19 @@ func knownMaintenanceSources(tx *gorm.DB, fence scope, handles []ontology.Source
 	return known, rows.Err()
 }
 
-func refreshDiscoveredSource(tx *gorm.DB, fence scope, handle ontology.SourceHandle, version int64) error {
+func refreshDiscoveredSource(tx *gorm.DB, fence scope, handle topic.SourceHandle, version int64) error {
 	if version == handle.Version {
 		return nil
 	}
 	return refreshMaintenanceSource(tx, fence, handle, false)
 }
 
-func refreshMaintenanceSource(tx *gorm.DB, fence scope, handle ontology.SourceHandle, force bool) error {
+func refreshMaintenanceSource(tx *gorm.DB, fence scope, handle topic.SourceHandle, force bool) error {
 	snapshot, err := readSource(tx, fence, handle)
-	if err != nil && !errors.Is(err, ontology.ErrSourceStale) {
+	if err != nil && !errors.Is(err, topic.ErrSourceStale) {
 		return err
 	}
-	if errors.Is(err, ontology.ErrSourceStale) {
+	if errors.Is(err, topic.ErrSourceStale) {
 		latest, latestErr := latestMaintenanceHandle(tx, fence, handle)
 		if latestErr != nil {
 			return latestErr
@@ -157,12 +157,12 @@ func refreshMaintenanceSource(tx *gorm.DB, fence scope, handle ontology.SourceHa
 		if latest != handle {
 			handle = latest
 			snapshot, err = readSource(tx, fence, handle)
-			if err != nil && !errors.Is(err, ontology.ErrSourceStale) {
+			if err != nil && !errors.Is(err, topic.ErrSourceStale) {
 				return err
 			}
 		}
 	}
-	fingerprint, err := ontology.SourceFingerprint(snapshot)
+	fingerprint, err := topic.SourceFingerprint(snapshot)
 	if err != nil {
 		return err
 	}
@@ -170,8 +170,8 @@ func refreshMaintenanceSource(tx *gorm.DB, fence scope, handle ontology.SourceHa
 	if !snapshot.Eligible {
 		status, reason = "unavailable", "source_unavailable"
 	}
-	text := []rune(ontology.SourceDisplayText(snapshot))
-	_, vocabularyWords := ontology.VocabularyQuery([]ontology.SourceSnapshot{snapshot})
+	text := []rune(topic.SourceDisplayText(snapshot))
+	_, vocabularyWords := topic.VocabularyQuery([]topic.SourceSnapshot{snapshot})
 	if len(text) > 8192 {
 		text = text[:8192]
 	}
@@ -195,14 +195,14 @@ func refreshMaintenanceSource(tx *gorm.DB, fence scope, handle ontology.SourceHa
 	return write.Error
 }
 
-func latestMaintenanceHandle(tx *gorm.DB, fence scope, handle ontology.SourceHandle) (ontology.SourceHandle, error) {
-	if handle.Kind != ontology.EvidenceSource {
-		return handle, ontology.ErrInvalid
+func latestMaintenanceHandle(tx *gorm.DB, fence scope, handle topic.SourceHandle) (topic.SourceHandle, error) {
+	if handle.Kind != topic.EvidenceSource {
+		return handle, topic.ErrInvalid
 	}
 	return handle, nil
 }
 
-func refreshMaintenanceInvalidation(tx *gorm.DB, fence scope, handle ontology.SourceHandle, definition bool) error {
+func refreshMaintenanceInvalidation(tx *gorm.DB, fence scope, handle topic.SourceHandle, definition bool) error {
 	if err := refreshMaintenanceSource(tx, fence, handle, definition); err != nil {
 		return err
 	}
@@ -215,17 +215,17 @@ func refreshMaintenanceInvalidation(tx *gorm.DB, fence scope, handle ontology.So
 	return nil
 }
 
-func enqueueMaintenanceDependencies(tx *gorm.DB, fence scope, handle ontology.SourceHandle) error {
+func enqueueMaintenanceDependencies(tx *gorm.DB, fence scope, handle topic.SourceHandle) error {
 	return tx.Exec(`INSERT INTO topic_maintenance_markers(team_id,shared_space_id,space_generation,anchor_kind,anchor_id,target_kind,target_id)
  SELECT ?::uuid,?::uuid,?,'source_dependency',?,'definition',? WHERE EXISTS(
  SELECT 1 FROM topic_source_dependencies AS dependency JOIN topic_record_heads AS head
  ON head.team_id=dependency.team_id AND head.shared_space_id=dependency.shared_space_id AND head.space_generation=dependency.space_generation AND head.record_id=dependency.record_id AND head.version=dependency.record_version
  WHERE dependency.team_id=?::uuid AND dependency.shared_space_id=?::uuid AND dependency.space_generation=? AND dependency.source_kind=? AND dependency.source_id=? AND NOT head.retired)
- ON CONFLICT(team_id,shared_space_id,space_generation,anchor_kind,anchor_id) DO UPDATE SET marker_sequence=nextval('topic_maintenance_marker_seq'),cursor=''`, fence.TeamID, fence.SpaceID, fence.Generation, ontology.SourceKey(handle), handle.ID, fence.TeamID, fence.SpaceID, fence.Generation, handle.Kind, handle.ID).Error
+ ON CONFLICT(team_id,shared_space_id,space_generation,anchor_kind,anchor_id) DO UPDATE SET marker_sequence=nextval('topic_maintenance_marker_seq'),cursor=''`, fence.TeamID, fence.SpaceID, fence.Generation, topic.SourceKey(handle), handle.ID, fence.TeamID, fence.SpaceID, fence.Generation, handle.Kind, handle.ID).Error
 }
 
-func maintenanceMarkerSources(tx *gorm.DB, fence scope, marker maintenanceMarker, limit int) ([]ontology.SourceHandle, error) {
-	result := []ontology.SourceHandle{}
+func maintenanceMarkerSources(tx *gorm.DB, fence scope, marker maintenanceMarker, limit int) ([]topic.SourceHandle, error) {
+	result := []topic.SourceHandle{}
 	appendRows := func(query string, args ...any) error {
 		rows, err := tx.Raw(query, args...).Rows()
 		if err != nil {
@@ -233,7 +233,7 @@ func maintenanceMarkerSources(tx *gorm.DB, fence scope, marker maintenanceMarker
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var handle ontology.SourceHandle
+			var handle topic.SourceHandle
 			if err := rows.Scan(&handle.Kind, &handle.ID, &handle.Version); err != nil {
 				return err
 			}
@@ -249,18 +249,18 @@ func maintenanceMarkerSources(tx *gorm.DB, fence scope, marker maintenanceMarker
 			sourceKind, _, _ = strings.Cut(marker.AnchorID, ":")
 			sourceID = marker.TargetID
 		}
-		err := appendRows(maintenanceDefinitionPageSQL, fence.TeamID, fence.SpaceID, fence.Generation, recordID, sourceKind, sourceID, kind, id, pq.Array(ontology.VocabularyStopWords()), limit)
+		err := appendRows(maintenanceDefinitionPageSQL, fence.TeamID, fence.SpaceID, fence.Generation, recordID, sourceKind, sourceID, kind, id, pq.Array(topic.VocabularyStopWords()), limit)
 		return result, err
 	}
-	direct := ontology.SourceHandle{ID: marker.TargetID, Version: 1}
+	direct := topic.SourceHandle{ID: marker.TargetID, Version: 1}
 	switch marker.TargetKind {
 	case "evidence":
-		direct.Kind = ontology.EvidenceSource
+		direct.Kind = topic.EvidenceSource
 	case "source", "ingest":
 	default:
-		return nil, fmt.Errorf("%w: unknown invalidation kind", ontology.ErrInvalid)
+		return nil, fmt.Errorf("%w: unknown invalidation kind", topic.ErrInvalid)
 	}
-	if direct.Kind != "" && ontology.SourceKey(direct) > marker.Cursor {
+	if direct.Kind != "" && topic.SourceKey(direct) > marker.Cursor {
 		latest, err := latestMaintenanceHandle(tx, fence, direct)
 		if err != nil {
 			return nil, err
@@ -290,13 +290,13 @@ func maintenanceMarkerSources(tx *gorm.DB, fence scope, marker maintenanceMarker
 	return result, nil
 }
 
-func maintenanceLexicalQuery(snapshot ontology.SourceSnapshot) string {
-	text := ontology.SourceDisplayText(snapshot)
+func maintenanceLexicalQuery(snapshot topic.SourceSnapshot) string {
+	text := topic.SourceDisplayText(snapshot)
 	words := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
 		return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r > 127)
 	})
 	if len(words) > 64 {
 		words = words[:64]
 	}
-	return ontology.LooseVocabularyQuery(words)
+	return topic.LooseVocabularyQuery(words)
 }

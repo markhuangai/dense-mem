@@ -7,7 +7,7 @@ import (
 	"sort"
 
 	"github.com/lib/pq"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 )
 
@@ -15,21 +15,21 @@ type recallReadCache struct {
 	pool     gorm.ConnPool
 	team     string
 	fence    *scope
-	records  map[string]ontology.Record
+	records  map[string]topic.Record
 	ids      map[string]bool
-	sources  map[ontology.SourceHandle]ontology.SourceSnapshot
-	groups   map[string]ontology.RecordView
+	sources  map[topic.SourceHandle]topic.SourceSnapshot
+	groups   map[string]topic.RecordView
 	groupIDs map[string]bool
 }
 
 // NewRecallReader keeps reused reads inside the caller's single authoritative transaction.
-func (s *Store) NewRecallReader() func(context.Context, *gorm.DB, string, ontology.RecallReadInput) (ontology.RecallOrganization, error) {
+func (s *Store) NewRecallReader() func(context.Context, *gorm.DB, string, topic.RecallReadInput) (topic.RecallOrganization, error) {
 	reader := *s
-	return func(ctx context.Context, tx *gorm.DB, team string, input ontology.RecallReadInput) (ontology.RecallOrganization, error) {
+	return func(ctx context.Context, tx *gorm.DB, team string, input topic.RecallReadInput) (topic.RecallOrganization, error) {
 		if tx != nil {
 			if _, transactional := tx.Statement.ConnPool.(gorm.TxCommitter); transactional {
 				if reader.recallCache == nil || reader.recallCache.pool != tx.Statement.ConnPool || reader.recallCache.team != team {
-					reader.recallCache = &recallReadCache{pool: tx.Statement.ConnPool, team: team, records: map[string]ontology.Record{}, ids: map[string]bool{}, sources: map[ontology.SourceHandle]ontology.SourceSnapshot{}, groups: map[string]ontology.RecordView{}, groupIDs: map[string]bool{}}
+					reader.recallCache = &recallReadCache{pool: tx.Statement.ConnPool, team: team, records: map[string]topic.Record{}, ids: map[string]bool{}, sources: map[topic.SourceHandle]topic.SourceSnapshot{}, groups: map[string]topic.RecordView{}, groupIDs: map[string]bool{}}
 				}
 			} else {
 				reader.recallCache = nil
@@ -39,7 +39,7 @@ func (s *Store) NewRecallReader() func(context.Context, *gorm.DB, string, ontolo
 	}
 }
 
-func (c *recallReadCache) loadHeads(tx *gorm.DB, fence scope, ids []string) (map[string]ontology.Record, error) {
+func (c *recallReadCache) loadHeads(tx *gorm.DB, fence scope, ids []string) (map[string]topic.Record, error) {
 	var newIDs []string
 	for _, id := range ids {
 		if !c.ids[id] {
@@ -59,18 +59,18 @@ func (c *recallReadCache) loadHeads(tx *gorm.DB, fence scope, ids []string) (map
 		}
 
 	}
-	if len(c.records) > ontology.MaxDependencyRecords {
-		return nil, ontology.ErrContextBound
+	if len(c.records) > topic.MaxDependencyRecords {
+		return nil, topic.ErrContextBound
 	}
-	result := make(map[string]ontology.Record, len(c.records))
+	result := make(map[string]topic.Record, len(c.records))
 	for id, record := range c.records {
 		result[id] = record
 	}
 	return result, nil
 }
 
-func (c *recallReadCache) readSources(tx *gorm.DB, fence scope, handles []ontology.SourceHandle) (map[ontology.SourceHandle]ontology.SourceSnapshot, error) {
-	missing := []ontology.SourceHandle{}
+func (c *recallReadCache) readSources(tx *gorm.DB, fence scope, handles []topic.SourceHandle) (map[topic.SourceHandle]topic.SourceSnapshot, error) {
+	missing := []topic.SourceHandle{}
 	for _, handle := range handles {
 		if _, exists := c.sources[handle]; !exists {
 			missing = append(missing, handle)
@@ -86,24 +86,24 @@ func (c *recallReadCache) readSources(tx *gorm.DB, fence scope, handles []ontolo
 		}
 		for _, handle := range missing {
 			if _, exists := c.sources[handle]; !exists {
-				c.sources[handle] = ontology.SourceSnapshot{SourceHandle: handle, TeamID: fence.TeamID, SpaceID: fence.SpaceID, Generation: fence.Generation}
+				c.sources[handle] = topic.SourceSnapshot{SourceHandle: handle, TeamID: fence.TeamID, SpaceID: fence.SpaceID, Generation: fence.Generation}
 			}
 		}
 	}
-	if len(c.sources) > ontology.MaxDependencyRecords {
-		return nil, ontology.ErrContextBound
+	if len(c.sources) > topic.MaxDependencyRecords {
+		return nil, topic.ErrContextBound
 	}
 	return c.sources, nil
 }
 
 // ReadRecall uses Recall's transaction so organization and hydrated sources share its visibility snapshot.
-func (s *Store) ReadRecall(ctx context.Context, tx *gorm.DB, teamID string, input ontology.RecallReadInput) (ontology.RecallOrganization, error) {
-	result := ontology.RecallOrganization{}
+func (s *Store) ReadRecall(ctx context.Context, tx *gorm.DB, teamID string, input topic.RecallReadInput) (topic.RecallOrganization, error) {
+	result := topic.RecallOrganization{}
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	if tx == nil || input.Limit < 1 || input.Limit > ontology.MaxPageSize || len(input.EvidenceIDs) > ontology.MaxDependencyRecords || len(input.CandidateEvidenceIDs) > ontology.MaxDependencyRecords {
-		return result, ontology.ErrInvalid
+	if tx == nil || input.Limit < 1 || input.Limit > topic.MaxPageSize || len(input.EvidenceIDs) > topic.MaxDependencyRecords || len(input.CandidateEvidenceIDs) > topic.MaxDependencyRecords {
+		return result, topic.ErrInvalid
 	}
 	var fence scope
 	var err error
@@ -120,15 +120,15 @@ func (s *Store) ReadRecall(ctx context.Context, tx *gorm.DB, teamID string, inpu
 		return result, err
 	}
 	if fence.TeamID != teamID {
-		return result, ontology.ErrUnauthorized
+		return result, topic.ErrUnauthorized
 	}
 	if input.SpaceID != "" && input.SpaceID != fence.SpaceID {
-		return result, ontology.ErrUnauthorized
+		return result, topic.ErrUnauthorized
 	}
 	if len(input.EvidenceIDs) > 0 {
 		return s.readRecallGroups(tx, fence, input)
 	}
-	names, bounded := ontology.RecallQueryNames(input.Query)
+	names, bounded := topic.RecallQueryNames(input.Query)
 	if bounded {
 		result.Degradation = "ontology_bound_exceeded"
 		return result, nil
@@ -137,7 +137,7 @@ func (s *Store) ReadRecall(ctx context.Context, tx *gorm.DB, teamID string, inpu
 		return result, nil
 	}
 	for _, id := range input.CandidateEvidenceIDs {
-		if err := ontology.ValidateSourceHandle(ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: id, Version: 1}); err != nil {
+		if err := topic.ValidateSourceHandle(topic.SourceHandle{Kind: topic.EvidenceSource, ID: id, Version: 1}); err != nil {
 			return result, err
 		}
 	}
@@ -152,7 +152,7 @@ func (s *Store) ReadRecall(ctx context.Context, tx *gorm.DB, teamID string, inpu
 	if s.recallCache != nil && input.CandidateEvidenceIDs != nil {
 		covered := append([]string(nil), input.CandidateEvidenceIDs...)
 		for _, view := range views {
-			if view.Assignment != nil && view.Assignment.Source.Kind == ontology.EvidenceSource {
+			if view.Assignment != nil && view.Assignment.Source.Kind == topic.EvidenceSource {
 				covered = append(covered, view.Assignment.Source.ID)
 			}
 		}
@@ -160,8 +160,8 @@ func (s *Store) ReadRecall(ctx context.Context, tx *gorm.DB, teamID string, inpu
 			return result, err
 		}
 	}
-	matched := ontology.MatchRecallDefinitions(names, views)
-	if len(matched) > ontology.MaxVocabularyCandidates {
+	matched := topic.MatchRecallDefinitions(names, views)
+	if len(matched) > topic.MaxVocabularyCandidates {
 		result.Degradation = "ontology_bound_exceeded"
 		return result, nil
 	}
@@ -186,23 +186,23 @@ func (s *Store) ReadRecall(ctx context.Context, tx *gorm.DB, teamID string, inpu
 			result.Degradation = "ontology_stale"
 			continue
 		}
-		if view.Assignment != nil && !seen[ontology.SourceKey(view.Assignment.Source)] {
+		if view.Assignment != nil && !seen[topic.SourceKey(view.Assignment.Source)] {
 			result.Sources = append(result.Sources, view.Assignment.Source)
-			seen[ontology.SourceKey(view.Assignment.Source)] = true
+			seen[topic.SourceKey(view.Assignment.Source)] = true
 		}
 	}
 	sort.Slice(result.Sources, func(i, j int) bool {
-		return ontology.SourceKey(result.Sources[i]) < ontology.SourceKey(result.Sources[j])
+		return topic.SourceKey(result.Sources[i]) < topic.SourceKey(result.Sources[j])
 	})
 	return result, nil
 }
 
-func (s *Store) readRecallGroups(tx *gorm.DB, fence scope, input ontology.RecallReadInput) (ontology.RecallOrganization, error) {
-	result := ontology.RecallOrganization{}
+func (s *Store) readRecallGroups(tx *gorm.DB, fence scope, input topic.RecallReadInput) (topic.RecallOrganization, error) {
+	result := topic.RecallOrganization{}
 	requested := map[string]bool{}
 	missing := []string{}
 	for _, id := range input.EvidenceIDs {
-		if err := ontology.ValidateSourceHandle(ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: id, Version: 1}); err != nil {
+		if err := topic.ValidateSourceHandle(topic.SourceHandle{Kind: topic.EvidenceSource, ID: id, Version: 1}); err != nil {
 			return result, err
 		}
 		requested[id] = true
@@ -210,14 +210,14 @@ func (s *Store) readRecallGroups(tx *gorm.DB, fence scope, input ontology.Recall
 			missing = append(missing, id)
 		}
 	}
-	var views []ontology.RecordView
+	var views []topic.RecordView
 	if len(missing) > 0 {
 		records, err := recallRecords(tx, fence, `head.kind='evidence_group' AND EXISTS (
 		SELECT 1 FROM topic_source_dependencies AS dependency
 		WHERE dependency.team_id=head.team_id AND dependency.shared_space_id=head.shared_space_id
 		AND dependency.space_generation=head.space_generation AND dependency.record_id=head.record_id
 		AND dependency.record_version=head.version AND dependency.source_kind='evidence'
-		AND dependency.source_id=ANY(?::text[]))`, []any{pq.Array(missing)}, ontology.MaxPageSize)
+		AND dependency.source_id=ANY(?::text[]))`, []any{pq.Array(missing)}, topic.MaxPageSize)
 		if err != nil {
 			return result, err
 		}
@@ -248,7 +248,7 @@ func (s *Store) readRecallGroups(tx *gorm.DB, fence scope, input ontology.Recall
 			result.Degradation = "ontology_stale"
 			continue
 		}
-		group := ontology.RecallEvidenceGroup{ID: view.ID}
+		group := topic.RecallEvidenceGroup{ID: view.ID}
 		for _, member := range view.Group.Members {
 			group.Members = append(group.Members, member.ID)
 		}
@@ -258,14 +258,14 @@ func (s *Store) readRecallGroups(tx *gorm.DB, fence scope, input ontology.Recall
 	return result, nil
 }
 
-func (c *recallReadCache) cacheGroups(views []ontology.RecordView, ids []string) error {
+func (c *recallReadCache) cacheGroups(views []topic.RecordView, ids []string) error {
 	for _, view := range views {
-		if view.Kind == ontology.EvidenceGroup {
+		if view.Kind == topic.EvidenceGroup {
 			c.groups[view.ID] = view
 		}
 	}
-	if len(c.groups) > ontology.MaxPageSize {
-		return ontology.ErrContextBound
+	if len(c.groups) > topic.MaxPageSize {
+		return topic.ErrContextBound
 	}
 	for _, id := range ids {
 		c.groupIDs[id] = true
@@ -281,7 +281,7 @@ const recallRevisionJoinSQL = `JOIN LATERAL (
 	LIMIT 1
 ) AS revision ON TRUE`
 
-func recallRecords(tx *gorm.DB, fence scope, predicate string, args []any, limit int) ([]ontology.Record, error) {
+func recallRecords(tx *gorm.DB, fence scope, predicate string, args []any, limit int) ([]topic.Record, error) {
 	parameters := append([]any{fence.TeamID, fence.SpaceID, fence.Generation}, args...)
 	parameters = append(parameters, limit+1)
 	rows, err := tx.Raw(`SELECT revision.body FROM topic_record_heads AS head
@@ -292,7 +292,7 @@ func recallRecords(tx *gorm.DB, fence scope, predicate string, args []any, limit
 		return nil, err
 	}
 	defer rows.Close()
-	result := []ontology.Record{}
+	result := []topic.Record{}
 	decoder := newStoredRecordDecoder()
 	for rows.Next() {
 		var body sql.RawBytes
@@ -306,12 +306,12 @@ func recallRecords(tx *gorm.DB, fence scope, predicate string, args []any, limit
 		result = append(result, record)
 	}
 	if len(result) > limit {
-		return nil, fmt.Errorf("%w: recall organization records", ontology.ErrContextBound)
+		return nil, fmt.Errorf("%w: recall organization records", topic.ErrContextBound)
 	}
 	return result, rows.Err()
 }
 
-func recallDiscoveryRecords(tx *gorm.DB, fence scope, names, evidenceIDs []string, limit int) ([]ontology.Record, error) {
+func recallDiscoveryRecords(tx *gorm.DB, fence scope, names, evidenceIDs []string, limit int) ([]topic.Record, error) {
 	rows, err := tx.Raw(`WITH scope AS (
 		SELECT ?::uuid AS team_id,?::uuid AS shared_space_id,?::bigint AS space_generation,?::text[] AS names,?::text[] AS evidence_ids,?::boolean AS preload_groups
 	), definitions AS (
@@ -349,12 +349,12 @@ func recallDiscoveryRecords(tx *gorm.DB, fence scope, names, evidenceIDs []strin
 		ORDER BY head.record_id LIMIT ?
 	), roots AS (
 		SELECT record_id,body FROM definitions UNION ALL SELECT record_id,body FROM assignments UNION ALL SELECT record_id,body FROM groups
-	) SELECT body FROM roots`, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(names), pq.Array(evidenceIDs), evidenceIDs != nil, ontology.MaxPageSize+1, limit+1, ontology.MaxPageSize+1).Rows()
+	) SELECT body FROM roots`, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(names), pq.Array(evidenceIDs), evidenceIDs != nil, topic.MaxPageSize+1, limit+1, topic.MaxPageSize+1).Rows()
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	result := []ontology.Record{}
+	result := []topic.Record{}
 	decoder := newStoredRecordDecoder()
 	definitions, assignments, groups := 0, 0, 0
 	for rows.Next() {
@@ -366,7 +366,7 @@ func recallDiscoveryRecords(tx *gorm.DB, fence scope, names, evidenceIDs []strin
 		if err != nil {
 			return nil, err
 		}
-		if record.Kind == ontology.EvidenceGroup {
+		if record.Kind == topic.EvidenceGroup {
 			groups++
 		} else if record.Assignment == nil {
 			definitions++
@@ -375,8 +375,8 @@ func recallDiscoveryRecords(tx *gorm.DB, fence scope, names, evidenceIDs []strin
 		}
 		result = append(result, record)
 	}
-	if definitions > ontology.MaxPageSize || assignments > limit || groups > ontology.MaxPageSize || len(result) > ontology.MaxDependencyRecords {
-		return nil, ontology.ErrContextBound
+	if definitions > topic.MaxPageSize || assignments > limit || groups > topic.MaxPageSize || len(result) > topic.MaxDependencyRecords {
+		return nil, topic.ErrContextBound
 	}
 	return result, rows.Err()
 }

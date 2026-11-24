@@ -14,7 +14,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -24,24 +24,24 @@ func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
 		source := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
 		dependency := f.source(t, source)
 		revision := int64(0)
-		for offset := 0; offset < ontology.MaxDependencyRecords; offset += ontology.MaxChanges {
-			var changes []ontology.Change
-			for i := offset; i < offset+ontology.MaxChanges && i < ontology.MaxDependencyRecords; i++ {
+		for offset := 0; offset < topiccontract.MaxDependencyRecords; offset += topiccontract.MaxChanges {
+			var changes []topiccontract.Change
+			for i := offset; i < offset+topiccontract.MaxChanges && i < topiccontract.MaxDependencyRecords; i++ {
 				record := testTopic(fmt.Sprintf("context-%d", i))
-				record.Sources = []ontology.SourceDependency{dependency}
-				changes = append(changes, ontology.Change{Record: record})
+				record.Sources = []topiccontract.SourceDependency{dependency}
+				changes = append(changes, topiccontract.Change{Record: record})
 			}
 			result, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication(fmt.Sprintf("context-batch-%d", offset), revision, changes...))
 			require.NoError(t, err)
 			revision = result.Revision
 		}
-		_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("extra-vocabulary", revision, ontology.Change{Record: testTopic("postgresql")}))
+		_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("extra-vocabulary", revision, topiccontract.Change{Record: testTopic("postgresql")}))
 		require.NoError(t, err)
 		before := f.canonicalSnapshot(t)
 		service, calls := organizationFixtureService(t, f, nil, nil)
-		input := ontology.OrganizationInput{OperationKey: "oversized-dependencies", Sources: []ontology.SourceHandle{source}}
+		input := topiccontract.OrganizationInput{OperationKey: "oversized-dependencies", Sources: []topiccontract.SourceHandle{source}}
 		result, err := service.Organize(context.Background(), f.team, input)
-		require.ErrorIs(t, err, ontology.ErrContextBound)
+		require.ErrorIs(t, err, topiccontract.ErrContextBound)
 		require.Equal(t, "organization_context_bound", result.FailureCode)
 		require.Nil(t, result.Publication)
 		require.Zero(t, calls.Load())
@@ -54,24 +54,24 @@ func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
 		require.Equal(t, before, f.canonicalSnapshot(t))
 
 		extra := testTopic("context-overflow")
-		extra.Sources = []ontology.SourceDependency{dependency}
-		_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("source-dependent-overflow", revision+1, ontology.Change{Record: extra}))
+		extra.Sources = []topiccontract.SourceDependency{dependency}
+		_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("source-dependent-overflow", revision+1, topiccontract.Change{Record: extra}))
 		require.NoError(t, err)
-		contextData, err := f.store.ReadOrganization(context.Background(), f.team, []ontology.SourceHandle{source})
-		require.ErrorIs(t, err, ontology.ErrContextBound)
+		contextData, err := f.store.ReadOrganization(context.Background(), f.team, []topiccontract.SourceHandle{source})
+		require.ErrorIs(t, err, topiccontract.ErrContextBound)
 		require.Len(t, contextData.Sources, 1)
 		require.Empty(t, contextData.Records)
 		var historyCount int64
 		require.NoError(t, f.admin.Raw(`SELECT count(*) FROM topic_record_revisions WHERE team_id=?::uuid`, f.team).Row().Scan(&historyCount))
-		require.Equal(t, int64(ontology.MaxDependencyRecords+2), historyCount)
+		require.Equal(t, int64(topiccontract.MaxDependencyRecords+2), historyCount)
 		input.OperationKey = "source-dependent-overflow"
 		result, err = service.Organize(context.Background(), f.team, input)
-		require.ErrorIs(t, err, ontology.ErrContextBound)
+		require.ErrorIs(t, err, topiccontract.ErrContextBound)
 		require.Equal(t, "organization_context_bound", result.FailureCode)
 		require.False(t, result.Current)
 		require.Nil(t, result.Publication)
 		require.Empty(t, result.Attempts)
-		require.Equal(t, []ontology.OrganizationOutcome{{Source: source, Status: "failed", Reason: "organization_context_bound"}}, result.Outcomes)
+		require.Equal(t, []topiccontract.OrganizationOutcome{{Source: source, Status: "failed", Reason: "organization_context_bound"}}, result.Outcomes)
 		require.Equal(t, 2, receiptCount(t, f))
 		replay, err = service.Organize(context.Background(), f.team, input)
 		require.Error(t, err)
@@ -79,9 +79,9 @@ func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
 		require.False(t, replay.Current)
 		require.Equal(t, result.AssessmentID, replay.AssessmentID)
 		require.Equal(t, result.Outcomes, replay.Outcomes)
-		input.Sources = []ontology.SourceHandle{source, {Kind: ontology.EvidenceSource, ID: uuid.NewString(), Version: 1}}
+		input.Sources = []topiccontract.SourceHandle{source, {Kind: topiccontract.EvidenceSource, ID: uuid.NewString(), Version: 1}}
 		_, err = service.Organize(context.Background(), f.team, input)
-		require.ErrorIs(t, err, ontology.ErrConflict)
+		require.ErrorIs(t, err, topiccontract.ErrConflict)
 		require.Equal(t, 2, receiptCount(t, f))
 		var unchangedHistoryCount int64
 		require.NoError(t, f.admin.Raw(`SELECT count(*) FROM topic_record_revisions WHERE team_id=?::uuid`, f.team).Row().Scan(&unchangedHistoryCount))
@@ -97,14 +97,14 @@ func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
 		require.NoError(t, migrator.RunUpThroughEvidenceOnly(ctx))
 		source := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
 		topic := testTopic("postgresql")
-		pin := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.PinDefinition, TargetID: topic.ID}}
+		pin := topiccontract.Record{ID: uuid.NewString(), Kind: topiccontract.OverrideKind, Override: &topiccontract.Override{Action: topiccontract.PinDefinition, TargetID: topic.ID}}
 		original := seedHistoricalRecords(t, f, "pinned-vocabulary", topic, pin)
 		before := f.canonicalSnapshot(t)
 		require.NoError(t, migrator.RunUp(ctx))
 		historical, err := f.store.GetRecord(f.actor(0, "manager"), f.team, pin.ID, 1)
 		require.NoError(t, err)
 		require.Equal(t, original[pin.ID], historical.Record)
-		contextData, err := f.store.ReadOrganization(ctx, f.team, []ontology.SourceHandle{source})
+		contextData, err := f.store.ReadOrganization(ctx, f.team, []topiccontract.SourceHandle{source})
 		require.NoError(t, err)
 		require.Len(t, contextData.Candidates, 1)
 		require.Equal(t, topic.ID, contextData.Candidates[0].ID)
@@ -126,17 +126,17 @@ func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
 					response.Equivalence[0].Relation = relation
 				}
 			})
-			for i, source := range []ontology.SourceHandle{a, b} {
-				_, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: fmt.Sprintf("classify-relative-%d", i), Sources: []ontology.SourceHandle{source}})
+			for i, source := range []topiccontract.SourceHandle{a, b} {
+				_, err := service.Organize(context.Background(), f.team, topiccontract.OrganizationInput{OperationKey: fmt.Sprintf("classify-relative-%d", i), Sources: []topiccontract.SourceHandle{source}})
 				require.NoError(t, err)
 			}
 			before := f.canonicalSnapshot(t)
 			priorCalls := calls.Load()
-			result, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "compare-relative", Sources: []ontology.SourceHandle{a, b}})
+			result, err := service.Organize(context.Background(), f.team, topiccontract.OrganizationInput{OperationKey: "compare-relative", Sources: []topiccontract.SourceHandle{a, b}})
 			require.NoError(t, err)
 			require.Equal(t, priorCalls+1, calls.Load())
 			require.Len(t, result.Attempts, 1)
-			groups, err := f.store.ListRecords(context.Background(), f.team, ontology.EvidenceGroup, "", 20)
+			groups, err := f.store.ListRecords(context.Background(), f.team, topiccontract.EvidenceGroup, "", 20)
 			require.NoError(t, err)
 			require.Empty(t, groups.Records)
 			if relation == "ambiguous" {
@@ -166,18 +166,18 @@ func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
 					response.Definitions[0].Description = "Provider replacement description"
 				}
 			})
-			_, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "current-definition", Sources: []ontology.SourceHandle{oldSource}})
+			_, err := service.Organize(context.Background(), f.team, topiccontract.OrganizationInput{OperationKey: "current-definition", Sources: []topiccontract.SourceHandle{oldSource}})
 			require.NoError(t, err)
-			id := ontology.OrganizationRecordID(f.team, ontology.Topic, "postgresql")
+			id := topiccontract.OrganizationRecordID(f.team, topiccontract.Topic, "postgresql")
 			definition, err := f.store.GetRecord(context.Background(), f.team, id, 0)
 			require.NoError(t, err)
 			require.True(t, definition.Current)
 			newSource := f.organizationEvidence(t, 1, newText, nil)
-			contextData, err := f.store.ReadOrganization(context.Background(), f.team, []ontology.SourceHandle{newSource})
+			contextData, err := f.store.ReadOrganization(context.Background(), f.team, []topiccontract.SourceHandle{newSource})
 			require.NoError(t, err)
 			require.Empty(t, contextData.Candidates)
 			before := f.canonicalSnapshot(t)
-			input := ontology.OrganizationInput{OperationKey: "reuse-current-definition", Sources: []ontology.SourceHandle{newSource}}
+			input := topiccontract.OrganizationInput{OperationKey: "reuse-current-definition", Sources: []topiccontract.SourceHandle{newSource}}
 			result, err := service.Organize(context.Background(), f.team, input)
 			require.NoError(t, err)
 			require.NotNil(t, result.Publication)
@@ -186,11 +186,11 @@ func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
 			require.True(t, reused.Current)
 			require.Equal(t, definition.Record, reused.Record)
 			if match != "key" {
-				_, err = f.store.GetRecord(context.Background(), f.team, ontology.OrganizationRecordID(f.team, ontology.Topic, "relational-store"), 0)
-				require.ErrorIs(t, err, ontology.ErrNotFound)
+				_, err = f.store.GetRecord(context.Background(), f.team, topiccontract.OrganizationRecordID(f.team, topiccontract.Topic, "relational-store"), 0)
+				require.ErrorIs(t, err, topiccontract.ErrNotFound)
 			}
-			for _, source := range []ontology.SourceHandle{oldSource, newSource} {
-				assignment, err := f.store.GetRecord(context.Background(), f.team, ontology.OrganizationRecordID(f.team, ontology.AssignmentKind, ontology.SourceKey(source)), 0)
+			for _, source := range []topiccontract.SourceHandle{oldSource, newSource} {
+				assignment, err := f.store.GetRecord(context.Background(), f.team, topiccontract.OrganizationRecordID(f.team, topiccontract.AssignmentKind, topiccontract.SourceKey(source)), 0)
 				require.NoError(t, err)
 				require.True(t, assignment.Current)
 				require.Equal(t, id, assignment.Assignment.DefinitionID)
@@ -207,15 +207,15 @@ func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
 	t.Run("definition name lookup is team scoped", func(t *testing.T) {
 		f := newOrganizationFixture(t)
 		topic := testTopic("postgresql")
-		_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("same-name-different-kinds", 0, ontology.Change{Record: topic}))
+		_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("same-name-different-kinds", 0, topiccontract.Change{Record: topic}))
 		require.NoError(t, err)
-		query := ontology.Record{ID: ontology.OrganizationRecordID(f.team, ontology.Topic, "relational-store"), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "relational-store", Label: "Relational storage", Aliases: []string{" POSTGRESQL "}}}
+		query := topiccontract.Record{ID: topiccontract.OrganizationRecordID(f.team, topiccontract.Topic, "relational-store"), Kind: topiccontract.Topic, Definition: &topiccontract.Definition{Key: "relational-store", Label: "Relational storage", Aliases: []string{" POSTGRESQL "}}}
 		heads, err := f.store.ReadDefinitionHeads(context.Background(), f.team, query)
 		require.NoError(t, err)
 		require.Len(t, heads, 1)
 		require.Equal(t, topic.ID, heads[0].ID)
 		_, err = f.store.ReadDefinitionHeads(f.actor(1, "member"), f.team, query)
-		require.ErrorIs(t, err, ontology.ErrUnauthorized)
+		require.ErrorIs(t, err, topiccontract.ErrUnauthorized)
 		other := &domain.Team{Name: "definition-name-c-" + uuid.NewString()}
 		require.NoError(t, access.NewTeamRepository(f.admin, f.rls).Create(context.Background(), other))
 		heads, err = f.store.ReadDefinitionHeads(context.Background(), other.ID.String(), query)
@@ -229,16 +229,16 @@ func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
 		b := f.organizationEvidence(t, memberOwner, memberText, nil)
 		require.NotEqual(t, a.ID, b.ID)
 		service, calls := organizationFixtureService(t, f, func(assessment.Item, assessment.Item) bool { return true }, nil)
-		_, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "original-group", Sources: []ontology.SourceHandle{a, b}})
+		_, err := service.Organize(context.Background(), f.team, topiccontract.OrganizationInput{OperationKey: "original-group", Sources: []topiccontract.SourceHandle{a, b}})
 		require.NoError(t, err)
-		groups, err := f.store.ListRecords(context.Background(), f.team, ontology.EvidenceGroup, "", 20)
+		groups, err := f.store.ListRecords(context.Background(), f.team, topiccontract.EvidenceGroup, "", 20)
 		require.NoError(t, err)
 		require.Len(t, groups.Records, 1)
 		group := groups.Records[0].Record
 		_, err = f.knowledge.RetractEvidence(f.actor(memberOwner, "member"), knowledge.RetractEvidenceInput{TeamID: f.team, OwnerProfileID: f.owners[memberOwner], EvidenceIDs: []string{b.ID}, Reason: "withdraw grouped member", IdempotencyKey: "withdraw-member", RequestHash: testHash("withdraw-member")})
 		require.NoError(t, err)
 		before := f.canonicalSnapshot(t)
-		contextData, err := f.store.ReadOrganization(context.Background(), f.team, []ontology.SourceHandle{a})
+		contextData, err := f.store.ReadOrganization(context.Background(), f.team, []topiccontract.SourceHandle{a})
 		require.NoError(t, err)
 		found := false
 		for _, view := range contextData.Records {
@@ -249,7 +249,7 @@ func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
 		}
 		require.True(t, found)
 		priorCalls := calls.Load()
-		input := ontology.OrganizationInput{OperationKey: "remaining-source", Sources: []ontology.SourceHandle{a}}
+		input := topiccontract.OrganizationInput{OperationKey: "remaining-source", Sources: []topiccontract.SourceHandle{a}}
 		result, err := service.Organize(context.Background(), f.team, input)
 		require.NoError(t, err)
 		require.Equal(t, "organized", result.Outcomes[0].Status)
@@ -270,9 +270,9 @@ func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
 	})
 	t.Run("affected membership revisions reuse matching topics", func(t *testing.T) {
 		f := newOrganizationFixture(t)
-		var handles []ontology.SourceHandle
-		var definitions, assignments, refinements []ontology.Change
-		var targets []ontology.Record
+		var handles []topiccontract.SourceHandle
+		var definitions, assignments, refinements []topiccontract.Change
+		var targets []topiccontract.Record
 		targetBySource := map[string]string{}
 		for i := range 11 {
 			text := fmt.Sprintf("Record number %d uses an isolated database.", i)
@@ -285,13 +285,13 @@ func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
 			manager.Definition.Description = text
 			targetBySource[text] = manager.Definition.Key
 			targets = append(targets, manager)
-			definitions = append(definitions, ontology.Change{Record: old}, ontology.Change{Record: manager})
+			definitions = append(definitions, topiccontract.Change{Record: old}, topiccontract.Change{Record: manager})
 			dependency := f.source(t, source)
-			assignment := ontology.Record{ID: ontology.OrganizationRecordID(f.team, ontology.AssignmentKind, ontology.SourceKey(source)), Kind: ontology.AssignmentKind, Assignment: &ontology.Assignment{Source: source, DefinitionID: old.ID}, Sources: []ontology.SourceDependency{dependency}}
-			assignments = append(assignments, ontology.Change{Record: assignment})
+			assignment := topiccontract.Record{ID: topiccontract.OrganizationRecordID(f.team, topiccontract.AssignmentKind, topiccontract.SourceKey(source)), Kind: topiccontract.AssignmentKind, Assignment: &topiccontract.Assignment{Source: source, DefinitionID: old.ID}, Sources: []topiccontract.SourceDependency{dependency}}
+			assignments = append(assignments, topiccontract.Change{Record: assignment})
 			refined := old
-			refined.Definition = &ontology.Definition{Key: old.Definition.Key, Label: "Revised " + old.Definition.Label}
-			refinements = append(refinements, ontology.Change{Record: refined, ExpectedVersion: 1})
+			refined.Definition = &topiccontract.Definition{Key: old.Definition.Key, Label: "Revised " + old.Definition.Label}
+			refinements = append(refinements, topiccontract.Change{Record: refined, ExpectedVersion: 1})
 		}
 		definitionsResult, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("vocabulary-definitions", 0, definitions...))
 		require.NoError(t, err)
@@ -302,12 +302,12 @@ func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
 		before := f.canonicalSnapshot(t)
 		contextData, err := f.store.ReadOrganization(context.Background(), f.team, handles)
 		require.NoError(t, err)
-		require.LessOrEqual(t, len(contextData.Candidates), ontology.MaxVocabularyCandidates)
+		require.LessOrEqual(t, len(contextData.Candidates), topiccontract.MaxVocabularyCandidates)
 		candidates := map[string]bool{}
 		for _, candidate := range contextData.Candidates {
 			candidates[candidate.ID] = true
 		}
-		original := map[string]ontology.Record{}
+		original := map[string]topiccontract.Record{}
 		for i, assignment := range assignments {
 			view, err := f.store.GetRecord(context.Background(), f.team, assignment.Record.ID, 0)
 			require.NoError(t, err)
@@ -334,7 +334,7 @@ func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
 				response.Items[i].DefinitionRef = ref
 			}
 		})
-		input := ontology.OrganizationInput{OperationKey: "topic-vocabulary-bound", Sources: handles}
+		input := topiccontract.OrganizationInput{OperationKey: "topic-vocabulary-bound", Sources: handles}
 		result, err := service.Organize(context.Background(), f.team, input)
 		require.NoError(t, err)
 		require.NotNil(t, result.Publication)
@@ -368,22 +368,22 @@ func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
 	t.Run("bounded vocabulary reuse", func(t *testing.T) {
 		f := newOrganizationFixture(t)
 		source := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
-		changes := []ontology.Change{}
+		changes := []topiccontract.Change{}
 		for i := 0; i < 24; i++ {
-			changes = append(changes, ontology.Change{Record: testTopic(fmt.Sprintf("PostgreSQL memory %d", i))})
+			changes = append(changes, topiccontract.Change{Record: testTopic(fmt.Sprintf("PostgreSQL memory %d", i))})
 		}
 		_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("vocabulary", 0, changes...))
 		require.NoError(t, err)
-		contextData, err := f.store.ReadOrganization(context.Background(), f.team, []ontology.SourceHandle{source})
+		contextData, err := f.store.ReadOrganization(context.Background(), f.team, []topiccontract.SourceHandle{source})
 		require.NoError(t, err)
 		require.Len(t, contextData.Candidates, 20)
 		service, _ := organizationFixtureService(t, f, nil, func(request assessment.Request, response *assessment.Response) {
 			require.Len(t, request.Definitions, 20)
 			require.Empty(t, response.Definitions)
 		})
-		_, err = service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "reuse", Sources: []ontology.SourceHandle{source}})
+		_, err = service.Organize(context.Background(), f.team, topiccontract.OrganizationInput{OperationKey: "reuse", Sources: []topiccontract.SourceHandle{source}})
 		require.NoError(t, err)
-		page, err := f.store.ListRecords(context.Background(), f.team, ontology.Topic, "", 200)
+		page, err := f.store.ListRecords(context.Background(), f.team, topiccontract.Topic, "", 200)
 		require.NoError(t, err)
 		require.Len(t, page.Records, 24)
 	})
@@ -395,14 +395,14 @@ func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
 		stored, err := f.knowledge.CreateIngestForTest(privateCtx, knowledge.CreateIngestInput{TeamID: f.team, OwnerProfileID: private.ID.String(), SpaceID: private.MemorySpaceID.String(), SpaceGeneration: private.MemorySpaceGeneration, Evidence: []knowledge.EvidenceInput{{Content: "Private source"}}})
 		require.NoError(t, err)
 		service, calls := organizationFixtureService(t, f, nil, nil)
-		privateHandle := ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: stored.Evidence[0].FragmentID, Version: 1}
-		result, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "private", Sources: []ontology.SourceHandle{privateHandle}})
+		privateHandle := topiccontract.SourceHandle{Kind: topiccontract.EvidenceSource, ID: stored.Evidence[0].FragmentID, Version: 1}
+		result, err := service.Organize(context.Background(), f.team, topiccontract.OrganizationInput{OperationKey: "private", Sources: []topiccontract.SourceHandle{privateHandle}})
 		require.NoError(t, err)
 		require.Equal(t, "unavailable", result.Outcomes[0].Status)
 		require.Zero(t, calls.Load())
 		source := f.organizationEvidence(t, 0, "Shared old generation", nil)
 		require.NoError(t, f.admin.Exec(`UPDATE memory_spaces SET generation=generation+1 WHERE team_id=?::uuid AND kind='team_shared'`, f.team).Error)
-		result, err = service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "old-generation", Sources: []ontology.SourceHandle{source}})
+		result, err = service.Organize(context.Background(), f.team, topiccontract.OrganizationInput{OperationKey: "old-generation", Sources: []topiccontract.SourceHandle{source}})
 		require.NoError(t, err)
 		require.Equal(t, "unavailable", result.Outcomes[0].Status)
 		require.Zero(t, calls.Load())
@@ -413,14 +413,14 @@ func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
 		b := f.organizationEvidence(t, 1, "Atlas uses PostgreSQL.", nil)
 		before := f.canonicalSnapshot(t)
 		service, _ := organizationFixtureService(t, f, func(assessment.Item, assessment.Item) bool { return true }, func(request assessment.Request, response *assessment.Response) {
-			separation := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.KeepSeparate, Members: []ontology.SourceHandle{a, b}}, Sources: []ontology.SourceDependency{f.source(t, a), f.source(t, b)}}
-			_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("concurrent-separation", 0, ontology.Change{Record: separation}))
-			require.ErrorIs(t, err, ontology.ErrOverride)
+			separation := topiccontract.Record{ID: uuid.NewString(), Kind: topiccontract.OverrideKind, Override: &topiccontract.Override{Action: topiccontract.KeepSeparate, Members: []topiccontract.SourceHandle{a, b}}, Sources: []topiccontract.SourceDependency{f.source(t, a), f.source(t, b)}}
+			_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("concurrent-separation", 0, topiccontract.Change{Record: separation}))
+			require.ErrorIs(t, err, topiccontract.ErrOverride)
 		})
-		result, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "retired-override", Sources: []ontology.SourceHandle{a, b}})
+		result, err := service.Organize(context.Background(), f.team, topiccontract.OrganizationInput{OperationKey: "retired-override", Sources: []topiccontract.SourceHandle{a, b}})
 		require.NoError(t, err)
 		require.True(t, result.Current)
-		page, err := f.store.ListRecords(context.Background(), f.team, ontology.EvidenceGroup, "", 20)
+		page, err := f.store.ListRecords(context.Background(), f.team, topiccontract.EvidenceGroup, "", 20)
 		require.NoError(t, err)
 		require.Len(t, page.Records, 1)
 		require.Equal(t, before, f.canonicalSnapshot(t))

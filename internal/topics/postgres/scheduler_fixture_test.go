@@ -17,7 +17,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/settings"
 	organization "github.com/markhuangai/dense-mem/internal/topics"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -45,13 +45,13 @@ type schedulerMeasurement struct {
 }
 
 type schedulerPreparationObserver struct {
-	ontology.MaintenanceRepository
+	topiccontract.MaintenanceRepository
 	mu      sync.Mutex
 	started map[string]time.Time
 	turns   []float64
 }
 
-func (s *schedulerPreparationObserver) ClaimMaintenanceTurn(ctx context.Context, window string, now time.Time, lease time.Duration) (*ontology.MaintenanceTurn, error) {
+func (s *schedulerPreparationObserver) ClaimMaintenanceTurn(ctx context.Context, window string, now time.Time, lease time.Duration) (*topiccontract.MaintenanceTurn, error) {
 	started := time.Now()
 	turn, err := s.MaintenanceRepository.ClaimMaintenanceTurn(ctx, window, now, lease)
 	s.mu.Lock()
@@ -64,13 +64,13 @@ func (s *schedulerPreparationObserver) ClaimMaintenanceTurn(ctx context.Context,
 	return turn, err
 }
 
-func (s *schedulerPreparationObserver) ClaimMaintenanceBatch(ctx context.Context, turn ontology.MaintenanceTurn, window string, now time.Time) (*ontology.MaintenanceClaim, error) {
+func (s *schedulerPreparationObserver) ClaimMaintenanceBatch(ctx context.Context, turn topiccontract.MaintenanceTurn, window string, now time.Time) (*topiccontract.MaintenanceClaim, error) {
 	claim, err := s.MaintenanceRepository.ClaimMaintenanceBatch(ctx, turn, window, now)
 	s.finish(turn.LeaseToken)
 	return claim, err
 }
 
-func (s *schedulerPreparationObserver) ReleaseMaintenanceTurn(ctx context.Context, turn ontology.MaintenanceTurn) error {
+func (s *schedulerPreparationObserver) ReleaseMaintenanceTurn(ctx context.Context, turn topiccontract.MaintenanceTurn) error {
 	err := s.MaintenanceRepository.ReleaseMaintenanceTurn(ctx, turn)
 	s.finish(turn.LeaseToken)
 	return err
@@ -117,12 +117,12 @@ func (m *schedulerMeasurement) sample(f *ontologyFixture) {
 	}
 }
 
-func schedulerTopic(t *testing.T, f *ontologyFixture) ontology.Record {
+func schedulerTopic(t *testing.T, f *ontologyFixture) topiccontract.Record {
 	t.Helper()
 	handle := f.organizationEvidence(t, len(f.owners)-1, "Scheduler project uses PostgreSQL.", nil)
 	topic := testTopic("scheduler-topic")
-	assignment := ontology.Record{ID: uuid.NewString(), Kind: ontology.AssignmentKind, Assignment: &ontology.Assignment{Source: handle, DefinitionID: topic.ID}, Sources: []ontology.SourceDependency{f.source(t, handle)}}
-	_, err := f.store.PublishAutomatic(context.Background(), f.team, testPublication(uuid.NewString(), 0, ontology.Change{Record: topic}, ontology.Change{Record: assignment}))
+	assignment := topiccontract.Record{ID: uuid.NewString(), Kind: topiccontract.AssignmentKind, Assignment: &topiccontract.Assignment{Source: handle, DefinitionID: topic.ID}, Sources: []topiccontract.SourceDependency{f.source(t, handle)}}
+	_, err := f.store.PublishAutomatic(context.Background(), f.team, testPublication(uuid.NewString(), 0, topiccontract.Change{Record: topic}, topiccontract.Change{Record: assignment}))
 	require.NoError(t, err)
 	return topic
 }
@@ -132,10 +132,10 @@ func schedulerConfig(t *testing.T, f *ontologyFixture, global, team int) *settin
 	return concurrencyConfig(t, f, global, team)
 }
 
-func schedulerFixtureService(t *testing.T, f *ontologyFixture, config *settings.AppConfigServiceImpl, edit func(assessment.Request, *assessment.Response), repositories ...ontology.MaintenanceRepository) (*organization.MaintenanceService, func() int32) {
+func schedulerFixtureService(t *testing.T, f *ontologyFixture, config *settings.AppConfigServiceImpl, edit func(assessment.Request, *assessment.Response), repositories ...topiccontract.MaintenanceRepository) (*organization.MaintenanceService, func() int32) {
 	t.Helper()
 	var calls atomic.Int32
-	var repository ontology.MaintenanceRepository = f.store
+	var repository topiccontract.MaintenanceRepository = f.store
 	if len(repositories) > 0 {
 		repository = repositories[0]
 	}

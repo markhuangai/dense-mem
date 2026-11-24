@@ -5,11 +5,11 @@ import (
 	"errors"
 	"reflect"
 
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 )
 
-func validateAssessmentProvenance(tx *gorm.DB, fence scope, record ontology.Record) error {
+func validateAssessmentProvenance(tx *gorm.DB, fence scope, record topic.Record) error {
 	var body []byte
 	args := []any{fence.TeamID, fence.SpaceID, fence.Generation, record.Group.AssessmentID}
 	scopePredicate := ` WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND assessment_id=?::uuid`
@@ -18,7 +18,7 @@ func validateAssessmentProvenance(tx *gorm.DB, fence scope, record ontology.Reco
 		err = tx.Raw(`SELECT body FROM historical_organization_assessments`+scopePredicate+` ORDER BY created_at,operation_key LIMIT 1`, args...).Row().Scan(&body)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
-		return ontology.ErrSourceStale
+		return topic.ErrSourceStale
 	}
 	if err != nil {
 		return err
@@ -28,7 +28,7 @@ func validateAssessmentProvenance(tx *gorm.DB, fence scope, record ontology.Reco
 		return err
 	}
 	if receipt.Result.Publication == nil {
-		return ontology.ErrInvalid
+		return topic.ErrInvalid
 	}
 	version := int64(0)
 	for _, ref := range receipt.Result.Publication.Records {
@@ -37,7 +37,7 @@ func validateAssessmentProvenance(tx *gorm.DB, fence scope, record ontology.Reco
 		}
 	}
 	if version == 0 {
-		return ontology.ErrInvalid
+		return topic.ErrInvalid
 	}
 	err = tx.Raw(`SELECT body FROM topic_revision_records WHERE team_id=?::uuid AND shared_space_id=?::uuid
         AND space_generation=? AND record_id=?::uuid AND version=?`, fence.TeamID, fence.SpaceID, fence.Generation, record.ID, version).Row().Scan(&body)
@@ -49,15 +49,15 @@ func validateAssessmentProvenance(tx *gorm.DB, fence scope, record ontology.Reco
 		return err
 	}
 	if !reflect.DeepEqual(original.Group, record.Group) {
-		return ontology.ErrInvalid
+		return topic.ErrInvalid
 	}
-	proof := map[string]ontology.SourceDependency{}
+	proof := map[string]topic.SourceDependency{}
 	for _, dependency := range receipt.Sources {
-		proof[ontology.SourceKey(dependency.SourceHandle)] = dependency
+		proof[topic.SourceKey(dependency.SourceHandle)] = dependency
 	}
 	for _, source := range record.Sources {
-		if proof[ontology.SourceKey(source.SourceHandle)] != source {
-			return ontology.ErrSourceStale
+		if proof[topic.SourceKey(source.SourceHandle)] != source {
+			return topic.ErrSourceStale
 		}
 	}
 	return nil

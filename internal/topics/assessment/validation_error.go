@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 )
 
 func validationIssue(field, code, message string, args ...any) assessor.SemanticValidationError {
@@ -20,7 +20,7 @@ func validationResult(errs []assessor.SemanticValidationError, cause error) erro
 	return &assessor.SemanticAssessmentResponseValidationError{Errors: errs, Cause: cause}
 }
 
-func validationDiagnostic(stage string, err error, request Request, response Response) *ontology.AssessmentValidation {
+func validationDiagnostic(stage string, err error, request Request, response Response) *topic.AssessmentValidation {
 	var rejected *assessor.SemanticAssessmentResponseValidationError
 	if !errors.As(err, &rejected) || len(rejected.Errors) == 0 {
 		return nil
@@ -40,11 +40,11 @@ func validationDiagnostic(stage string, err error, request Request, response Res
 			family, _, _ = strings.Cut(family, ".")
 		}
 	}
-	diagnostic := &ontology.AssessmentValidation{Stage: stage, Code: issue.Code, FieldFamily: family}
+	diagnostic := &topic.AssessmentValidation{Stage: stage, Code: issue.Code, FieldFamily: family}
 	var expected, actual int
 	switch issue.Code {
 	case "definition_limit":
-		expected, actual = ontology.MaxVocabularyCandidates, len(response.Definitions)
+		expected, actual = topic.MaxVocabularyCandidates, len(response.Definitions)
 	case "item_count_mismatch":
 		expected, actual = len(request.Items), len(response.Items)
 	case "equivalence_coverage":

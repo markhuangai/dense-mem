@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -22,12 +22,12 @@ func TestOntologyMaintenanceRevalidationChurn(t *testing.T) {
 		source := f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
 		first, alternative := testTopic("postgresql"), testTopic("atlas-alternative")
 		alternative.Definition.Description = "PostgreSQL storage for Atlas"
-		revalidationPublish(t, f, ontology.Change{Record: first}, ontology.Change{Record: alternative})
+		revalidationPublish(t, f, topiccontract.Change{Record: first}, topiccontract.Change{Record: alternative})
 		service, calls := organizationFixtureService(t, f, nil, nil)
-		input := ontology.OrganizationInput{OperationKey: "current-context", Sources: []ontology.SourceHandle{source}}
+		input := topiccontract.OrganizationInput{OperationKey: "current-context", Sources: []topiccontract.SourceHandle{source}}
 		_, err := service.Organize(context.Background(), f.team, input)
 		require.NoError(t, err)
-		var legacy ontology.OrganizationReceipt
+		var legacy topiccontract.OrganizationReceipt
 		require.NoError(t, f.store.withScope(context.Background(), f.team, false, func(tx *gorm.DB, fence scope) error {
 			var err error
 			legacy, _, err = organizationByKey(tx, fence, input.OperationKey, false)
@@ -45,11 +45,11 @@ func TestOntologyMaintenanceRevalidationChurn(t *testing.T) {
 			}
 			require.Len(t, contextData.Candidates, 2)
 			legacy.OperationKey = "legacy-context"
-			legacy.Dependencies, err = ontology.OrganizationDependencies(contextData)
+			legacy.Dependencies, err = topiccontract.OrganizationDependencies(contextData)
 			if err != nil {
 				return err
 			}
-			legacy.ContextHash, err = ontology.OrganizationContextHash(contextData)
+			legacy.ContextHash, err = topiccontract.OrganizationContextHash(contextData)
 			if err != nil {
 				return err
 			}
@@ -81,10 +81,10 @@ func TestOntologyMaintenanceRevalidationChurn(t *testing.T) {
 		source := f.organizationEvidence(t, 1, "Atlas uses PostgreSQL relational storage.", nil)
 		first, alternative := testTopic("postgresql"), testTopic("atlas-alternative")
 		alternative.Definition.Description = "Atlas PostgreSQL relational storage"
-		revalidationPublish(t, f, ontology.Change{Record: first}, ontology.Change{Record: alternative})
+		revalidationPublish(t, f, topiccontract.Change{Record: first}, topiccontract.Change{Record: alternative})
 		before := f.canonicalSnapshot(t)
 		service, calls := organizationFixtureService(t, f, nil, nil)
-		input := ontology.OrganizationInput{OperationKey: "fixed-original", Sources: []ontology.SourceHandle{source}}
+		input := topiccontract.OrganizationInput{OperationKey: "fixed-original", Sources: []topiccontract.SourceHandle{source}}
 		original, err := service.Organize(context.Background(), f.team, input)
 		require.NoError(t, err)
 		contextData, err := f.store.ReadOrganization(context.Background(), f.team, input.Sources)
@@ -96,9 +96,9 @@ func TestOntologyMaintenanceRevalidationChurn(t *testing.T) {
 			unused = alternative
 		}
 		unused.Definition.Description += " revised unrelated description"
-		revalidationPublish(t, f, ontology.Change{ExpectedVersion: 1, Record: unused})
+		revalidationPublish(t, f, topiccontract.Change{ExpectedVersion: 1, Record: unused})
 		added := testTopic("atlas-postgresql-addition")
-		revalidationPublish(t, f, ontology.Change{Record: added})
+		revalidationPublish(t, f, topiccontract.Change{Record: added})
 		for _, key := range []string{input.OperationKey, "fixed-after-vocabulary"} {
 			input.OperationKey = key
 			replay, err := service.Organize(context.Background(), f.team, input)
@@ -114,7 +114,7 @@ func TestOntologyMaintenanceRevalidationChurn(t *testing.T) {
 		f := newOrganizationFixture(t)
 		started := time.Now()
 		t.Cleanup(func() { revalidationReport(t, f, started) })
-		sources := []ontology.SourceHandle{f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil), f.organizationEvidence(t, 1, "Atlas relies on PostgreSQL.", nil)}
+		sources := []topiccontract.SourceHandle{f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil), f.organizationEvidence(t, 1, "Atlas relies on PostgreSQL.", nil)}
 		before := f.canonicalSnapshot(t)
 		config := maintenanceSettings(t, f)
 		service, calls := maintenanceServiceFixture(t, f, config, nil)
@@ -129,7 +129,7 @@ func TestOntologyMaintenanceRevalidationChurn(t *testing.T) {
 		for index := range 3 {
 			topic := testTopic(fmt.Sprintf("atlas-vocabulary-%d", index))
 			topic.Definition.Description = "PostgreSQL database storage for Atlas"
-			revalidationPublish(t, f, ontology.Change{Record: topic})
+			revalidationPublish(t, f, topiccontract.Change{Record: topic})
 			drainMaintenance(t, service)
 			for _, source := range sources {
 				state := revalidationQueue(t, f, source)
@@ -152,28 +152,28 @@ func TestOntologyMaintenanceRevalidationChurn(t *testing.T) {
 		fixed := f.organizationEvidence(t, 0, "Atlas PostgreSQL.", nil)
 		free := f.organizationEvidence(t, 1, "Vega Swift.", nil)
 		service, calls := organizationFixtureService(t, f, nil, nil)
-		_, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "fixed", Sources: []ontology.SourceHandle{fixed}})
+		_, err := service.Organize(context.Background(), f.team, topiccontract.OrganizationInput{OperationKey: "fixed", Sources: []topiccontract.SourceHandle{fixed}})
 		require.NoError(t, err)
 		ambiguous, ambiguousCalls := organizationFixtureService(t, f, nil, ambiguousClassification)
-		input := ontology.OrganizationInput{OperationKey: "unresolved", Sources: []ontology.SourceHandle{free}}
+		input := topiccontract.OrganizationInput{OperationKey: "unresolved", Sources: []topiccontract.SourceHandle{free}}
 		original, err := ambiguous.Organize(context.Background(), f.team, input)
 		require.NoError(t, err)
-		both := []ontology.SourceHandle{fixed, free}
+		both := []topiccontract.SourceHandle{fixed, free}
 		read, err := f.store.ReadOrganization(context.Background(), f.team, both)
 		require.NoError(t, err)
-		hash, err := ontology.OrganizationContextHash(read)
+		hash, err := topiccontract.OrganizationContextHash(read)
 		require.NoError(t, err)
-		revalidationPublish(t, f, ontology.Change{Record: testTopic("atlas-postgresql-added")})
+		revalidationPublish(t, f, topiccontract.Change{Record: testTopic("atlas-postgresql-added")})
 		unchanged, err := f.store.ReadOrganization(context.Background(), f.team, both)
 		require.NoError(t, err)
-		same, err := ontology.OrganizationContextHash(unchanged)
+		same, err := topiccontract.OrganizationContextHash(unchanged)
 		require.NoError(t, err)
 		require.Equal(t, hash, same, "fixed-source words must not add candidates to a mixed batch")
 		added := testTopic("vega-swift-added")
-		revalidationPublish(t, f, ontology.Change{Record: added})
+		revalidationPublish(t, f, topiccontract.Change{Record: added})
 		relevant, err := f.store.ReadOrganization(context.Background(), f.team, both)
 		require.NoError(t, err)
-		relevantHash, err := ontology.OrganizationContextHash(relevant)
+		relevantHash, err := topiccontract.OrganizationContextHash(relevant)
 		require.NoError(t, err)
 		require.NotEqual(t, hash, relevantHash, "unresolved-source vocabulary must change a mixed batch context")
 		candidateIDs := []string{}
@@ -198,17 +198,17 @@ func TestOntologyMaintenanceRevalidationChurn(t *testing.T) {
 		f := newOrganizationFixture(t)
 		source := f.organizationEvidence(t, 1, "Atlas PostgreSQL.", nil)
 		topic := testTopic("manager-storage")
-		membership := ontology.Record{
-			ID: ontology.OrganizationRecordID(f.team, ontology.AssignmentKind, ontology.SourceKey(source)), Kind: ontology.AssignmentKind,
-			Assignment: &ontology.Assignment{Source: source, DefinitionID: topic.ID}, Sources: []ontology.SourceDependency{f.source(t, source)},
+		membership := topiccontract.Record{
+			ID: topiccontract.OrganizationRecordID(f.team, topiccontract.AssignmentKind, topiccontract.SourceKey(source)), Kind: topiccontract.AssignmentKind,
+			Assignment: &topiccontract.Assignment{Source: source, DefinitionID: topic.ID}, Sources: []topiccontract.SourceDependency{f.source(t, source)},
 		}
-		revalidationPublish(t, f, ontology.Change{Record: topic}, ontology.Change{Record: membership})
+		revalidationPublish(t, f, topiccontract.Change{Record: topic}, topiccontract.Change{Record: membership})
 		before := f.canonicalSnapshot(t)
 		service, calls := organizationFixtureService(t, f, nil, nil)
-		input := ontology.OrganizationInput{OperationKey: "materialized-membership", Sources: []ontology.SourceHandle{source}}
+		input := topiccontract.OrganizationInput{OperationKey: "materialized-membership", Sources: []topiccontract.SourceHandle{source}}
 		original, err := service.Organize(context.Background(), f.team, input)
 		require.NoError(t, err)
-		revalidationPublish(t, f, ontology.Change{Record: testTopic("atlas-postgresql-added")})
+		revalidationPublish(t, f, topiccontract.Change{Record: testTopic("atlas-postgresql-added")})
 		input.OperationKey = "materialized-membership-replay"
 		replay, err := service.Organize(context.Background(), f.team, input)
 		require.NoError(t, err)
@@ -216,7 +216,7 @@ func TestOntologyMaintenanceRevalidationChurn(t *testing.T) {
 		require.Equal(t, original.AssessmentID, replay.AssessmentID)
 		require.Zero(t, calls.Load())
 		topic.Definition.Description = "Changed meaning of the required definition"
-		revalidationPublish(t, f, ontology.Change{ExpectedVersion: 1, Record: topic})
+		revalidationPublish(t, f, topiccontract.Change{ExpectedVersion: 1, Record: topic})
 		stale, err := service.Organize(context.Background(), f.team, input)
 		require.NoError(t, err)
 		require.False(t, stale.Current)
@@ -228,8 +228,8 @@ func TestOntologyMaintenanceRevalidationChurn(t *testing.T) {
 		b := f.organizationEvidence(t, 1, "Atlas relies on PostgreSQL.", nil)
 		before := f.canonicalSnapshot(t)
 		initial, _ := organizationFixtureService(t, f, nil, nil)
-		for _, source := range []ontology.SourceHandle{a, b} {
-			_, err := initial.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: source.ID, Sources: []ontology.SourceHandle{source}})
+		for _, source := range []topiccontract.SourceHandle{a, b} {
+			_, err := initial.Organize(context.Background(), f.team, topiccontract.OrganizationInput{OperationKey: source.ID, Sources: []topiccontract.SourceHandle{source}})
 			require.NoError(t, err)
 		}
 		config := concurrencyConfig(t, f, 2, 2)
@@ -241,12 +241,12 @@ func TestOntologyMaintenanceRevalidationChurn(t *testing.T) {
 		defer releaseProvider()
 		service, calls := organizationFixtureService(t, f, nil, func(_ assessment.Request, _ *assessment.Response) { arrived <- struct{}{}; <-release })
 		type answer struct {
-			result ontology.OrganizationResult
+			result topiccontract.OrganizationResult
 			err    error
 		}
 		finished := make(chan answer, 1)
 		go func() {
-			result, err := service.Organize(ontology.WithMaintenanceClaim(context.Background(), *claim), f.team, ontology.OrganizationInput{OperationKey: "maintenance:" + claim.ID, Sources: claim.Sources})
+			result, err := service.Organize(topiccontract.WithMaintenanceClaim(context.Background(), *claim), f.team, topiccontract.OrganizationInput{OperationKey: "maintenance:" + claim.ID, Sources: claim.Sources})
 			finished <- answer{result, err}
 		}()
 		select {
@@ -255,14 +255,14 @@ func TestOntologyMaintenanceRevalidationChurn(t *testing.T) {
 			releaseProvider()
 			t.Fatal("provider did not start")
 		}
-		revalidationPublish(t, f, ontology.Change{Record: testTopic("atlas-postgresql-added")})
+		revalidationPublish(t, f, topiccontract.Change{Record: testTopic("atlas-postgresql-added")})
 		revalidationDiscover(t, f, window)
 		releaseProvider()
 		received := <-finished
 		require.NoError(t, received.err)
 		require.True(t, received.result.Current)
 		for _, source := range claim.Sources {
-			require.Greater(t, revalidationQueue(t, f, source).Revision, claim.Revisions[ontology.SourceKey(source)])
+			require.Greater(t, revalidationQueue(t, f, source).Revision, claim.Revisions[topiccontract.SourceKey(source)])
 		}
 		require.NoError(t, f.store.CompleteMaintenanceBatch(context.Background(), *claim, received.result, "", time.Now().UTC()))
 		for _, source := range claim.Sources {

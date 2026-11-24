@@ -10,7 +10,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -39,7 +39,7 @@ func TestOrganizationExplicitContextWindow(t *testing.T) {
 	for _, contextWindow := range []int{0, -1, 1, limits.MaxOutputTokens, 1000000001} {
 		provider := NewProvider(transport, "model", limits, contextWindow)
 		_, attempts, err := provider.Assess(context.Background(), request)
-		require.ErrorIs(t, err, ontology.ErrConfiguration)
+		require.ErrorIs(t, err, topic.ErrConfiguration)
 		require.Empty(t, attempts)
 	}
 	require.Zero(t, calls)
@@ -188,8 +188,8 @@ func TestOrganizationContextWindowIncludesRegenerationHistory(t *testing.T) {
 }
 
 func assessmentFixture() (Request, Response) {
-	request := Request{RequestID: "request", Items: []Item{{Ref: "a", Kind: ontology.EvidenceSource, Text: "Atlas stores data in PostgreSQL."}, {Ref: "b", Kind: ontology.EvidenceSource, Text: "PostgreSQL is Atlas's data store."}}, Definitions: []Definition{}, Pairs: []Pair{{Ref: "pair", LeftRef: "a", RightRef: "b"}}}
-	response := Response{RequestID: "request", Definitions: []Definition{{Ref: "new-topic", Kind: ontology.Topic, Key: "storage", Label: "Storage", Description: "Data storage", Aliases: []string{}}}, Items: []Decision{{Ref: "a", Status: "classified", DefinitionRef: "new-topic"}, {Ref: "b", Status: "classified", DefinitionRef: "new-topic"}}, Equivalence: []Equivalence{{Ref: "pair", Relation: "equivalent"}}}
+	request := Request{RequestID: "request", Items: []Item{{Ref: "a", Kind: topic.EvidenceSource, Text: "Atlas stores data in PostgreSQL."}, {Ref: "b", Kind: topic.EvidenceSource, Text: "PostgreSQL is Atlas's data store."}}, Definitions: []Definition{}, Pairs: []Pair{{Ref: "pair", LeftRef: "a", RightRef: "b"}}}
+	response := Response{RequestID: "request", Definitions: []Definition{{Ref: "new-topic", Kind: topic.Topic, Key: "storage", Label: "Storage", Description: "Data storage", Aliases: []string{}}}, Items: []Decision{{Ref: "a", Status: "classified", DefinitionRef: "new-topic"}, {Ref: "b", Status: "classified", DefinitionRef: "new-topic"}}, Equivalence: []Equivalence{{Ref: "pair", Relation: "equivalent"}}}
 	return request, response
 }
 
@@ -218,7 +218,7 @@ func TestOrganizationResponseRequiresCompleteClosedAllowlists(t *testing.T) {
 		t.Run(name, func(t *testing.T) { _, err := Decode(raw); require.Error(t, err) })
 	}
 	for _, change := range []func(*Response){
-		func(r *Response) { r.Items = r.Items[:1] }, func(r *Response) { r.Items[1].Ref = "a" }, func(r *Response) { r.Items[0].DefinitionRef = "unknown" }, func(r *Response) { r.Equivalence = nil }, func(r *Response) { r.Equivalence = append(r.Equivalence, r.Equivalence[0]) }, func(r *Response) { r.Equivalence[0].Relation = "similar" }, func(r *Response) { r.Definitions[0].Kind = ontology.Kind("entity_class") }, func(r *Response) { r.Definitions[0].ParentRef = "outside" },
+		func(r *Response) { r.Items = r.Items[:1] }, func(r *Response) { r.Items[1].Ref = "a" }, func(r *Response) { r.Items[0].DefinitionRef = "unknown" }, func(r *Response) { r.Equivalence = nil }, func(r *Response) { r.Equivalence = append(r.Equivalence, r.Equivalence[0]) }, func(r *Response) { r.Equivalence[0].Relation = "similar" }, func(r *Response) { r.Definitions[0].Kind = topic.Kind("entity_class") }, func(r *Response) { r.Definitions[0].ParentRef = "outside" },
 	} {
 		_, fresh := assessmentFixture()
 		change(&fresh)
@@ -233,7 +233,7 @@ func TestOrganizationResponseRequiresCompleteClosedAllowlists(t *testing.T) {
 
 func TestOrganizationEquivalenceRejectsInconsistentChains(t *testing.T) {
 	request, response := assessmentFixture()
-	request.Items = append(request.Items, Item{Ref: "c", Kind: ontology.EvidenceSource})
+	request.Items = append(request.Items, Item{Ref: "c", Kind: topic.EvidenceSource})
 	request.Pairs = append(request.Pairs, Pair{Ref: "bc", LeftRef: "b", RightRef: "c"}, Pair{Ref: "ac", LeftRef: "a", RightRef: "c"})
 	response.Items = append(response.Items, Decision{Ref: "c", Status: "classified", DefinitionRef: "new-topic"})
 	response.Equivalence = append(response.Equivalence, Equivalence{Ref: "bc", Relation: "equivalent"}, Equivalence{Ref: "ac", Relation: "distinct"})
@@ -433,7 +433,7 @@ func TestOrganizationDefinitionKeyValidation(t *testing.T) {
 				require.NoError(t, err)
 				return
 			}
-			require.ErrorIs(t, err, ontology.ErrInvalid)
+			require.ErrorIs(t, err, topic.ErrInvalid)
 			require.ErrorContains(t, err, "definition key must be nonblank, at most 128 characters, and contain no NUL")
 			requireValidation(t, err, "validate", "definition_record", "definitions")
 		})
@@ -608,7 +608,7 @@ func TestOrganizationProviderFailuresBudgetsAndCancellation(t *testing.T) {
 	limits.MaxInputTokens = 1
 	provider = NewProvider(transport, "model", limits, 300000)
 	_, _, err = provider.Assess(context.Background(), request)
-	require.ErrorIs(t, err, ontology.ErrConfiguration)
+	require.ErrorIs(t, err, topic.ErrConfiguration)
 	require.Equal(t, 1, calls)
 	limits = assessor.DefaultSemanticAssessmentLimits()
 	limits.Tokenizer = "unknown"
@@ -691,7 +691,7 @@ func TestOrganizationFullPairCoverageRepairFitsConversation(t *testing.T) {
 	response.Items, response.Equivalence = nil, nil
 	for i := range 20 {
 		ref := fmt.Sprintf("s%d", i)
-		request.Items = append(request.Items, Item{Ref: ref, Kind: ontology.EvidenceSource, Text: fmt.Sprintf("Atlas fact %d.", i), OwnerRef: "owner", Context: map[string]string{}})
+		request.Items = append(request.Items, Item{Ref: ref, Kind: topic.EvidenceSource, Text: fmt.Sprintf("Atlas fact %d.", i), OwnerRef: "owner", Context: map[string]string{}})
 		response.Items = append(response.Items, Decision{Ref: ref, Status: "classified", DefinitionRef: response.Definitions[0].Ref})
 	}
 	var pairRefs []string
@@ -789,9 +789,9 @@ func TestOrganizationFullPairCoverageRepairFitsConversation(t *testing.T) {
 
 func TestOrganizationEvidenceClassificationUsesTopics(t *testing.T) {
 	request, response := assessmentFixture()
-	response.Definitions[0].Kind = ontology.Kind("entity_class")
+	response.Definitions[0].Kind = topic.Kind("entity_class")
 	require.ErrorContains(t, Validate(request, response), "requires an Evidence topic")
-	response.Definitions[0].Kind = ontology.Topic
+	response.Definitions[0].Kind = topic.Topic
 	require.NoError(t, Validate(request, response))
 }
 

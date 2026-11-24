@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/lib/pq"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 )
 
@@ -46,7 +46,7 @@ func claimMaintenanceMarker(tx *gorm.DB, fence scope, marker maintenanceMarker) 
 }
 
 func expandMaintenanceMarkers(tx *gorm.DB, fence scope, limit int) error {
-	markers, err := maintenanceMarkerWindow(tx, fence, ontology.MaintenancePageSize)
+	markers, err := maintenanceMarkerWindow(tx, fence, topic.MaintenancePageSize)
 	if err != nil {
 		return err
 	}
@@ -62,7 +62,7 @@ func expandMaintenanceMarkers(tx *gorm.DB, fence scope, limit int) error {
 		if marker.TargetKind == "definition" {
 			group := []maintenanceMarker{marker}
 			for _, next := range markers[index+1:] {
-				if len(group) == ontology.MaintenanceDefinitionGroupSize || next.TargetKind != "definition" {
+				if len(group) == topic.MaintenanceDefinitionGroupSize || next.TargetKind != "definition" {
 					break
 				}
 				claimed, err := claimMaintenanceMarker(tx, fence, next)
@@ -100,7 +100,7 @@ func expandMaintenanceMarkers(tx *gorm.DB, fence scope, limit int) error {
 			if err := refreshSelectedMaintenanceSource(tx, fence, handle, false); err != nil {
 				return err
 			}
-			cursor = ontology.SourceKey(handle)
+			cursor = topic.SourceKey(handle)
 			remaining--
 		}
 		if more {
@@ -116,7 +116,7 @@ func expandMaintenanceMarkers(tx *gorm.DB, fence scope, limit int) error {
 	return nil
 }
 
-func refreshSelectedMaintenanceSource(tx *gorm.DB, fence scope, handle ontology.SourceHandle, definition bool) error {
+func refreshSelectedMaintenanceSource(tx *gorm.DB, fence scope, handle topic.SourceHandle, definition bool) error {
 	observeMaintenanceSource(tx.Statement.Context, fence, handle, "source_selected", nil)
 	err := refreshMaintenanceInvalidation(tx, fence, handle, definition)
 	observeMaintenanceSource(tx.Statement.Context, fence, handle, "source_finished", err)
@@ -147,7 +147,7 @@ type definitionMarkerInput struct {
 }
 
 type definitionMarkerPage struct {
-	Sources   []ontology.SourceHandle
+	Sources   []topic.SourceHandle
 	Cursors   []string
 	Exhausted []bool
 }
@@ -168,7 +168,7 @@ func maintenanceDefinitionGroupPage(tx *gorm.DB, fence scope, markers []maintena
 	if err != nil {
 		return page, err
 	}
-	rows, err := tx.Raw(maintenanceDefinitionGroupSQL, string(body), fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(ontology.VocabularyStopWords()), limit+1, limit).Rows()
+	rows, err := tx.Raw(maintenanceDefinitionGroupSQL, string(body), fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(topic.VocabularyStopWords()), limit+1, limit).Rows()
 	if err != nil {
 		return page, err
 	}
@@ -177,7 +177,7 @@ func maintenanceDefinitionGroupPage(tx *gorm.DB, fence scope, markers []maintena
 	last := ""
 	for rows.Next() {
 		var index int
-		var handle ontology.SourceHandle
+		var handle topic.SourceHandle
 		var selected bool
 		if err := rows.Scan(&index, &handle.Kind, &handle.ID, &handle.Version, &selected); err != nil {
 			return page, err
@@ -185,7 +185,7 @@ func maintenanceDefinitionGroupPage(tx *gorm.DB, fence scope, markers []maintena
 		matches[index]++
 		recordMaintenanceMatches(tx.Statement.Context, 1)
 		if selected {
-			key := ontology.SourceKey(handle)
+			key := topic.SourceKey(handle)
 			covered[index]++
 			page.Cursors[index] = key
 			if key != last {

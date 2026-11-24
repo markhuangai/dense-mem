@@ -10,7 +10,7 @@ import (
 	auditapp "github.com/markhuangai/dense-mem/internal/audit"
 	auditpostgres "github.com/markhuangai/dense-mem/internal/audit/postgres"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
-	ontology "github.com/markhuangai/dense-mem/internal/topics"
+	topics "github.com/markhuangai/dense-mem/internal/topics"
 	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	topicspostgres "github.com/markhuangai/dense-mem/internal/topics/postgres"
 	"github.com/stretchr/testify/require"
@@ -25,7 +25,7 @@ func TestRunUpAutomaticallyRecoversStoppedOntology(t *testing.T) {
 			before := ontologyUpgradeSnapshot(t, db)
 			ctx := context.Background()
 			if interrupted != "before_pause" {
-				service := ontology.NewMaintenanceUpgradeService(topicspostgres.NewStore(db, storage.NewRLS()), auditapp.New(auditpostgres.NewStore(db)))
+				service := topics.NewMaintenanceUpgradeService(topicspostgres.NewStore(db, storage.NewRLS()), auditapp.New(auditpostgres.NewStore(db)))
 				require.NoError(t, service.Prepare(ctx, nil))
 				var sourceStatus string
 				require.NoError(t, admin.Raw(`SELECT status FROM ontology_maintenance_sources WHERE last_run_id=(SELECT run_id FROM ontology_maintenance_runs WHERE operation_key='ontology-upgrade-fixture')`).Row().Scan(&sourceStatus))

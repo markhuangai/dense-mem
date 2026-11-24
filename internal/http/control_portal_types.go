@@ -10,7 +10,7 @@ import (
 	searchapp "github.com/markhuangai/dense-mem/internal/search"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	settings "github.com/markhuangai/dense-mem/internal/settings"
-	ontology "github.com/markhuangai/dense-mem/internal/topics"
+	topics "github.com/markhuangai/dense-mem/internal/topics"
 	nethttp "net/http"
 	"time"
 )
@@ -35,7 +35,7 @@ type ControlPortalTelemetry struct {
 	Decisions           settings.DecisionConfigService
 	Logs                operations.OperationLogReader
 	RecallFeedback      recall.RecallFeedbackEventReader
-	Ontology            *ontology.MaintenanceService
+	TopicMaintenance    *topics.MaintenanceService
 	EvidenceConflicts   evidenceconflict.Reader
 	Convergence         searchapp.SearchConvergenceReader
 	RememberAttempts    rememberapp.RememberAttemptDiagnosticsReader
@@ -55,7 +55,7 @@ type controlPortalHandler struct {
 	telemetry           operations.TelemetryReader
 	operationLogs       operations.OperationLogReader
 	recallFeedback      recall.RecallFeedbackEventReader
-	ontology            *ontology.MaintenanceService
+	topicMaintenance    *topics.MaintenanceService
 	evidenceConflicts   evidenceconflict.Reader
 	convergence         searchapp.SearchConvergenceReader
 	rememberAttempts    rememberapp.RememberAttemptDiagnosticsReader

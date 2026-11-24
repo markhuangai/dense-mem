@@ -9,31 +9,31 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 )
 
-func managementSource(source ontology.SourceSnapshot) ontology.ManagementSource {
-	text := []rune(ontology.SourceDisplayText(source))
+func managementSource(source topic.SourceSnapshot) topic.ManagementSource {
+	text := []rune(topic.SourceDisplayText(source))
 	truncated := len(text) > 512
 	if truncated {
 		text = text[:512]
 	}
-	return ontology.ManagementSource{SourceHandle: source.SourceHandle, Text: string(text), Truncated: truncated, OwnerID: source.OwnerID}
+	return topic.ManagementSource{SourceHandle: source.SourceHandle, Text: string(text), Truncated: truncated, OwnerID: source.OwnerID}
 }
 
-func (s *Store) ListManagementSources(ctx context.Context, teamID string, kind ontology.SourceKind, cursor, query string, limit int) (ontology.ManagementSourcePage, error) {
-	page := ontology.ManagementSourcePage{Sources: []ontology.ManagementSource{}}
-	if limit < 1 || limit > ontology.MaxPageSize || utf8.RuneCountInString(query) > 128 {
-		return page, ontology.ErrInvalid
+func (s *Store) ListManagementSources(ctx context.Context, teamID string, kind topic.SourceKind, cursor, query string, limit int) (topic.ManagementSourcePage, error) {
+	page := topic.ManagementSourcePage{Sources: []topic.ManagementSource{}}
+	if limit < 1 || limit > topic.MaxPageSize || utf8.RuneCountInString(query) > 128 {
+		return page, topic.ErrInvalid
 	}
 	if cursor != "" {
 		if id, err := uuid.Parse(cursor); err != nil || id.String() != cursor {
-			return page, ontology.ErrInvalid
+			return page, topic.ErrInvalid
 		}
 	}
 	if len(cursor) > 128 {
-		return page, ontology.ErrInvalid
+		return page, topic.ErrInvalid
 	}
 	err := s.withManagerScope(ctx, teamID, false, func(tx *gorm.DB, fence scope, _ string) error {
 		handles, err := maintenanceSourcePage(tx, fence, kind, cursor, limit+1)
@@ -41,13 +41,13 @@ func (s *Store) ListManagementSources(ctx context.Context, teamID string, kind o
 			return err
 		}
 		if parsed, parseErr := uuid.Parse(query); parseErr == nil && parsed.String() == query {
-			handle, lookupErr := latestMaintenanceHandle(tx, fence, ontology.SourceHandle{Kind: kind, ID: query, Version: 1})
+			handle, lookupErr := latestMaintenanceHandle(tx, fence, topic.SourceHandle{Kind: kind, ID: query, Version: 1})
 			if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
 				return lookupErr
 			}
 			handles = nil
 			if lookupErr == nil {
-				handles = []ontology.SourceHandle{handle}
+				handles = []topic.SourceHandle{handle}
 			}
 		}
 		more := len(handles) > limit
@@ -64,7 +64,7 @@ func (s *Store) ListManagementSources(ctx context.Context, teamID string, kind o
 				continue
 			}
 			item := managementSource(source)
-			if query != "" && !strings.Contains(strings.ToLower(ontology.SourceDisplayText(source)), strings.ToLower(query)) && handle.ID != query {
+			if query != "" && !strings.Contains(strings.ToLower(topic.SourceDisplayText(source)), strings.ToLower(query)) && handle.ID != query {
 				continue
 			}
 			page.Sources = append(page.Sources, item)
@@ -78,8 +78,8 @@ func (s *Store) ListManagementSources(ctx context.Context, teamID string, kind o
 	return page, err
 }
 
-func (s *Store) TeamOntologyStatus(ctx context.Context, teamID string) (ontology.TeamOntologyStatus, error) {
-	result := ontology.TeamOntologyStatus{ObservedAt: time.Now().UTC()}
+func (s *Store) TeamTopicStatus(ctx context.Context, teamID string) (topic.TeamTopicStatus, error) {
+	result := topic.TeamTopicStatus{ObservedAt: time.Now().UTC()}
 	err := s.withManagerScope(ctx, teamID, false, func(tx *gorm.DB, fence scope, _ string) error {
 		var err error
 		result.Revision, err = catalogRevision(tx, fence)

@@ -43,8 +43,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/topicassignment"
 	organization "github.com/markhuangai/dense-mem/internal/topics"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
-	ontologypg "github.com/markhuangai/dense-mem/internal/topics/postgres"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topicpg "github.com/markhuangai/dense-mem/internal/topics/postgres"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -56,7 +56,7 @@ type runnerServiceFixture struct {
 	mcp            *httptest.Server
 	control        *httptest.Server
 	maintenance    *organization.MaintenanceService
-	ontology       *ontologypg.Store
+	topicStore     *topicpg.Store
 	provider       *runnerRememberAssessor
 	reconciliation searchapp.SearchReconciliationService
 }
@@ -83,7 +83,7 @@ func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
 	configuration := settings.NewAppConfigService(settingspg.NewAppConfigRepository(app, rls), nil)
 	_, err := configuration.UpdateTopicMaintenanceSettings(ctx, map[string]string{domain.AppConfigTopicMaintenanceEnabled: "true", domain.AppConfigTopicMaintenanceModel: "runner-ontology", domain.AppConfigTopicMaintenanceContextWindow: "300000", domain.AppConfigTopicMaintenanceConcurrency: "4", domain.AppConfigTopicMaintenanceTeamConcurrency: "4"}, "control", "", "")
 	require.NoError(t, err)
-	topicStore := ontologypg.NewStore(app, rls)
+	topicStore := topicpg.NewStore(app, rls)
 	policy, err := configuration.TopicMaintenanceRuntimeConfig(ctx)
 	require.NoError(t, err)
 	_, err = topicStore.EnsureMaintenanceWindow(ctx, policy, time.Now())
@@ -116,9 +116,9 @@ func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
 	_, err = maintenance.Command(ctx, domain.TopicMaintenanceCommand{Action: "pause", OperationKey: uuid.NewString()}, "", "")
 	require.NoError(t, err)
 	recallStore := recallpg.NewStore(app, rls, search, recallpg.LoadRecallEvidenceConflictRecords).
-		WithOntology(func() recallpg.OntologyReader { return topicStore.NewRecallReader() }).
+		WithOrganizationReader(func() recallpg.OrganizationReader { return topicStore.NewRecallReader() }).
 		WithTopics(topicStore.NewTopicReader())
-	reader := recall.NewRecallService(recall.RecallDependencies{Search: recallStore, Provider: embedder, OntologyConfig: configuration})
+	reader := recall.NewRecallService(recall.RecallDependencies{Search: recallStore, Provider: embedder, TopicMaintenanceConfig: configuration})
 	reg, err := registry.BuildActive(registry.Dependencies{RememberBindings: registry.RememberBindings{Service: writer}, RecallBindings: registry.RecallBindings{Service: reader}})
 	require.NoError(t, err)
 	e := echo.New()
@@ -138,13 +138,13 @@ func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
 	require.NoError(t, native.ResolveScope(ctx))
 	manifest := evalharness.Manifest{ImportWorkers: 10, Model: "runner-ontology", ContextWindowTokens: 300000, EmbeddingModel: model, EmbeddingDimensions: dimensions}
 	return &runnerServiceFixture{admin: admin, native: native, manifest: manifest, mcp: mcp, control: control, maintenance: maintenance,
-		ontology: topicStore, provider: provider, reconciliation: searchapp.NewSearchReconciliationService(searchapp.SearchReconciliationDependencies{Repository: search, Projection: store, Executor: semanticwrite.NewProviderExecutor(embedder)})}
+		topicStore: topicStore, provider: provider, reconciliation: searchapp.NewSearchReconciliationService(searchapp.SearchReconciliationDependencies{Repository: search, Projection: store, Executor: semanticwrite.NewProviderExecutor(embedder)})}
 }
 
 func runnerControlServer(t *testing.T, maintenance *organization.MaintenanceService, configuration settings.AppConfigService, convergence searchapp.SearchConvergenceReader) *httptest.Server {
 	t.Helper()
 	bindings := densehttp.ControlPortalBindings{Telemetry: densehttp.ControlPortalTelemetry{
-		Ontology: maintenance, Config: configuration, Convergence: convergence,
+		TopicMaintenance: maintenance, Config: configuration, Convergence: convergence,
 	}}
 	portal, err := densehttp.NewControlPortalServerWithCapabilityBindings(&config.Config{ControlPortalToken: "runner-control"}, nil, nil, nil, bindings, densehttp.HealthConfig{}, nil)
 	require.NoError(t, err)
@@ -240,7 +240,7 @@ func runnerOrganizationResponse(request assessment.Request) assessment.Response 
 		if request.EquivalenceOnly || item.LockedDefinitionRef != "" {
 			continue
 		}
-		kind, key := ontology.Topic, "runner-storage"
+		kind, key := topic.Topic, "runner-storage"
 		ref := item.PreferredDefinitionRef
 		if ref == "" {
 			for _, definition := range request.Definitions {

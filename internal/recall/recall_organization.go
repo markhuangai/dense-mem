@@ -12,7 +12,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 )
 
 const maxEquivalentEvidenceIDs = 20
@@ -21,21 +21,21 @@ func organizationDegradation(frontier, code string) []RecallDegradationResult {
 	if code == "" {
 		return nil
 	}
-	message := "ontology organization was unavailable; ordinary eligible retrieval was used"
+	message := "Topic and equivalence metadata was unavailable. Ordinary eligible retrieval was used."
 	switch code {
 	case "ontology_temporal_not_supported":
-		message = "ontology organization is current-only and was omitted for temporal recall"
+		message = "Temporal Recall omits current Topic and equivalence metadata."
 	case "ontology_stale":
-		message = "stale ontology organization was omitted; ordinary eligible retrieval remains available"
+		message = "Stale Topic or equivalence metadata was omitted. Ordinary eligible retrieval remains available."
 	case "ontology_bound_exceeded":
-		message = "ontology organization exceeded its read bound; ordinary eligible retrieval was used"
+		message = "Topic and equivalence metadata exceeded its read bound. Ordinary eligible retrieval was used."
 	case "ontology_group_overlap":
-		message = "overlapping ontology groups were omitted; ordinary eligible retrieval was used"
+		message = "Overlapping equivalence groups were omitted. Ordinary eligible retrieval was used."
 	}
 	return []RecallDegradationResult{{Frontier: frontier, Optional: true, Code: code, Message: message}}
 }
 
-func eligibleEvidenceGroups(groups []ontology.RecallEvidenceGroup, hits map[string]recallcontract.RecallEvidenceHit, knownIDs []string) (map[string]ontology.RecallEvidenceGroup, map[string]bool, bool) {
+func eligibleEvidenceGroups(groups []topic.RecallEvidenceGroup, hits map[string]recallcontract.RecallEvidenceHit, knownIDs []string) (map[string]topic.RecallEvidenceGroup, map[string]bool, bool) {
 	known, membership, overlap := map[string]bool{}, map[string]string{}, map[string]bool{}
 	for _, id := range knownIDs {
 		if _, eligible := hits[id]; eligible {
@@ -53,12 +53,12 @@ func eligibleEvidenceGroups(groups []ontology.RecallEvidenceGroup, hits map[stri
 			membership[id] = group.ID
 		}
 	}
-	byID, suppressed := map[string]ontology.RecallEvidenceGroup{}, map[string]bool{}
+	byID, suppressed := map[string]topic.RecallEvidenceGroup{}, map[string]bool{}
 	for _, group := range groups {
 		if overlap[group.ID] {
 			continue
 		}
-		eligible := ontology.RecallEvidenceGroup{ID: group.ID}
+		eligible := topic.RecallEvidenceGroup{ID: group.ID}
 		knownGroup := false
 		for _, id := range group.Members {
 			if _, ok := hits[id]; ok {
@@ -149,10 +149,10 @@ func (s *recallService) relatedTopics(ctx context.Context, req RecallRequest, re
 	}
 	var selection recallcontract.RelatedTopicResult
 	var err error
-	if s.ontologyConfig == nil {
+	if s.topicMaintenanceConfig == nil {
 		err = ErrTopicUnavailable
 	} else {
-		config, configErr := s.ontologyConfig.TopicMaintenanceRuntimeConfig(ctx)
+		config, configErr := s.topicMaintenanceConfig.TopicMaintenanceRuntimeConfig(ctx)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

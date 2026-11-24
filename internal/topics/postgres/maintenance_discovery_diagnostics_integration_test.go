@@ -12,7 +12,7 @@ import (
 
 	organization "github.com/markhuangai/dense-mem/internal/topics"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -32,7 +32,7 @@ func TestOntologyMaintenanceDiscoveryCommittedDiagnostics(t *testing.T) {
 				}))
 				topic := x.topic
 				topic.Definition.Description = "PostgreSQL revised required definition"
-				revalidationPublish(t, x.f, ontology.Change{ExpectedVersion: 1, Record: topic})
+				revalidationPublish(t, x.f, topiccontract.Change{ExpectedVersion: 1, Record: topic})
 				require.NoError(t, x.f.admin.Exec(`CREATE FUNCTION reject_discovery_source() RETURNS trigger LANGUAGE plpgsql AS $$
 				 BEGIN RAISE EXCEPTION 'synthetic-discovery-secret'; END $$;
 				 CREATE TRIGGER reject_discovery_source BEFORE INSERT ON topic_maintenance_sources

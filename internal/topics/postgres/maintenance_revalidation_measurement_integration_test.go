@@ -10,17 +10,17 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
-func revalidationPublish(t *testing.T, f *ontologyFixture, changes ...ontology.Change) {
+func revalidationPublish(t *testing.T, f *ontologyFixture, changes ...topiccontract.Change) {
 	t.Helper()
 	require.NoError(t, revalidationPublishChanges(f, changes...))
 }
 
-func revalidationPublishChanges(f *ontologyFixture, changes ...ontology.Change) error {
+func revalidationPublishChanges(f *ontologyFixture, changes ...topiccontract.Change) error {
 	page, err := f.store.ListRecords(context.Background(), f.team, "", "", 1)
 	if err != nil {
 		return err
@@ -29,7 +29,7 @@ func revalidationPublishChanges(f *ontologyFixture, changes ...ontology.Change) 
 	return err
 }
 
-func revalidationDiscover(t *testing.T, f *ontologyFixture, window *ontology.MaintenanceWindow) {
+func revalidationDiscover(t *testing.T, f *ontologyFixture, window *topiccontract.MaintenanceWindow) {
 	t.Helper()
 	ctx := context.Background()
 	turn, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now().UTC(), time.Minute)
@@ -37,7 +37,7 @@ func revalidationDiscover(t *testing.T, f *ontologyFixture, window *ontology.Mai
 	require.NotNil(t, turn)
 	defer func() { require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn)) }()
 	for range 8 {
-		require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, ontology.MaintenancePageSize))
+		require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, topiccontract.MaintenancePageSize))
 	}
 }
 
@@ -46,7 +46,7 @@ type revalidationQueueState struct {
 	Revision                          int64
 }
 
-func revalidationQueue(t *testing.T, f *ontologyFixture, source ontology.SourceHandle) revalidationQueueState {
+func revalidationQueue(t *testing.T, f *ontologyFixture, source topiccontract.SourceHandle) revalidationQueueState {
 	t.Helper()
 	var state revalidationQueueState
 	require.NoError(t, f.admin.Raw(`SELECT status,COALESCE(assessment_id::text,''),fingerprint,revision FROM topic_maintenance_sources
@@ -54,7 +54,7 @@ func revalidationQueue(t *testing.T, f *ontologyFixture, source ontology.SourceH
 	return state
 }
 
-func revalidationRefresh(t *testing.T, f *ontologyFixture, source ontology.SourceHandle) {
+func revalidationRefresh(t *testing.T, f *ontologyFixture, source topiccontract.SourceHandle) {
 	t.Helper()
 	require.NoError(t, f.store.withScope(context.Background(), f.team, false, func(tx *gorm.DB, fence scope) error {
 		return refreshMaintenanceSource(tx, fence, source, true)
@@ -91,7 +91,7 @@ func TestOntologyMaintenanceRevalidationMeasurement(t *testing.T) {
 	for repeat := range 3 {
 		t.Run(fmt.Sprintf("repetition-%d", repeat+1), func(t *testing.T) {
 			f := newOrganizationFixture(t)
-			sources := []ontology.SourceHandle{
+			sources := []topiccontract.SourceHandle{
 				f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil),
 				f.organizationEvidence(t, 1, "Atlas relies on PostgreSQL.", nil),
 			}
@@ -109,7 +109,7 @@ func TestOntologyMaintenanceRevalidationMeasurement(t *testing.T) {
 				if round > 0 {
 					topic := testTopic(fmt.Sprintf("atlas-vocabulary-%d", round))
 					topic.Definition.Description = "PostgreSQL database storage for Atlas"
-					revalidationPublish(t, f, ontology.Change{Record: topic})
+					revalidationPublish(t, f, topiccontract.Change{Record: topic})
 					drainMaintenance(t, service)
 				}
 				changed := 0

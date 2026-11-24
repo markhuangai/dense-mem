@@ -12,16 +12,16 @@ import (
 	"github.com/lib/pq"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 )
 
-func (s *Store) MaintenanceCommand(ctx context.Context, input domain.TopicMaintenanceCommand, now time.Time, prepareAudit ontology.MaintenanceAudit) (ontology.MaintenanceRun, error) {
-	input, err := ontology.PrepareMaintenanceCommand(input)
+func (s *Store) MaintenanceCommand(ctx context.Context, input domain.TopicMaintenanceCommand, now time.Time, prepareAudit topic.MaintenanceAudit) (topic.MaintenanceRun, error) {
+	input, err := topic.PrepareMaintenanceCommand(input)
 	if err != nil {
-		return ontology.MaintenanceRun{}, err
+		return topic.MaintenanceRun{}, err
 	}
-	var result ontology.MaintenanceRun
+	var result topic.MaintenanceRun
 	err = s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
 		var err error
 		result, err = maintenanceCommandTx(ctx, tx, input, now, prepareAudit)
@@ -30,12 +30,12 @@ func (s *Store) MaintenanceCommand(ctx context.Context, input domain.TopicMainte
 	return result, err
 }
 
-func maintenanceCommandTx(ctx context.Context, tx *gorm.DB, input domain.TopicMaintenanceCommand, now time.Time, prepareAudit ontology.MaintenanceAudit) (ontology.MaintenanceRun, error) {
-	hash, err := ontology.MaintenanceCommandHash(input)
+func maintenanceCommandTx(ctx context.Context, tx *gorm.DB, input domain.TopicMaintenanceCommand, now time.Time, prepareAudit topic.MaintenanceAudit) (topic.MaintenanceRun, error) {
+	hash, err := topic.MaintenanceCommandHash(input)
 	if err != nil {
-		return ontology.MaintenanceRun{}, err
+		return topic.MaintenanceRun{}, err
 	}
-	var result ontology.MaintenanceRun
+	var result topic.MaintenanceRun
 	err = func() error {
 		paused, err := maintenanceState(tx)
 		if err != nil {
@@ -45,7 +45,7 @@ func maintenanceCommandTx(ctx context.Context, tx *gorm.DB, input domain.TopicMa
 		err = tx.Raw(`SELECT request_hash FROM topic_maintenance_runs WHERE operation_key=?`, input.OperationKey).Row().Scan(&previousHash)
 		if err == nil {
 			if previousHash != hash {
-				return ontology.ErrConflict
+				return topic.ErrConflict
 			}
 			result, err = scanMaintenanceRun(tx.Raw(`SELECT `+maintenanceRunColumns+` FROM topic_maintenance_runs WHERE operation_key=?`, input.OperationKey).Row())
 			if err != nil {
@@ -61,28 +61,28 @@ func maintenanceCommandTx(ctx context.Context, tx *gorm.DB, input domain.TopicMa
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		result = ontology.MaintenanceRun{ID: uuid.NewString(), Kind: input.Action, OperationKey: input.OperationKey, MaxBatches: input.MaxBatches, CreatedAt: now, UpdatedAt: now, Status: "completed"}
+		result = topic.MaintenanceRun{ID: uuid.NewString(), Kind: input.Action, OperationKey: input.OperationKey, MaxBatches: input.MaxBatches, CreatedAt: now, UpdatedAt: now, Status: "completed"}
 		if input.Action == "pause" || input.Action == "resume" {
 			if err = tx.Exec(`UPDATE topic_maintenance_state SET paused=? WHERE singleton`, input.Action == "pause").Error; err != nil {
 				return err
 			}
 		} else {
 			if paused {
-				return ontology.ErrMaintenancePaused
+				return topic.ErrMaintenancePaused
 			}
 			enabled, err := maintenanceEnabled(tx)
 			if err != nil {
 				return err
 			}
 			if !enabled {
-				return ontology.ErrMaintenanceDisabled
+				return topic.ErrMaintenanceDisabled
 			}
 			window, err := currentMaintenanceWindow(tx, now)
 			if err != nil {
 				return err
 			}
 			if window == nil {
-				return ontology.ErrWindowClosed
+				return topic.ErrWindowClosed
 			}
 			result.WindowID = window.ID
 			result.Status = "pending"
@@ -92,14 +92,14 @@ func maintenanceCommandTx(ctx context.Context, tx *gorm.DB, input domain.TopicMa
 					return err
 				}
 				if !exists {
-					return ontology.ErrNotFound
+					return topic.ErrNotFound
 				}
 				retryable, err := maintenanceRetryableRuns(tx, []string{input.RetryRunID})
 				if err != nil {
 					return err
 				}
 				if !retryable[input.RetryRunID] {
-					return ontology.ErrInvalid
+					return topic.ErrInvalid
 				}
 			}
 		}
@@ -123,7 +123,7 @@ func maintenanceCommandTx(ctx context.Context, tx *gorm.DB, input domain.TopicMa
 	return result, err
 }
 
-func appendMaintenanceAuditTx(ctx context.Context, tx *gorm.DB, run ontology.MaintenanceRun, prepareAudit ontology.MaintenanceAudit) error {
+func appendMaintenanceAuditTx(ctx context.Context, tx *gorm.DB, run topic.MaintenanceRun, prepareAudit topic.MaintenanceAudit) error {
 	if prepareAudit == nil {
 		return nil
 	}
@@ -132,7 +132,7 @@ func appendMaintenanceAuditTx(ctx context.Context, tx *gorm.DB, run ontology.Mai
 		err = storagepostgres.InsertAuditEntryTx(ctx, tx, entry)
 	}
 	if err != nil {
-		return fmt.Errorf("%w: %w", ontology.ErrAuditUnavailable, err)
+		return fmt.Errorf("%w: %w", topic.ErrAuditUnavailable, err)
 	}
 	return nil
 }
@@ -155,7 +155,7 @@ func completeMaintenanceRun(tx *gorm.DB, runID, retryRunID string, allSources bo
 	if requiredFailure != "" {
 		previousFailure = requiredFailure
 	}
-	status, reason := ontology.MaintenanceCompletion(unresolved || requiredFailure != "", previousFailure)
+	status, reason := topic.MaintenanceCompletion(unresolved || requiredFailure != "", previousFailure)
 	return tx.Exec(`UPDATE topic_maintenance_runs SET status=?,failure_code=?,updated_at=clock_timestamp() WHERE run_id=?::uuid`, status, reason, runID).Error
 }
 
@@ -176,7 +176,7 @@ func maintenanceRetryableRuns(tx *gorm.DB, runIDs []string) (map[string]bool, er
 
 func (s *Store) RecordMaintenanceFailure(ctx context.Context, runID, code string, now time.Time) error {
 	if len(code) > 128 {
-		return ontology.ErrInvalid
+		return topic.ErrInvalid
 	}
 	return s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
 		return recordMaintenanceFailureTx(tx, runID, code, now)
@@ -187,8 +187,8 @@ func recordMaintenanceFailureTx(tx *gorm.DB, runID, code string, now time.Time) 
 	return tx.Exec(`UPDATE topic_maintenance_runs SET status='incomplete',failure_code=?,updated_at=? WHERE run_id=?::uuid`, code, now, runID).Error
 }
 
-func (s *Store) MaintenanceStatus(ctx context.Context, now time.Time) (ontology.MaintenanceStatus, error) {
-	result := ontology.MaintenanceStatus{ObservedAt: now}
+func (s *Store) MaintenanceStatus(ctx context.Context, now time.Time) (topic.MaintenanceStatus, error) {
+	result := topic.MaintenanceStatus{ObservedAt: now}
 	err := s.readMaintenanceSystem(ctx, func(tx *gorm.DB) error {
 		if err := tx.Raw(`SELECT paused,last_successful_progress FROM topic_maintenance_state WHERE singleton`).Row().Scan(&result.Paused, &result.LastSuccessfulProgress); err != nil {
 			return err
@@ -266,8 +266,8 @@ func (s *Store) MaintenanceStatus(ctx context.Context, now time.Time) (ontology.
 	return result, err
 }
 
-func maintenanceUsage(tx *gorm.DB, windowID string, historical bool) (ontology.MaintenanceUsage, error) {
-	var result ontology.MaintenanceUsage
+func maintenanceUsage(tx *gorm.DB, windowID string, historical bool) (topic.MaintenanceUsage, error) {
+	var result topic.MaintenanceUsage
 	err := tx.Raw(`SELECT count(*),count(*) FILTER(WHERE reconciled_at IS NULL),
 	 count(*) FILTER(WHERE reconciled_at IS NOT NULL AND COALESCE(reported_input,0)=0 AND COALESCE(reported_output,0)=0 AND COALESCE(reported_total,0)=0),
 	 count(*) FILTER(WHERE reconciled_at IS NOT NULL AND (COALESCE(reported_input,0)>0 OR COALESCE(reported_output,0)>0 OR COALESCE(reported_total,0)>0) AND (COALESCE(reported_input,0)=0 OR COALESCE(reported_output,0)=0)),
@@ -277,14 +277,14 @@ func maintenanceUsage(tx *gorm.DB, windowID string, historical bool) (ontology.M
 	return result, err
 }
 
-func (s *Store) ListMaintenanceRuns(ctx context.Context, cursor string, limit int) (ontology.MaintenanceRunPage, error) {
-	page := ontology.MaintenanceRunPage{Runs: []ontology.MaintenanceRun{}}
-	if limit < 1 || limit > ontology.MaxPageSize {
-		return page, ontology.ErrInvalid
+func (s *Store) ListMaintenanceRuns(ctx context.Context, cursor string, limit int) (topic.MaintenanceRunPage, error) {
+	page := topic.MaintenanceRunPage{Runs: []topic.MaintenanceRun{}}
+	if limit < 1 || limit > topic.MaxPageSize {
+		return page, topic.ErrInvalid
 	}
 	if cursor != "" {
 		if _, err := uuid.Parse(cursor); err != nil {
-			return page, ontology.ErrInvalid
+			return page, topic.ErrInvalid
 		}
 	}
 	err := s.readMaintenanceSystem(ctx, func(tx *gorm.DB) error {
@@ -292,7 +292,7 @@ func (s *Store) ListMaintenanceRuns(ctx context.Context, cursor string, limit in
 		if cursor != "" {
 			err := tx.Raw(`SELECT created_at FROM topic_maintenance_runs WHERE run_id=?::uuid`, cursor).Row().Scan(&after)
 			if errors.Is(err, sql.ErrNoRows) {
-				return ontology.ErrInvalid
+				return topic.ErrInvalid
 			}
 			if err != nil {
 				return err

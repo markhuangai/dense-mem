@@ -28,7 +28,7 @@ func TestOntologySemanticAssessmentRealLogger(t *testing.T) {
 				protector := observability.NewCredentialProtector(secret)
 				root := observability.NewWithProtector(level, protector)
 				require.NoError(t, root.AttachSink(sink))
-				observe := ontologyAssessmentDiagnostics(root.ContextSlog(), protector)
+				observe := organizationAssessmentDiagnostics(root.ContextSlog(), protector)
 				request := assessment.Request{RequestID: id, Items: []assessment.Item{{Ref: "s0", PreferredDefinitionRef: "d0", Context: map[string]string{
 					"token": "exact admitted token", "password": "exact admitted password", "secret": "exact admitted secret",
 					"content": strings.Repeat("admitted source context ", 250) + secret}}}}
@@ -88,7 +88,7 @@ func TestOntologySemanticAssessmentIncompleteAndFailed(t *testing.T) {
 	console, _ := captureOntologyPublicationConsole(t, func() {
 		protector := observability.NewCredentialProtector()
 		root := observability.NewWithProtector(slog.LevelDebug, protector)
-		observe := ontologyAssessmentDiagnostics(root.ContextSlog(), protector)
+		observe := organizationAssessmentDiagnostics(root.ContextSlog(), protector)
 		request := assessment.Request{RequestID: uuid.NewString(), Items: []assessment.Item{{Text: strings.Repeat("x", 16*1024*1024+1)}}}
 		observe(context.Background(), assessment.Diagnostic{Stage: "completed", Request: &request,
 			Result: &contract.OrganizationResult{AssessmentID: request.RequestID, FailureCode: "stale_input"}, Error: contract.ErrSourceStale})
@@ -106,7 +106,7 @@ func TestOntologySemanticAssessmentDefinitionVersionRejection(t *testing.T) {
 	console, records := captureOntologyPublicationConsole(t, func() {
 		protector := observability.NewCredentialProtector()
 		root := observability.NewWithProtector(slog.LevelDebug, protector)
-		ontologyAssessmentDiagnostics(root.ContextSlog(), protector)(context.Background(), assessment.Diagnostic{Stage: "completed",
+		organizationAssessmentDiagnostics(root.ContextSlog(), protector)(context.Background(), assessment.Diagnostic{Stage: "completed",
 			Result: &contract.OrganizationResult{AssessmentID: id, FailureCode: "stale_input", FreshnessRejection: &rejection}, Error: &contract.FreshnessError{Rejection: rejection}})
 	})
 	require.Contains(t, console, "topic_semantic_assessment_failed")

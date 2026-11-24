@@ -28,7 +28,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/topicassignment"
 	organization "github.com/markhuangai/dense-mem/internal/topics"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -69,12 +69,12 @@ func maintenanceServiceFixture(t *testing.T, f *ontologyFixture, config *setting
 }
 
 type cancelledClaimRepository struct {
-	ontology.MaintenanceRepository
+	topic.MaintenanceRepository
 	cancel context.CancelFunc
-	turn   *ontology.MaintenanceTurn
+	turn   *topic.MaintenanceTurn
 }
 
-func (r *cancelledClaimRepository) ClaimMaintenanceTurn(ctx context.Context, window string, now time.Time, lease time.Duration) (*ontology.MaintenanceTurn, error) {
+func (r *cancelledClaimRepository) ClaimMaintenanceTurn(ctx context.Context, window string, now time.Time, lease time.Duration) (*topic.MaintenanceTurn, error) {
 	turn, err := r.MaintenanceRepository.ClaimMaintenanceTurn(ctx, window, now, lease)
 	if err != nil || turn == nil {
 		return turn, err
@@ -131,7 +131,7 @@ func TestOntologyMaintenanceOperatorHTTPAndScheduler(t *testing.T) {
 	service, calls := maintenanceServiceFixture(t, f, appConfig, nil, auditapp.New(auditpostgres.NewStore(f.app, f.rls)))
 	const token = "synthetic-maintenance-control"
 	portal, err := densehttp.NewControlPortalServerWithCapabilityBindings(&config.Config{ControlPortalToken: token}, nil, nil, nil,
-		densehttp.ControlPortalBindings{Telemetry: densehttp.ControlPortalTelemetry{Ontology: service, Config: appConfig}}, densehttp.HealthConfig{}, nil)
+		densehttp.ControlPortalBindings{Telemetry: densehttp.ControlPortalTelemetry{TopicMaintenance: service, Config: appConfig}}, densehttp.HealthConfig{}, nil)
 	require.NoError(t, err)
 	request := func(method, path, body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, "/control/api"+path, strings.NewReader(body))
@@ -167,23 +167,23 @@ func TestOntologyMaintenanceOperatorHTTPAndScheduler(t *testing.T) {
 		rec := request(item.method, item.path, item.body)
 		require.Equal(t, item.status, rec.Code, "%s %s: %s", item.method, item.path, rec.Body.String())
 	}
-	var command ontology.MaintenanceRun
+	var command topic.MaintenanceRun
 	decode(request(http.MethodPost, "/topic-maintenance/pause", `{"operation_key":"http-pause"}`), &command)
-	var status ontology.MaintenanceStatus
+	var status topic.MaintenanceStatus
 	decode(request(http.MethodGet, "/topic-maintenance/status", ""), &status)
 	require.True(t, status.Paused)
 	require.Equal(t, http.StatusConflict, request(http.MethodPost, "/topic-maintenance/runs", `{"operation_key":"paused-run"}`).Code)
 	require.Zero(t, calls())
 	decode(request(http.MethodPost, "/topic-maintenance/resume", `{"operation_key":"http-resume"}`), &command)
 	decode(request(http.MethodPost, "/topic-maintenance/runs", `{"operation_key":"http-run","max_batches":1}`), &command)
-	var replay ontology.MaintenanceRun
+	var replay topic.MaintenanceRun
 	decode(request(http.MethodPost, "/topic-maintenance/runs", `{"operation_key":"http-run","max_batches":1}`), &replay)
 	require.Equal(t, command, replay)
 	decode(request(http.MethodGet, "/topic-maintenance/status", ""), &status)
 	require.Equal(t, http.StatusNotFound, request(http.MethodPost, "/topic-maintenance/allowances", `{"operation_key":"retired"}`).Code)
 	require.Equal(t, http.StatusUnprocessableEntity, request(http.MethodPatch, "/config/topic-maintenance", `{"items":[{"key":"TOPIC_MAINTENANCE_INPUT_TOKENS","value":"1"}]}`).Code)
 
-	var runs ontology.MaintenanceRunPage
+	var runs topic.MaintenanceRunPage
 	decode(request(http.MethodGet, "/topic-maintenance/runs?limit=1", ""), &runs)
 	require.Len(t, runs.Runs, 1)
 	require.NotEmpty(t, runs.NextCursor)
@@ -411,8 +411,8 @@ func TestOntologyMaintenanceDirectOrganizationRejectsMissingContext(t *testing.T
 	before := f.canonicalSnapshot(t)
 	for _, capacity := range []int{0, 1} {
 		service := organization.NewService(f.store, assessment.NewProvider(nil, "fixture-model", maintenanceFixtureLimits(), capacity))
-		_, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: uuid.NewString(), Sources: []ontology.SourceHandle{source}})
-		require.ErrorIs(t, err, ontology.ErrConfiguration)
+		_, err := service.Organize(context.Background(), f.team, topic.OrganizationInput{OperationKey: uuid.NewString(), Sources: []topic.SourceHandle{source}})
+		require.ErrorIs(t, err, topic.ErrConfiguration)
 		require.Zero(t, receiptCount(t, f))
 		require.Equal(t, before, f.canonicalSnapshot(t))
 	}
@@ -503,9 +503,9 @@ func TestOntologyMaintenanceProviderPauseDrain(t *testing.T) {
 	require.True(t, status.Paused)
 	require.EqualValues(t, 1, status.Counts.Organized)
 	_, err = service.RunTurn(context.Background())
-	require.ErrorIs(t, err, ontology.ErrMaintenancePaused)
+	require.ErrorIs(t, err, topic.ErrMaintenancePaused)
 	require.EqualValues(t, 1, calls())
-	page, err := f.store.ListRecords(context.Background(), f.team, ontology.AssignmentKind, "", 20)
+	page, err := f.store.ListRecords(context.Background(), f.team, topic.AssignmentKind, "", 20)
 	require.NoError(t, err)
 	require.Len(t, page.Records, 1)
 	require.True(t, page.Records[0].Current)
@@ -535,7 +535,7 @@ func TestOntologyMaintenanceProviderDisableDrain(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, progress)
 	require.EqualValues(t, 1, calls())
-	page, err := f.store.ListRecords(context.Background(), f.team, ontology.AssignmentKind, "", 20)
+	page, err := f.store.ListRecords(context.Background(), f.team, topic.AssignmentKind, "", 20)
 	require.NoError(t, err)
 	require.Len(t, page.Records, 1)
 	require.True(t, page.Records[0].Current)
@@ -556,9 +556,9 @@ func TestOntologyMaintenanceAccountingFailurePreventsPublication(t *testing.T) {
 			break
 		}
 	}
-	require.ErrorIs(t, failure, ontology.ErrAccounting)
+	require.ErrorIs(t, failure, topic.ErrAccounting)
 	require.EqualValues(t, 1, calls())
-	page, err := f.store.ListRecords(context.Background(), f.team, ontology.AssignmentKind, "", 20)
+	page, err := f.store.ListRecords(context.Background(), f.team, topic.AssignmentKind, "", 20)
 	require.NoError(t, err)
 	require.Empty(t, page.Records)
 	status, err := service.Status(context.Background())
@@ -580,10 +580,10 @@ func TestOntologyMaintenanceContextConfigurationAndManualReuse(t *testing.T) {
 		_, err := config.UpdateTopicMaintenanceSettings(ctx, map[string]string{domain.AppConfigTopicMaintenanceContextWindow: value}, "control", "", "")
 		require.NoError(t, err)
 		progress, err := service.RunTurn(ctx)
-		require.ErrorIs(t, err, ontology.ErrConfiguration)
+		require.ErrorIs(t, err, topic.ErrConfiguration)
 		require.False(t, progress)
 		_, err = service.Command(ctx, domain.TopicMaintenanceCommand{OperationKey: uuid.NewString(), Action: "run"}, "", "")
-		require.ErrorIs(t, err, ontology.ErrConfiguration)
+		require.ErrorIs(t, err, topic.ErrConfiguration)
 		status, err := service.Status(ctx)
 		require.NoError(t, err)
 		require.Equal(t, "configuration_invalid", status.ConfigurationError)

@@ -12,14 +12,14 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 )
 
 // Five seeds, three terms and two topics per seed, and eight peers per path bound the round to 200 candidates.
 const (
 	maxExpansionSeeds = 5
 	termsPerSeed      = 3
-	topicsPerSeed     = ontology.MaxRecallPeerTopics
+	topicsPerSeed     = topiccontract.MaxRecallPeerTopics
 	peersPerBridge    = 8
 )
 
@@ -60,9 +60,9 @@ func (r *Store) ReadEvidenceBridges(ctx context.Context, input RecallEvidenceInp
 		if !input.OrganizationEnabled || r.topics == nil || r.organizationFailure != "" || (input.SpaceKind != "" && input.SpaceKind != string(domain.MemorySpaceTeamShared)) || input.KnownAt != nil || input.ValidAt != nil {
 			return nil
 		}
-		selection, err := r.topics(ctx, tx, input.TeamID, ontology.TopicReadInput{SpaceID: input.SpaceID, EvidenceIDs: eligibleSeeds, MaxMembers: peersPerBridge + 1})
+		selection, err := r.topics(ctx, tx, input.TeamID, topiccontract.TopicReadInput{SpaceID: input.SpaceID, EvidenceIDs: eligibleSeeds, MaxMembers: peersPerBridge + 1})
 		if err != nil {
-			return &ontologyReadError{cause: err}
+			return &organizationReadError{cause: err}
 		}
 		peers := smallTopicBridges(eligibleSeeds, selection.Topics)
 		ids := make([]string, 0, len(peers))
@@ -88,7 +88,7 @@ func (r *Store) ReadEvidenceBridges(ctx context.Context, input RecallEvidenceInp
 
 func readTermBridges(ctx context.Context, tx *gorm.DB, input RecallEvidenceInput, contract *ActiveSearchContract, seeds []string) ([]recallcontract.EvidenceBridge, error) {
 	filter, filterArgs := recallEvidenceEligibility(input, "fragment", true)
-	args := []any{input.Query, pq.Array(ontology.VocabularyStopWords()), termsPerSeed, pq.Array(seeds), input.TeamID, input.TeamID, contract.EmbeddingContractID, recallEventAt(input.ValidAt, input.KnownAt), pq.Array(seeds)}
+	args := []any{input.Query, pq.Array(topiccontract.VocabularyStopWords()), termsPerSeed, pq.Array(seeds), input.TeamID, input.TeamID, contract.EmbeddingContractID, recallEventAt(input.ValidAt, input.KnownAt), pq.Array(seeds)}
 	args = append(args, filterArgs...)
 	args = append(args, peersPerBridge+1, peersPerBridge)
 	rows, err := tx.WithContext(ctx).Raw(`
@@ -135,7 +135,7 @@ func readTermBridges(ctx context.Context, tx *gorm.DB, input RecallEvidenceInput
 	return paths, rows.Err()
 }
 
-func smallTopicBridges(seeds []string, topics []ontology.EvidenceTopic) []recallcontract.EvidenceBridge {
+func smallTopicBridges(seeds []string, topics []topiccontract.EvidenceTopic) []recallcontract.EvidenceBridge {
 	sort.Slice(topics, func(i, j int) bool {
 		if len(topics[i].EvidenceIDs) != len(topics[j].EvidenceIDs) {
 			return len(topics[i].EvidenceIDs) < len(topics[j].EvidenceIDs)

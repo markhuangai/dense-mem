@@ -14,7 +14,7 @@ import (
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	organization "github.com/markhuangai/dense-mem/internal/topics"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -22,14 +22,14 @@ import (
 
 type discoveryFixture struct {
 	f       *ontologyFixture
-	turn    ontology.MaintenanceTurn
-	topic   ontology.Record
-	sources []ontology.SourceHandle
-	support ontology.SourceHandle
+	turn    topiccontract.MaintenanceTurn
+	topic   topiccontract.Record
+	sources []topiccontract.SourceHandle
+	support topiccontract.SourceHandle
 	calls   []*atomic.Int32
 }
 
-func discoveryEvidence(t *testing.T, f *ontologyFixture, index int) ontology.SourceHandle {
+func discoveryEvidence(t *testing.T, f *ontologyFixture, index int) topiccontract.SourceHandle {
 	t.Helper()
 	id := fmt.Sprintf("00000000-0000-4000-8000-%012d", index)
 	text := fmt.Sprintf("PostgreSQL discovery measurement source %04d.", index)
@@ -37,7 +37,7 @@ func discoveryEvidence(t *testing.T, f *ontologyFixture, index int) ontology.Sou
 		TeamID: f.team, OwnerProfileID: f.owners[index%len(f.owners)], IdempotencyKey: "discovery-" + id,
 		RequestHash: testHash(text), Evidence: []knowledge.EvidenceInput{{FragmentID: id, Content: text, ForceInsert: true}}})
 	require.NoError(t, err)
-	return ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: result.Evidence[0].FragmentID, Version: 1}
+	return topiccontract.SourceHandle{Kind: topiccontract.EvidenceSource, ID: result.Evidence[0].FragmentID, Version: 1}
 }
 
 func newDiscoveryFixture(t *testing.T, groups []int, outcomes []string, supported bool) *discoveryFixture {
@@ -51,9 +51,9 @@ func newDiscoveryFixtureWithSetup(t *testing.T, groups []int, outcomes []string,
 	f := x.f
 	if supported {
 		x.support = discoveryEvidence(t, f, 9999)
-		x.topic.Sources = []ontology.SourceDependency{f.source(t, x.support)}
+		x.topic.Sources = []topiccontract.SourceDependency{f.source(t, x.support)}
 	}
-	revalidationPublish(t, f, ontology.Change{Record: x.topic})
+	revalidationPublish(t, f, topiccontract.Change{Record: x.topic})
 	services := map[string]*organization.Service{}
 	for _, mode := range []string{"organized", "ambiguous", "failed"} {
 		var edit func(assessment.Request, *assessment.Response)
@@ -66,7 +66,7 @@ func newDiscoveryFixtureWithSetup(t *testing.T, groups []int, outcomes []string,
 			map[string]int{"prompt_tokens": 17, "completion_tokens": 9, "total_tokens": 26})
 		services[mode], x.calls = service, append(x.calls, calls)
 	}
-	var prepared [][]ontology.SourceHandle
+	var prepared [][]topiccontract.SourceHandle
 	if prepareSources {
 		for _, count := range groups {
 			prepared = append(prepared, x.addSources(t, count))
@@ -79,14 +79,14 @@ func newDiscoveryFixtureWithSetup(t *testing.T, groups []int, outcomes []string,
 		if len(outcomes) != 0 {
 			mode = outcomes[group]
 		}
-		var handles []ontology.SourceHandle
+		var handles []topiccontract.SourceHandle
 		if prepareSources {
 			handles = prepared[group]
 		} else {
 			handles = x.addSources(t, count)
 		}
 		result, err := services[mode].Organize(context.Background(), f.team,
-			ontology.OrganizationInput{OperationKey: fmt.Sprintf("discovery-receipt-%03d", group), Sources: handles})
+			topiccontract.OrganizationInput{OperationKey: fmt.Sprintf("discovery-receipt-%03d", group), Sources: handles})
 		if mode == "failed" {
 			require.Error(t, err)
 			require.Equal(t, "provider_response_invalid", result.FailureCode)
@@ -95,19 +95,19 @@ func newDiscoveryFixtureWithSetup(t *testing.T, groups []int, outcomes []string,
 			require.True(t, result.Current)
 		}
 		require.NotEmpty(t, result.AssessmentID)
-		bySource := map[string]ontology.OrganizationOutcome{}
+		bySource := map[string]topiccontract.OrganizationOutcome{}
 		for _, outcome := range result.Outcomes {
-			bySource[ontology.SourceKey(outcome.Source)] = outcome
+			bySource[topiccontract.SourceKey(outcome.Source)] = outcome
 		}
 		// Seed queue outcomes from real durable assessments; this fixture measures discovery, not batch completion.
 		require.NoError(t, f.store.withScope(context.Background(), f.team, false, func(tx *gorm.DB, fence scope) error {
 			for _, handle := range handles {
-				outcome, found := bySource[ontology.SourceKey(handle)]
+				outcome, found := bySource[topiccontract.SourceKey(handle)]
 				if !found {
 					require.Equal(t, "failed", mode)
-					outcome = ontology.OrganizationOutcome{Source: handle, Status: "failed", Reason: result.FailureCode}
+					outcome = topiccontract.OrganizationOutcome{Source: handle, Status: "failed", Reason: result.FailureCode}
 				}
-				status := ontology.MaintenanceOutcomeState(outcome, result, result.FailureCode)
+				status := topiccontract.MaintenanceOutcomeState(outcome, result, result.FailureCode)
 				require.Equal(t, mode, status)
 				if err := refreshMaintenanceSource(tx, fence, handle, false); err != nil {
 					return err
@@ -133,9 +133,9 @@ func newDiscoveryFixtureWithSetup(t *testing.T, groups []int, outcomes []string,
 	return x
 }
 
-func (x *discoveryFixture) addSources(t *testing.T, count int) []ontology.SourceHandle {
+func (x *discoveryFixture) addSources(t *testing.T, count int) []topiccontract.SourceHandle {
 	t.Helper()
-	var handles []ontology.SourceHandle
+	var handles []topiccontract.SourceHandle
 	for range count {
 		handle := discoveryEvidence(t, x.f, len(x.sources)+1)
 		x.sources, handles = append(x.sources, handle), append(handles, handle)
@@ -156,7 +156,7 @@ func (x *discoveryFixture) claimTurn(t *testing.T) {
 func (x *discoveryFixture) drain(t *testing.T) {
 	t.Helper()
 	for range 300 {
-		require.NoError(t, x.f.store.discoverMaintenanceError(context.Background(), x.turn, ontology.MaintenancePageSize))
+		require.NoError(t, x.f.store.discoverMaintenanceError(context.Background(), x.turn, topiccontract.MaintenancePageSize))
 		var complete bool
 		require.NoError(t, x.f.admin.Raw(`SELECT discovery_kind=1 AND NOT EXISTS(SELECT 1 FROM topic_maintenance_markers WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?)
 		 FROM topic_maintenance_teams WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?`, x.f.team, x.f.space, x.f.generation, x.f.team, x.f.space, x.f.generation).Row().Scan(&complete))
@@ -254,8 +254,8 @@ func (r *discoveryRecorder) completed() []maintenanceDiscoveryEvent {
 	return result
 }
 
-func discoverySortedSources(sources []ontology.SourceHandle) []ontology.SourceHandle {
-	result := append([]ontology.SourceHandle(nil), sources...)
-	sort.Slice(result, func(i, j int) bool { return ontology.SourceKey(result[i]) < ontology.SourceKey(result[j]) })
+func discoverySortedSources(sources []topiccontract.SourceHandle) []topiccontract.SourceHandle {
+	result := append([]topiccontract.SourceHandle(nil), sources...)
+	sort.Slice(result, func(i, j int) bool { return topiccontract.SourceKey(result[i]) < topiccontract.SourceKey(result[j]) })
 	return result
 }

@@ -9,7 +9,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -63,7 +63,7 @@ func TestOrganizationSemanticValidationDiagnostics(t *testing.T) {
 		{"definition_record", "definitions", func(_ *Request, r *Response) { r.Definitions[0].Label = "" }},
 		{"definition_catalog", "definitions", func(_ *Request, r *Response) { r.Definitions[0].ParentRef = r.Definitions[0].Ref }},
 		{"definition_unused", "definitions", func(_ *Request, r *Response) {
-			r.Definitions = append(r.Definitions, Definition{Ref: "unused", Kind: ontology.Topic, Key: "unused", Label: "Unused", Aliases: []string{}})
+			r.Definitions = append(r.Definitions, Definition{Ref: "unused", Kind: topic.Topic, Key: "unused", Label: "Unused", Aliases: []string{}})
 		}},
 		{"item_ref_unknown", "items", func(_ *Request, r *Response) { r.Items[0].Ref = "outside" }},
 		{"item_ref_duplicate", "items", func(_ *Request, r *Response) { r.Items[1].Ref = r.Items[0].Ref }},
@@ -71,7 +71,7 @@ func TestOrganizationSemanticValidationDiagnostics(t *testing.T) {
 		{"item_ambiguous_classification", "items", func(_ *Request, r *Response) { r.Items[0].Status = "ambiguous" }},
 		{"item_definition_ref", "items", func(_ *Request, r *Response) { r.Items[0].DefinitionRef = "synthetic-provider-secret" }},
 		{"item_locked_classification", "items", func(q *Request, _ *Response) { q.Items[0].LockedDefinitionRef = "locked" }},
-		{"item_source_kind", "items", func(q *Request, _ *Response) { q.Items[0].Kind = ontology.SourceKind("predicate") }},
+		{"item_source_kind", "items", func(q *Request, _ *Response) { q.Items[0].Kind = topic.SourceKind("predicate") }},
 		{"item_status", "items", func(_ *Request, r *Response) { r.Items[0].Status = "synthetic-provider-secret" }},
 		{"equivalence_ref", "equivalence", func(_ *Request, r *Response) { r.Equivalence[0].Ref = "outside" }},
 		{"equivalence_relation", "equivalence", func(_ *Request, r *Response) { r.Equivalence[0].Relation = "similar" }},
@@ -89,7 +89,7 @@ func TestOrganizationSemanticValidationDiagnostics(t *testing.T) {
 				require.Equal(t, 1, *diagnostic.ActualCount)
 			}
 			if tc.code == "definition_record" || tc.code == "definition_catalog" {
-				require.ErrorIs(t, err, ontology.ErrInvalid)
+				require.ErrorIs(t, err, topic.ErrInvalid)
 			}
 			body, marshalErr := json.Marshal(diagnostic)
 			require.NoError(t, marshalErr)
@@ -184,7 +184,7 @@ func requireCorrectionErrors(t *testing.T, err error, actual []assessor.Semantic
 	require.JSONEq(t, string(expected), string(encoded))
 }
 
-func requireValidation(t *testing.T, err error, stage, code, family string, responses ...Response) ontology.AssessmentValidation {
+func requireValidation(t *testing.T, err error, stage, code, family string, responses ...Response) topic.AssessmentValidation {
 	t.Helper()
 	var rejected *assessor.SemanticAssessmentResponseValidationError
 	require.ErrorAs(t, err, &rejected)

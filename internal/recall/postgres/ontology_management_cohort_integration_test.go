@@ -12,7 +12,7 @@ import (
 	auditapp "github.com/markhuangai/dense-mem/internal/audit"
 	auditpg "github.com/markhuangai/dense-mem/internal/audit/postgres"
 	application "github.com/markhuangai/dense-mem/internal/topics"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,7 +35,7 @@ func TestRecallOntologyManagementLockedCohort(t *testing.T) {
 	for _, testCase := range lock.Cases {
 		t.Run(testCase.ID, func(t *testing.T) {
 			f := newRecallOntologyFixture(t)
-			handles := []ontology.SourceHandle{}
+			handles := []topic.SourceHandle{}
 			for i, text := range testCase.Texts {
 				owner := i
 				if testCase.SameOwner {
@@ -57,14 +57,14 @@ func TestRecallOntologyManagementLockedCohort(t *testing.T) {
 			}
 			forceDistinct := testCase.Action == "group_together"
 			organizer, calls := f.organizerWithAccounting(t, groups, forceDistinct, nil)
-			_, err := organizer.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "initial", Sources: handles})
+			_, err := organizer.Organize(context.Background(), f.team, topic.OrganizationInput{OperationKey: "initial", Sources: handles})
 			require.NoError(t, err)
-			manager := application.NewManagementService(f.ontology, auditapp.New(auditpg.NewStore(f.app, f.rls)))
+			manager := application.NewManagementService(f.topicStore, auditapp.New(auditpg.NewStore(f.app, f.rls)))
 			actor := f.actor(0, "manager")
 			page, err := manager.Records(actor, "", "", 1)
 			require.NoError(t, err)
 			priorCalls := calls.Load()
-			_, err = manager.SaveDraft(actor, "", ontology.SaveDraftInput{OperationKey: uuid.NewString(), ExpectedRevision: page.Revision, Reason: "Locked manager correction", Edits: []ontology.ManagementEdit{{Action: testCase.Action, Members: handles}}})
+			_, err = manager.SaveDraft(actor, "", topic.SaveDraftInput{OperationKey: uuid.NewString(), ExpectedRevision: page.Revision, Reason: "Locked manager correction", Edits: []topic.ManagementEdit{{Action: testCase.Action, Members: handles}}})
 			check := func(expected int) {
 				result, err := f.search.RecallEvidence(f.actor(2, "member"), RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, Query: "Atlas PostgreSQL MongoDB", QueryEmbedding: []float32{1, 0, 0}, Limit: 10, OrganizationEnabled: true})
 				require.NoError(t, err)
@@ -78,7 +78,7 @@ func TestRecallOntologyManagementLockedCohort(t *testing.T) {
 				}
 				require.Equal(t, gold, seen, "source or distinct-fact loss")
 			}
-			require.ErrorIs(t, err, ontology.ErrInvalid)
+			require.ErrorIs(t, err, topic.ErrInvalid)
 			if testCase.Reject || forceDistinct {
 				check(2)
 			} else {

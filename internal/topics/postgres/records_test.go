@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -42,17 +42,17 @@ func TestStoredOntologyRecordDecodeRetainsClosedValidation(t *testing.T) {
 }
 
 func TestStoredOntologyRecordDecoderKeepsRowsIndependent(t *testing.T) {
-	group := ontology.Record{ID: uuid.NewString(), Version: 1, Kind: ontology.EvidenceGroup, Fingerprint: testHash("group"), Group: &ontology.Group{}}
+	group := topiccontract.Record{ID: uuid.NewString(), Version: 1, Kind: topiccontract.EvidenceGroup, Fingerprint: testHash("group"), Group: &topiccontract.Group{}}
 	for range 60 {
-		source := ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: uuid.NewString(), Version: 1}
+		source := topiccontract.SourceHandle{Kind: topiccontract.EvidenceSource, ID: uuid.NewString(), Version: 1}
 		group.Group.Members = append(group.Group.Members, source)
-		group.Sources = append(group.Sources, ontology.SourceDependency{SourceHandle: source, Fingerprint: testHash(source.ID)})
+		group.Sources = append(group.Sources, topiccontract.SourceDependency{SourceHandle: source, Fingerprint: testHash(source.ID)})
 	}
 	topic := testTopic("database")
 	topic.Version, topic.Fingerprint = 1, testHash("database")
 	decoder := newStoredRecordDecoder()
-	decoded := []ontology.Record{}
-	for _, record := range []ontology.Record{group, topic, group} {
+	decoded := []topiccontract.Record{}
+	for _, record := range []topiccontract.Record{group, topic, group} {
 		body, err := json.Marshal(record)
 		require.NoError(t, err)
 		body = append(body, []byte(strings.Repeat(" \t\r\n", 200))...)

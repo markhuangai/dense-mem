@@ -11,27 +11,27 @@ import (
 
 	"github.com/lib/pq"
 	"github.com/markhuangai/dense-mem/internal/jsonstrict"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 )
 
-func (s *Store) ReadOrganization(ctx context.Context, teamID string, handles []ontology.SourceHandle) (ontology.OrganizationContext, error) {
+func (s *Store) ReadOrganization(ctx context.Context, teamID string, handles []topic.SourceHandle) (topic.OrganizationContext, error) {
 	return s.readOrganization(ctx, teamID, handles, false)
 }
 
-func (s *Store) ReadEquivalence(ctx context.Context, teamID string, handles []ontology.SourceHandle) (ontology.OrganizationContext, error) {
+func (s *Store) ReadEquivalence(ctx context.Context, teamID string, handles []topic.SourceHandle) (topic.OrganizationContext, error) {
 	return s.readOrganization(ctx, teamID, handles, true)
 }
 
-func (s *Store) readOrganization(ctx context.Context, teamID string, handles []ontology.SourceHandle, equivalenceOnly bool) (ontology.OrganizationContext, error) {
+func (s *Store) readOrganization(ctx context.Context, teamID string, handles []topic.SourceHandle, equivalenceOnly bool) (topic.OrganizationContext, error) {
 	if err := requireAutomatic(ctx); err != nil {
-		return ontology.OrganizationContext{}, err
+		return topic.OrganizationContext{}, err
 	}
-	input, err := ontology.PrepareOrganizationInput(ontology.OrganizationInput{OperationKey: "read-context", Sources: handles})
+	input, err := topic.PrepareOrganizationInput(topic.OrganizationInput{OperationKey: "read-context", Sources: handles})
 	if err != nil {
-		return ontology.OrganizationContext{}, err
+		return topic.OrganizationContext{}, err
 	}
-	var result ontology.OrganizationContext
+	var result topic.OrganizationContext
 	err = s.withScope(ctx, teamID, true, func(tx *gorm.DB, fence scope) error {
 		var err error
 		result, err = s.assessmentContext(tx, fence, input.Sources, equivalenceOnly)
@@ -40,23 +40,23 @@ func (s *Store) readOrganization(ctx context.Context, teamID string, handles []o
 	return result, err
 }
 
-func (s *Store) ReadDefinitionHeads(ctx context.Context, teamID string, definition ontology.Record) ([]ontology.RecordView, error) {
+func (s *Store) ReadDefinitionHeads(ctx context.Context, teamID string, definition topic.Record) ([]topic.RecordView, error) {
 	if err := requireAutomatic(ctx); err != nil {
 		return nil, err
 	}
-	if err := ontology.ValidateRecord(definition); err != nil {
+	if err := topic.ValidateRecord(definition); err != nil {
 		return nil, err
 	}
 	if definition.Definition == nil || definition.Retired {
-		return nil, ontology.ErrInvalid
+		return nil, topic.ErrInvalid
 	}
-	var result []ontology.RecordView
+	var result []topic.RecordView
 	err := s.withScope(ctx, teamID, true, func(tx *gorm.DB, fence scope) error {
-		heads, err := validationCatalog(tx, fence, []ontology.Record{definition}, nil)
+		heads, err := validationCatalog(tx, fence, []topic.Record{definition}, nil)
 		if err != nil {
 			return err
 		}
-		var records []ontology.Record
+		var records []topic.Record
 		for _, record := range heads {
 			if record.Definition == nil || record.Retired || record.Kind != definition.Kind {
 				continue
@@ -70,12 +70,12 @@ func (s *Store) ReadDefinitionHeads(ctx context.Context, teamID string, definiti
 	return result, err
 }
 
-func (s *Store) organizationContext(tx *gorm.DB, fence scope, handles []ontology.SourceHandle) (ontology.OrganizationContext, error) {
+func (s *Store) organizationContext(tx *gorm.DB, fence scope, handles []topic.SourceHandle) (topic.OrganizationContext, error) {
 	return s.assessmentContext(tx, fence, handles, false)
 }
 
-func (s *Store) assessmentContext(tx *gorm.DB, fence scope, handles []ontology.SourceHandle, equivalenceOnly bool) (ontology.OrganizationContext, error) {
-	var result ontology.OrganizationContext
+func (s *Store) assessmentContext(tx *gorm.DB, fence scope, handles []topic.SourceHandle, equivalenceOnly bool) (topic.OrganizationContext, error) {
+	var result topic.OrganizationContext
 	var err error
 	result.Sources, err = organizationSources(tx, fence, handles)
 	if err != nil {
@@ -94,9 +94,9 @@ func (s *Store) assessmentContext(tx *gorm.DB, fence scope, handles []ontology.S
 		return result, err
 	}
 	forced := []string{}
-	unclassified := []ontology.SourceSnapshot{}
+	unclassified := []topic.SourceSnapshot{}
 	for _, source := range result.Sources {
-		locked, preferred := ontology.OrganizationClassification(source, result.Records, nil)
+		locked, preferred := topic.OrganizationClassification(source, result.Records, nil)
 		if locked != "" {
 			forced = append(forced, locked)
 		}
@@ -112,7 +112,7 @@ func (s *Store) assessmentContext(tx *gorm.DB, fence scope, handles []ontology.S
 		return result, err
 	}
 	for _, source := range result.Sources {
-		_, preferred := ontology.OrganizationClassification(source, result.Records, result.Candidates)
+		_, preferred := topic.OrganizationClassification(source, result.Records, result.Candidates)
 		if preferred != "" {
 			forced = append(forced, preferred)
 		}
@@ -124,7 +124,7 @@ func (s *Store) assessmentContext(tx *gorm.DB, fence scope, handles []ontology.S
 	return result, err
 }
 
-func organizationSourceRecords(tx *gorm.DB, fence scope, handles []ontology.SourceHandle, groupingOnly bool) ([]ontology.Record, error) {
+func organizationSourceRecords(tx *gorm.DB, fence scope, handles []topic.SourceHandle, groupingOnly bool) ([]topic.Record, error) {
 	kinds := make([]string, 0, len(handles))
 	ids := make([]string, 0, len(handles))
 	for _, handle := range handles {
@@ -152,11 +152,11 @@ func organizationSourceRecords(tx *gorm.DB, fence scope, handles []ontology.Sour
 			(matched.team_id,matched.shared_space_id,matched.space_generation,matched.record_id,matched.version,matched.kind)
 		LIMIT 1
 	) AS revision ON true
-	ORDER BY matched.record_id`, pq.Array(kinds), pq.Array(ids), fence.TeamID, fence.SpaceID, fence.Generation, ontology.MaxDependencyRecords+1).Rows()
+	ORDER BY matched.record_id`, pq.Array(kinds), pq.Array(ids), fence.TeamID, fence.SpaceID, fence.Generation, topic.MaxDependencyRecords+1).Rows()
 	if err != nil {
 		return nil, err
 	}
-	var records []ontology.Record
+	var records []topic.Record
 	for rows.Next() {
 		var body []byte
 		if err := rows.Scan(&body); err != nil {
@@ -178,22 +178,22 @@ func organizationSourceRecords(tx *gorm.DB, fence scope, handles []ontology.Sour
 	if closeErr != nil {
 		return nil, closeErr
 	}
-	if len(records) > ontology.MaxDependencyRecords {
-		return nil, ontology.ErrContextBound
+	if len(records) > topic.MaxDependencyRecords {
+		return nil, topic.ErrContextBound
 	}
 	return records, nil
 }
 
-func organizationSources(tx *gorm.DB, fence scope, handles []ontology.SourceHandle) ([]ontology.SourceSnapshot, error) {
+func organizationSources(tx *gorm.DB, fence scope, handles []topic.SourceHandle) ([]topic.SourceSnapshot, error) {
 	snapshots, err := readSources(tx, fence, handles)
 	if err != nil {
 		return nil, err
 	}
-	result := make([]ontology.SourceSnapshot, 0, len(handles))
+	result := make([]topic.SourceSnapshot, 0, len(handles))
 	for _, handle := range handles {
 		snapshot := snapshots[handle]
 		if !snapshot.Eligible || snapshot.SourceHandle != handle {
-			snapshot = ontology.SourceSnapshot{SourceHandle: handle, TeamID: fence.TeamID, SpaceID: fence.SpaceID, Generation: fence.Generation, State: map[string]string{}}
+			snapshot = topic.SourceSnapshot{SourceHandle: handle, TeamID: fence.TeamID, SpaceID: fence.SpaceID, Generation: fence.Generation, State: map[string]string{}}
 		}
 		result = append(result, snapshot)
 	}
@@ -201,26 +201,26 @@ func organizationSources(tx *gorm.DB, fence scope, handles []ontology.SourceHand
 }
 
 type vocabularyCandidate struct {
-	record        ontology.Record
+	record        topic.Record
 	forced, exact bool
 	rank          float32
 }
 
-func (s *Store) organizationVocabulary(tx *gorm.DB, fence scope, sources []ontology.SourceSnapshot, forced []string) ([]ontology.RecordView, error) {
+func (s *Store) organizationVocabulary(tx *gorm.DB, fence scope, sources []topic.SourceSnapshot, forced []string) ([]topic.RecordView, error) {
 	if forced == nil {
 		forced = []string{}
 	}
-	_, words := ontology.VocabularyQuery(sources)
+	_, words := topic.VocabularyQuery(sources)
 	if words == nil {
 		words = []string{}
 	}
-	query := ontology.LooseVocabularyQuery(words)
-	stopWords := pq.Array(ontology.VocabularyStopWords())
-	result := []ontology.RecordView{}
+	query := topic.LooseVocabularyQuery(words)
+	stopWords := pq.Array(topic.VocabularyStopWords())
+	result := []topic.RecordView{}
 	after := vocabularyCandidate{}
 	examined := 0
 	for {
-		limit := min(ontology.MaxVocabularyCandidates, ontology.MaxDependencyRecords-examined+1)
+		limit := min(topic.MaxVocabularyCandidates, topic.MaxDependencyRecords-examined+1)
 		rows, err := tx.Raw(`WITH ranked AS (
    SELECT revision.body,head.record_id,
     head.record_id=ANY(?::uuid[]) AS forced,head.names && ?::text[] AS exact,
@@ -268,11 +268,11 @@ func (s *Store) organizationVocabulary(tx *gorm.DB, fence scope, sources []ontol
 			return nil, closeErr
 		}
 		for offset := 0; offset < len(candidates); {
-			if examined == ontology.MaxDependencyRecords {
-				return nil, ontology.ErrContextBound
+			if examined == topic.MaxDependencyRecords {
+				return nil, topic.ErrContextBound
 			}
-			end := min(len(candidates), offset+ontology.MaxVocabularyCandidates-len(result), offset+ontology.MaxDependencyRecords-examined)
-			records := make([]ontology.Record, 0, end-offset)
+			end := min(len(candidates), offset+topic.MaxVocabularyCandidates-len(result), offset+topic.MaxDependencyRecords-examined)
+			records := make([]topic.Record, 0, end-offset)
 			for _, candidate := range candidates[offset:end] {
 				records = append(records, candidate.record)
 			}
@@ -285,7 +285,7 @@ func (s *Store) organizationVocabulary(tx *gorm.DB, fence scope, sources []ontol
 				after = candidates[offset+i]
 				if view.Current {
 					result = append(result, view)
-					if len(result) == ontology.MaxVocabularyCandidates {
+					if len(result) == topic.MaxVocabularyCandidates {
 						return result, nil
 					}
 				}
@@ -298,12 +298,12 @@ func (s *Store) organizationVocabulary(tx *gorm.DB, fence scope, sources []ontol
 	}
 }
 
-func decodeOrganization(body []byte) (ontology.OrganizationReceipt, error) {
-	var receipt ontology.OrganizationReceipt
-	if err := jsonstrict.Decode(strings.NewReader(string(body)), &receipt, ontology.MaxPublicationBytes); err != nil {
+func decodeOrganization(body []byte) (topic.OrganizationReceipt, error) {
+	var receipt topic.OrganizationReceipt
+	if err := jsonstrict.Decode(strings.NewReader(string(body)), &receipt, topic.MaxPublicationBytes); err != nil {
 		return receipt, err
 	}
-	return receipt, ontology.ValidateOrganizationReceipt(receipt)
+	return receipt, topic.ValidateOrganizationReceipt(receipt)
 }
 
 func lockOrganizationCatalog(tx *gorm.DB, fence scope) error {
@@ -315,14 +315,14 @@ func lockOrganizationCatalog(tx *gorm.DB, fence scope) error {
 	return tx.Raw(`SELECT revision FROM topic_catalog_heads WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? FOR UPDATE`, fence.TeamID, fence.SpaceID, fence.Generation).Row().Scan(&revision)
 }
 
-func organizationByKey(tx *gorm.DB, fence scope, key string, equivalenceOnly bool) (ontology.OrganizationReceipt, bool, error) {
+func organizationByKey(tx *gorm.DB, fence scope, key string, equivalenceOnly bool) (topic.OrganizationReceipt, bool, error) {
 	var body []byte
 	err := tx.Raw(`SELECT body FROM `+organizationAssessmentTable(equivalenceOnly)+` WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND operation_key=?`, fence.TeamID, fence.SpaceID, fence.Generation, key).Row().Scan(&body)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ontology.OrganizationReceipt{}, false, nil
+		return topic.OrganizationReceipt{}, false, nil
 	}
 	if err != nil {
-		return ontology.OrganizationReceipt{}, false, err
+		return topic.OrganizationReceipt{}, false, err
 	}
 	receipt, err := decodeOrganization(body)
 	return receipt, true, err
@@ -335,19 +335,19 @@ func organizationAssessmentTable(equivalenceOnly bool) string {
 	return "historical_organization_assessments"
 }
 
-func (s *Store) FindOrganization(ctx context.Context, teamID string, input ontology.OrganizationInput, identity string) (ontology.OrganizationResult, bool, error) {
+func (s *Store) FindOrganization(ctx context.Context, teamID string, input topic.OrganizationInput, identity string) (topic.OrganizationResult, bool, error) {
 	if err := requireAutomatic(ctx); err != nil {
-		return ontology.OrganizationResult{}, false, err
+		return topic.OrganizationResult{}, false, err
 	}
-	input, err := ontology.PrepareOrganizationInput(input)
+	input, err := topic.PrepareOrganizationInput(input)
 	if err != nil {
-		return ontology.OrganizationResult{}, false, err
+		return topic.OrganizationResult{}, false, err
 	}
-	hash, err := ontology.OrganizationInputHash(input, identity)
+	hash, err := topic.OrganizationInputHash(input, identity)
 	if err != nil {
-		return ontology.OrganizationResult{}, false, err
+		return topic.OrganizationResult{}, false, err
 	}
-	var result ontology.OrganizationResult
+	var result topic.OrganizationResult
 	found := false
 	err = s.withScope(ctx, teamID, false, func(tx *gorm.DB, fence scope) error {
 		if input.EquivalenceOnly {
@@ -364,7 +364,7 @@ func (s *Store) FindOrganization(ctx context.Context, teamID string, input ontol
 		}
 		if exists {
 			if receipt.InputHash != hash {
-				return ontology.ErrConflict
+				return topic.ErrConflict
 			}
 			current, err := s.organizationCurrent(tx, fence, receipt)
 			if err != nil {
@@ -377,25 +377,25 @@ func (s *Store) FindOrganization(ctx context.Context, teamID string, input ontol
 			return nil
 		}
 		contextData, err := s.assessmentContext(tx, fence, input.Sources, input.EquivalenceOnly)
-		if errors.Is(err, ontology.ErrContextBound) {
+		if errors.Is(err, topic.ErrContextBound) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		contextHash, err := ontology.OrganizationContextHash(contextData)
+		contextHash, err := topic.OrganizationContextHash(contextData)
 		if err != nil {
 			return err
 		}
-		sources := make([]ontology.SourceDependency, 0, len(contextData.Sources))
+		sources := make([]topic.SourceDependency, 0, len(contextData.Sources))
 		for _, source := range contextData.Sources {
-			fingerprint, err := ontology.SourceFingerprint(source)
+			fingerprint, err := topic.SourceFingerprint(source)
 			if err != nil {
 				return err
 			}
-			sources = append(sources, ontology.SourceDependency{SourceHandle: source.SourceHandle, Fingerprint: fingerprint})
+			sources = append(sources, topic.SourceDependency{SourceHandle: source.SourceHandle, Fingerprint: fingerprint})
 		}
-		batchHash, err := ontology.OrganizationBatchHash(sources, identity)
+		batchHash, err := topic.OrganizationBatchHash(sources, identity)
 		if err != nil {
 			return err
 		}
@@ -442,33 +442,33 @@ func (s *Store) FindOrganization(ctx context.Context, teamID string, input ontol
 	return result, found, err
 }
 
-func (s *Store) organizationCurrent(tx *gorm.DB, fence scope, receipt ontology.OrganizationReceipt) (bool, error) {
+func (s *Store) organizationCurrent(tx *gorm.DB, fence scope, receipt topic.OrganizationReceipt) (bool, error) {
 	if receipt.Result.FailureCode != "" {
 		return false, nil
 	}
 	return s.organizationInputsCurrent(tx, fence, receipt)
 }
 
-func insertOrganization(tx *gorm.DB, fence scope, receipt ontology.OrganizationReceipt) error {
-	if err := ontology.ValidateOrganizationReceipt(receipt); err != nil {
+func insertOrganization(tx *gorm.DB, fence scope, receipt topic.OrganizationReceipt) error {
+	if err := topic.ValidateOrganizationReceipt(receipt); err != nil {
 		return err
 	}
 	encoded, err := json.Marshal(receipt)
 	if err != nil {
 		return err
 	}
-	if len(encoded) > ontology.MaxPublicationBytes {
-		return ontology.ErrInvalid
+	if len(encoded) > topic.MaxPublicationBytes {
+		return topic.ErrInvalid
 	}
 	return tx.Exec(`INSERT INTO `+organizationAssessmentTable(receipt.EquivalenceOnly)+`(team_id,shared_space_id,space_generation,operation_key,assessment_id,input_hash,batch_hash,body)
         VALUES (?::uuid,?::uuid,?, ?,?::uuid,?,?,?::jsonb)`, fence.TeamID, fence.SpaceID, fence.Generation, receipt.OperationKey, receipt.ID, receipt.InputHash, receipt.BatchHash, string(encoded)).Error
 }
 
-func (s *Store) CommitOrganization(ctx context.Context, teamID string, receipt ontology.OrganizationReceipt, input ontology.Publication) (result ontology.OrganizationResult, err error) {
+func (s *Store) CommitOrganization(ctx context.Context, teamID string, receipt topic.OrganizationReceipt, input topic.Publication) (result topic.OrganizationResult, err error) {
 	if err := requireAutomatic(ctx); err != nil {
-		return ontology.OrganizationResult{}, err
+		return topic.OrganizationResult{}, err
 	}
-	ctx, diagnostic, finish := ontology.ObservePublication(ctx, s.publicationObserver, teamID, "automatic", input)
+	ctx, diagnostic, finish := topic.ObservePublication(ctx, s.publicationObserver, teamID, "automatic", input)
 	defer func() {
 		if diagnostic != nil {
 			diagnostic.Result = result.Publication
@@ -477,8 +477,8 @@ func (s *Store) CommitOrganization(ctx context.Context, teamID string, receipt o
 		}
 		finish(err)
 	}()
-	if err := ontology.ValidateOrganizationReceipt(receipt); err != nil {
-		return ontology.OrganizationResult{}, err
+	if err := topic.ValidateOrganizationReceipt(receipt); err != nil {
+		return topic.OrganizationResult{}, err
 	}
 	err = s.withScope(ctx, teamID, false, func(tx *gorm.DB, fence scope) error {
 		if receipt.Result.FailureCode == "" {
@@ -495,7 +495,7 @@ func (s *Store) CommitOrganization(ctx context.Context, teamID string, receipt o
 		}
 		if found {
 			if existing.InputHash != receipt.InputHash {
-				return ontology.ErrConflict
+				return topic.ErrConflict
 			}
 			result = existing.Result
 			result.Existing = true
@@ -507,20 +507,20 @@ func (s *Store) CommitOrganization(ctx context.Context, teamID string, receipt o
 				return err
 			}
 			if rejection != nil {
-				return &ontology.FreshnessError{Rejection: *rejection}
+				return &topic.FreshnessError{Rejection: *rejection}
 			}
 			if len(input.Changes) > 0 {
 				if receipt.EquivalenceOnly {
 					for _, change := range input.Changes {
-						if change.Record.Kind != ontology.EvidenceGroup {
-							return ontology.ErrInvalid
+						if change.Record.Kind != topic.EvidenceGroup {
+							return topic.ErrInvalid
 						}
 					}
 				}
 				if input.OperationKey != receipt.OperationKey {
-					return ontology.ErrInvalid
+					return topic.ErrInvalid
 				}
-				if err := ontology.ValidatePublication(input); err != nil {
+				if err := topic.ValidatePublication(input); err != nil {
 					return err
 				}
 				input.ExpectedRevision, err = catalogRevision(tx, fence)
@@ -535,7 +535,7 @@ func (s *Store) CommitOrganization(ctx context.Context, teamID string, receipt o
 			}
 		}
 		if receipt.Result.FailureCode == "" {
-			handles := []ontology.SourceHandle{}
+			handles := []topic.SourceHandle{}
 			for _, source := range receipt.Sources {
 				handles = append(handles, source.SourceHandle)
 			}
@@ -543,11 +543,11 @@ func (s *Store) CommitOrganization(ctx context.Context, teamID string, receipt o
 			if err != nil {
 				return err
 			}
-			receipt.Dependencies, err = ontology.OrganizationDependencies(contextData)
+			receipt.Dependencies, err = topic.OrganizationDependencies(contextData)
 			if err != nil {
 				return err
 			}
-			receipt.ContextHash, err = ontology.OrganizationContextHash(contextData)
+			receipt.ContextHash, err = topic.OrganizationContextHash(contextData)
 			if err != nil {
 				return err
 			}
@@ -562,4 +562,4 @@ func (s *Store) CommitOrganization(ctx context.Context, teamID string, receipt o
 	return result, err
 }
 
-var _ ontology.OrganizationRepository = (*Store)(nil)
+var _ topic.OrganizationRepository = (*Store)(nil)

@@ -8,7 +8,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
@@ -29,17 +29,17 @@ func TestOrganizationDiagnosticCoverageWitnessResultProtection(t *testing.T) {
 	directory := t.TempDir()
 	recorder := newOrganizationDiagnosticRecorder(t, directory, "typed-result", cfg)
 	path := filepath.Join(directory, "result.json")
-	context := ontology.OrganizationContext{Sources: []ontology.SourceSnapshot{{SourceHandle: ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: "source", Version: 9007199254740993}, State: map[string]string{"content": cfg.AIVerifierAPIKey}}}}
-	writeCoverageWitnessDiagnostic(t, recorder, path, map[string]any{"context": context, "request": assessment.Request{RequestID: "captured-assessment"}, "original_receipt": ontology.OrganizationReceipt{ID: "original-assessment"}})
+	context := topic.OrganizationContext{Sources: []topic.SourceSnapshot{{SourceHandle: topic.SourceHandle{Kind: topic.EvidenceSource, ID: "source", Version: 9007199254740993}, State: map[string]string{"content": cfg.AIVerifierAPIKey}}}}
+	writeCoverageWitnessDiagnostic(t, recorder, path, map[string]any{"context": context, "request": assessment.Request{RequestID: "captured-assessment"}, "original_receipt": topic.OrganizationReceipt{ID: "original-assessment"}})
 	body, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.NotContains(t, string(body), cfg.AIVerifierAPIKey)
 	require.Contains(t, string(body), observability.CredentialProtectionRedacted)
 	require.Contains(t, string(body), "9007199254740993")
 	var result struct {
-		Context ontology.OrganizationContext `json:"context"`
-		Request assessment.Request           `json:"request"`
-		Receipt ontology.OrganizationReceipt `json:"original_receipt"`
+		Context topic.OrganizationContext `json:"context"`
+		Request assessment.Request        `json:"request"`
+		Receipt topic.OrganizationReceipt `json:"original_receipt"`
 	}
 	require.NoError(t, json.Unmarshal(body, &result))
 	require.Equal(t, context.Sources[0].Version, result.Context.Sources[0].Version)

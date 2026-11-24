@@ -7,13 +7,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 )
 
-func (s *Store) AdmitMaintenanceAttempt(ctx context.Context, claim ontology.MaintenanceClaim, assessmentID string, number, input, output int, now time.Time) error {
+func (s *Store) AdmitMaintenanceAttempt(ctx context.Context, claim topic.MaintenanceClaim, assessmentID string, number, input, output int, now time.Time) error {
 	if _, err := uuid.Parse(assessmentID); err != nil || number < 1 || number > 3 || input < 1 || output < 1 {
-		return ontology.ErrInvalid
+		return topic.ErrInvalid
 	}
 	return s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
 		paused, err := maintenanceState(tx)
@@ -21,30 +21,30 @@ func (s *Store) AdmitMaintenanceAttempt(ctx context.Context, claim ontology.Main
 			return err
 		}
 		if paused {
-			return ontology.ErrMaintenancePaused
+			return topic.ErrMaintenancePaused
 		}
 		enabled, err := maintenanceEnabled(tx)
 		if err != nil {
 			return err
 		}
 		if !enabled {
-			return ontology.ErrMaintenanceDisabled
+			return topic.ErrMaintenanceDisabled
 		}
 		window, err := scanMaintenanceWindow(tx.Raw(`SELECT `+maintenanceWindowColumns+` FROM topic_maintenance_windows WHERE window_id=?::uuid FOR UPDATE`, claim.WindowID).Row())
 		if err != nil {
 			return err
 		}
 		if window == nil || now.Before(window.StartsAt) || !now.Before(window.EndsAt) || window.Policy.ContextWindowTokens == 0 {
-			return ontology.ErrWindowClosed
+			return topic.ErrWindowClosed
 		}
-		if err := maintenancePublicationFence(ontology.WithMaintenanceClaim(ctx, claim), tx, scope{TeamID: claim.TeamID, SpaceID: claim.SpaceID, Generation: claim.Generation}); err != nil {
+		if err := maintenancePublicationFence(topic.WithMaintenanceClaim(ctx, claim), tx, scope{TeamID: claim.TeamID, SpaceID: claim.SpaceID, Generation: claim.Generation}); err != nil {
 			return err
 		}
 		var reservedInput, reservedOutput int
 		err = tx.Raw(`SELECT estimated_input_tokens,max_output_tokens FROM topic_maintenance_attempts WHERE batch_id=?::uuid AND assessment_id=?::uuid AND attempt=?`, claim.ID, assessmentID, number).Row().Scan(&reservedInput, &reservedOutput)
 		if err == nil {
 			if reservedInput != input || reservedOutput != output {
-				return ontology.ErrConflict
+				return topic.ErrConflict
 			}
 			return nil
 		}
@@ -52,16 +52,16 @@ func (s *Store) AdmitMaintenanceAttempt(ctx context.Context, claim ontology.Main
 			return err
 		}
 		if int64(input)+int64(output) > window.Policy.ContextWindowTokens {
-			return ontology.ErrConfiguration
+			return topic.ErrConfiguration
 		}
 		return tx.Exec(`INSERT INTO topic_maintenance_attempts(batch_id,assessment_id,attempt,window_id,reserved_input,reserved_output,estimated_input_tokens,max_output_tokens,admitted_at)
 		 VALUES(?::uuid,?::uuid,?,?::uuid,0,0,?,?,?)`, claim.ID, assessmentID, number, claim.WindowID, input, output, now).Error
 	})
 }
 
-func (s *Store) ReconcileMaintenanceAttempt(ctx context.Context, claim ontology.MaintenanceClaim, assessmentID string, attempt ontology.AssessmentAttempt) error {
+func (s *Store) ReconcileMaintenanceAttempt(ctx context.Context, claim topic.MaintenanceClaim, assessmentID string, attempt topic.AssessmentAttempt) error {
 	if attempt.Number < 1 || attempt.Number > 3 || attempt.ReportedInputTokens < 0 || attempt.ReportedOutputTokens < 0 || attempt.ReportedTotalTokens < 0 {
-		return ontology.ErrInvalid
+		return topic.ErrInvalid
 	}
 	return s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
 		if _, err := maintenanceState(tx); err != nil {
@@ -72,7 +72,7 @@ func (s *Store) ReconcileMaintenanceAttempt(ctx context.Context, claim ontology.
 			return err
 		}
 		if window == nil {
-			return ontology.ErrAccounting
+			return topic.ErrAccounting
 		}
 		var reportedInput, reportedOutput, reportedTotal sql.NullInt64
 		var reconciled sql.NullTime
@@ -82,7 +82,7 @@ func (s *Store) ReconcileMaintenanceAttempt(ctx context.Context, claim ontology.
 		}
 		if reconciled.Valid {
 			if reportedInput.Int64 != int64(attempt.ReportedInputTokens) || reportedOutput.Int64 != int64(attempt.ReportedOutputTokens) || reportedTotal.Int64 != int64(attempt.ReportedTotalTokens) {
-				return ontology.ErrConflict
+				return topic.ErrConflict
 			}
 			return nil
 		}

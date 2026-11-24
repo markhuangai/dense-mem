@@ -22,7 +22,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres/testfixture"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/pressly/goose/v3"
 	goosedb "github.com/pressly/goose/v3/database"
 	"github.com/stretchr/testify/require"
@@ -290,7 +290,7 @@ func (f *ontologyFixture) evidence(t *testing.T, owner int, text string) knowled
 	return *result
 }
 
-func (f *ontologyFixture) evidenceAt(t *testing.T, owner int, text, created string) ontology.SourceHandle {
+func (f *ontologyFixture) evidenceAt(t *testing.T, owner int, text, created string) topic.SourceHandle {
 	t.Helper()
 	seed := f.evidence(t, owner, text)
 	ingestID, fragmentID := uuid.NewString(), uuid.NewString()
@@ -306,28 +306,28 @@ func (f *ontologyFixture) evidenceAt(t *testing.T, owner int, text, created stri
 			SELECT ?::uuid,team_id,?::uuid,owner_profile_id,space_id,space_generation,0,content,content_hash,source_type,authority,source_ref,labels,metadata,true,?::timestamptz
 			FROM evidence_fragments WHERE team_id=?::uuid AND fragment_id=?::uuid`, fragmentID, ingestID, created, f.team, seed.Evidence[0].FragmentID).Error
 	}))
-	return ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: fragmentID, Version: 1}
+	return topic.SourceHandle{Kind: topic.EvidenceSource, ID: fragmentID, Version: 1}
 }
 
-func (f *ontologyFixture) source(t *testing.T, handle ontology.SourceHandle) ontology.SourceDependency {
+func (f *ontologyFixture) source(t *testing.T, handle topic.SourceHandle) topic.SourceDependency {
 	t.Helper()
-	sources, err := f.store.ReadSources(context.Background(), f.team, []ontology.SourceHandle{handle})
+	sources, err := f.store.ReadSources(context.Background(), f.team, []topic.SourceHandle{handle})
 	require.NoError(t, err)
 	require.Len(t, sources, 1)
-	fingerprint, err := ontology.SourceFingerprint(sources[0])
+	fingerprint, err := topic.SourceFingerprint(sources[0])
 	require.NoError(t, err)
-	return ontology.SourceDependency{SourceHandle: handle, Fingerprint: fingerprint}
+	return topic.SourceDependency{SourceHandle: handle, Fingerprint: fingerprint}
 }
 
 func testHash(text string) string {
 	digest := sha256.Sum256([]byte(text))
 	return "sha256:" + hex.EncodeToString(digest[:])
 }
-func testTopic(key string) ontology.Record {
-	return ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: key, Label: key}}
+func testTopic(key string) topic.Record {
+	return topic.Record{ID: uuid.NewString(), Kind: topic.Topic, Definition: &topic.Definition{Key: key, Label: key}}
 }
-func testPublication(key string, revision int64, changes ...ontology.Change) ontology.Publication {
-	return ontology.Publication{OperationKey: key, ExpectedRevision: revision, Reason: "synthetic ontology fixture", Changes: changes}
+func testPublication(key string, revision int64, changes ...topic.Change) topic.Publication {
+	return topic.Publication{OperationKey: key, ExpectedRevision: revision, Reason: "synthetic ontology fixture", Changes: changes}
 }
 
 func (f *ontologyFixture) canonicalSnapshot(t *testing.T) map[string]string {

@@ -12,13 +12,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 )
 
 type storedManagementDraft struct {
-	Draft    ontology.ManagementDraft `json:"draft"`
-	Prepared ontology.Publication     `json:"prepared"`
+	Draft    topic.ManagementDraft `json:"draft"`
+	Prepared topic.Publication     `json:"prepared"`
 }
 
 func (s *Store) withManagerScope(ctx context.Context, teamID string, write bool, fn func(*gorm.DB, scope, string) error) error {
@@ -28,10 +28,10 @@ func (s *Store) withManagerScope(ctx context.Context, teamID string, write bool,
 		grant = "write"
 	}
 	if !ok || actor.TeamID.String() != teamID || actor.OwnerID == uuid.Nil || actor.Role != "manager" || !slices.Contains(actor.Grants, grant) {
-		return ontology.ErrUnauthorized
+		return topic.ErrUnauthorized
 	}
 	if s == nil || s.db == nil || s.rls == nil {
-		return fmt.Errorf("ontology: database and RLS required")
+		return fmt.Errorf("topics: database and RLS required")
 	}
 	run := s.rls.WithTeamProfileReadOnlyRepeatableTx
 	if write {
@@ -55,13 +55,13 @@ const draftScopeSQL = `team_id=?::uuid AND shared_space_id=?::uuid AND space_gen
 func loadManagementDraft(tx *gorm.DB, fence scope, owner, id string, lock bool) (storedManagementDraft, error) {
 	var result storedManagementDraft
 	if parsed, err := uuid.Parse(id); err != nil || parsed == uuid.Nil || parsed.String() != id {
-		return result, ontology.ErrInvalid
+		return result, topic.ErrInvalid
 	}
 	if lock {
 		var version int64
 		err := tx.Raw(`SELECT version FROM topic_draft_heads WHERE `+draftScopeSQL+` AND draft_id=?::uuid FOR UPDATE`, append(draftScopeArgs(fence, owner), id)...).Row().Scan(&version)
 		if errors.Is(err, sql.ErrNoRows) {
-			return result, ontology.ErrNotFound
+			return result, topic.ErrNotFound
 		}
 		if err != nil {
 			return result, err
@@ -71,14 +71,14 @@ func loadManagementDraft(tx *gorm.DB, fence scope, owner, id string, lock bool) 
 	var body []byte
 	err := tx.Raw(query, append(draftScopeArgs(fence, owner), id)...).Row().Scan(&body)
 	if errors.Is(err, sql.ErrNoRows) {
-		return result, ontology.ErrNotFound
+		return result, topic.ErrNotFound
 	}
 	if err != nil {
 		return result, err
 	}
 	err = json.Unmarshal(body, &result)
 	if err == nil {
-		if diagnostic := ontology.PublicationDiagnosticFromContext(tx.Statement.Context); diagnostic != nil {
+		if diagnostic := topic.PublicationDiagnosticFromContext(tx.Statement.Context); diagnostic != nil {
 			diagnostic.DraftID, diagnostic.Draft = id, &result.Draft
 		}
 	}
@@ -97,7 +97,7 @@ func replayManagementDraft(tx *gorm.DB, fence scope, owner, key, hash string) (s
 		return result, false, err
 	}
 	if storedHash != hash {
-		return result, true, ontology.ErrConflict
+		return result, true, topic.ErrConflict
 	}
 	err = json.Unmarshal(body, &result)
 	return result, true, err
@@ -118,34 +118,34 @@ func persistManagementDraft(tx *gorm.DB, fence scope, owner, key, hash string, p
 		return err
 	}
 	if !written {
-		return ontology.ErrConflict
+		return topic.ErrConflict
 	}
 	return nil
 }
 
-func insertManagementAudit(ctx context.Context, tx *gorm.DB, prepare ontology.ManagementAudit, event ontology.ManagementAuditEvent) error {
+func insertManagementAudit(ctx context.Context, tx *gorm.DB, prepare topic.ManagementAudit, event topic.ManagementAuditEvent) error {
 	if prepare == nil {
-		return ontology.ErrAuditUnavailable
+		return topic.ErrAuditUnavailable
 	}
 	entry, err := prepare(event)
 	if err == nil {
 		err = storage.InsertAuditEntryTx(ctx, tx, entry)
 	}
 	if err != nil {
-		return fmt.Errorf("%w: %w", ontology.ErrAuditUnavailable, err)
+		return fmt.Errorf("%w: %w", topic.ErrAuditUnavailable, err)
 	}
 	return nil
 }
 
-func (s *Store) SaveManagementDraft(ctx context.Context, teamID, id string, input ontology.SaveDraftInput, prepare ontology.ManagementPrepare, audit ontology.ManagementAudit) (ontology.ManagementDraft, error) {
+func (s *Store) SaveManagementDraft(ctx context.Context, teamID, id string, input topic.SaveDraftInput, prepare topic.ManagementPrepare, audit topic.ManagementAudit) (topic.ManagementDraft, error) {
 	var result storedManagementDraft
-	if err := ontology.ValidateOperation(input.OperationKey, input.ExpectedRevision, input.Reason); err != nil {
+	if err := topic.ValidateOperation(input.OperationKey, input.ExpectedRevision, input.Reason); err != nil {
 		return result.Draft, err
 	}
 	if prepare == nil || (id == "" && input.ExpectedVersion != 0) {
-		return result.Draft, ontology.ErrInvalid
+		return result.Draft, topic.ErrInvalid
 	}
-	hash, err := ontology.ManagementRequestHash("save", id, input)
+	hash, err := topic.ManagementRequestHash("save", id, input)
 	if err != nil {
 		return result.Draft, err
 	}
@@ -159,7 +159,7 @@ func (s *Store) SaveManagementDraft(ctx context.Context, teamID, id string, inpu
 		if err != nil || found {
 			return err
 		}
-		if err := ontology.ValidateSaveDraft(input); err != nil {
+		if err := topic.ValidateSaveDraft(input); err != nil {
 			return err
 		}
 		if id == "" {
@@ -170,13 +170,13 @@ func (s *Store) SaveManagementDraft(ctx context.Context, teamID, id string, inpu
 				return err
 			}
 			if result.Draft.Version != input.ExpectedVersion {
-				return ontology.PublicationVersionRejection("draft_version", id, input.ExpectedVersion, result.Draft.Version)
+				return topic.PublicationVersionRejection("draft_version", id, input.ExpectedVersion, result.Draft.Version)
 			}
 			if result.Draft.State != "open" {
-				return &ontology.PublicationRejection{Cause: ontology.ErrConflict, Reason: "draft_state", RecordID: id, Expected: "open", Observed: result.Draft.State}
+				return &topic.PublicationRejection{Cause: topic.ErrConflict, Reason: "draft_state", RecordID: id, Expected: "open", Observed: result.Draft.State}
 			}
 		}
-		if diagnostic := ontology.PublicationDiagnosticFromContext(ctx); diagnostic != nil {
+		if diagnostic := topic.PublicationDiagnosticFromContext(ctx); diagnostic != nil {
 			diagnostic.DraftID = id
 		}
 		current, err := managementEditContext(tx, fence, id, input)
@@ -187,19 +187,19 @@ func (s *Store) SaveManagementDraft(ctx context.Context, teamID, id string, inpu
 		if err != nil {
 			return err
 		}
-		if diagnostic := ontology.PublicationDiagnosticFromContext(ctx); diagnostic != nil {
+		if diagnostic := topic.PublicationDiagnosticFromContext(ctx); diagnostic != nil {
 			diagnostic.Publication = &publication
 		}
-		result = storedManagementDraft{Draft: ontology.ManagementDraft{ID: id, Version: input.ExpectedVersion + 1, State: "open", BaseRevision: input.ExpectedRevision, Reason: input.Reason, Edits: input.Edits, UpdatedAt: time.Now().UTC()}, Prepared: publication}
+		result = storedManagementDraft{Draft: topic.ManagementDraft{ID: id, Version: input.ExpectedVersion + 1, State: "open", BaseRevision: input.ExpectedRevision, Reason: input.Reason, Edits: input.Edits, UpdatedAt: time.Now().UTC()}, Prepared: publication}
 		if err := persistManagementDraft(tx, fence, owner, input.OperationKey, hash, input.ExpectedVersion, result); err != nil {
 			return err
 		}
-		return insertManagementAudit(ctx, tx, audit, ontology.ManagementAuditEvent{Operation: "TOPIC_DRAFT_SAVE", EntityID: id, Reason: input.Reason, Version: result.Draft.Version, Revision: input.ExpectedRevision})
+		return insertManagementAudit(ctx, tx, audit, topic.ManagementAuditEvent{Operation: "TOPIC_DRAFT_SAVE", EntityID: id, Reason: input.Reason, Version: result.Draft.Version, Revision: input.ExpectedRevision})
 	})
 	return result.Draft, err
 }
 
-func (s *Store) GetManagementDraft(ctx context.Context, teamID, id string) (ontology.ManagementDraft, error) {
+func (s *Store) GetManagementDraft(ctx context.Context, teamID, id string) (topic.ManagementDraft, error) {
 	var result storedManagementDraft
 	err := s.withManagerScope(ctx, teamID, false, func(tx *gorm.DB, fence scope, owner string) error {
 		var err error
@@ -209,14 +209,14 @@ func (s *Store) GetManagementDraft(ctx context.Context, teamID, id string) (onto
 	return result.Draft, err
 }
 
-func (s *Store) ListManagementDrafts(ctx context.Context, teamID, cursor string, limit int) (ontology.DraftPage, error) {
-	page := ontology.DraftPage{Drafts: []ontology.ManagementDraft{}}
-	if limit < 1 || limit > ontology.MaxPageSize {
-		return page, ontology.ErrInvalid
+func (s *Store) ListManagementDrafts(ctx context.Context, teamID, cursor string, limit int) (topic.DraftPage, error) {
+	page := topic.DraftPage{Drafts: []topic.ManagementDraft{}}
+	if limit < 1 || limit > topic.MaxPageSize {
+		return page, topic.ErrInvalid
 	}
 	if cursor != "" {
 		if id, err := uuid.Parse(cursor); err != nil || id.String() != cursor {
-			return page, ontology.ErrInvalid
+			return page, topic.ErrInvalid
 		}
 	}
 	err := s.withManagerScope(ctx, teamID, false, func(tx *gorm.DB, fence scope, owner string) error {
@@ -245,15 +245,15 @@ func (s *Store) ListManagementDrafts(ctx context.Context, teamID, cursor string,
 	return page, err
 }
 
-func (s *Store) CommandManagementDraft(ctx context.Context, teamID, id, action string, input ontology.DraftCommand, audit ontology.ManagementAudit) (ontology.ManagementDraft, error) {
+func (s *Store) CommandManagementDraft(ctx context.Context, teamID, id, action string, input topic.DraftCommand, audit topic.ManagementAudit) (topic.ManagementDraft, error) {
 	var result storedManagementDraft
-	if err := ontology.ValidateOperation(input.OperationKey, input.ExpectedRevision, input.Reason); err != nil {
+	if err := topic.ValidateOperation(input.OperationKey, input.ExpectedRevision, input.Reason); err != nil {
 		return result.Draft, err
 	}
 	if input.ExpectedVersion < 1 || (action != "publish" && action != "discard") {
-		return result.Draft, ontology.ErrInvalid
+		return result.Draft, topic.ErrInvalid
 	}
-	hash, err := ontology.ManagementRequestHash(action, id, input)
+	hash, err := topic.ManagementRequestHash(action, id, input)
 	if err != nil {
 		return result.Draft, err
 	}
@@ -272,16 +272,16 @@ func (s *Store) CommandManagementDraft(ctx context.Context, teamID, id, action s
 			return err
 		}
 		if result.Draft.Version != input.ExpectedVersion {
-			return ontology.PublicationVersionRejection("draft_version", id, input.ExpectedVersion, result.Draft.Version)
+			return topic.PublicationVersionRejection("draft_version", id, input.ExpectedVersion, result.Draft.Version)
 		}
 		if result.Draft.State != "open" {
-			return &ontology.PublicationRejection{Cause: ontology.ErrConflict, Reason: "draft_state", RecordID: id, Expected: "open", Observed: result.Draft.State}
+			return &topic.PublicationRejection{Cause: topic.ErrConflict, Reason: "draft_state", RecordID: id, Expected: "open", Observed: result.Draft.State}
 		}
-		event := ontology.ManagementAuditEvent{Operation: "TOPIC_DRAFT_DISCARD", EntityID: id, Reason: input.Reason, Version: input.ExpectedVersion + 1, Revision: input.ExpectedRevision}
+		event := topic.ManagementAuditEvent{Operation: "TOPIC_DRAFT_DISCARD", EntityID: id, Reason: input.Reason, Version: input.ExpectedVersion + 1, Revision: input.ExpectedRevision}
 		result.Draft.State = "discarded"
 		if action == "publish" {
 			if result.Draft.BaseRevision != input.ExpectedRevision {
-				return ontology.PublicationVersionRejection("draft_revision", id, input.ExpectedRevision, result.Draft.BaseRevision)
+				return topic.PublicationVersionRejection("draft_revision", id, input.ExpectedRevision, result.Draft.BaseRevision)
 			}
 			publication := result.Prepared
 			publication.OperationKey, publication.Reason = input.OperationKey, input.Reason
@@ -306,4 +306,4 @@ func (s *Store) CommandManagementDraft(ctx context.Context, teamID, id, action s
 	return result.Draft, err
 }
 
-var _ ontology.ManagementRepository = (*Store)(nil)
+var _ topic.ManagementRepository = (*Store)(nil)

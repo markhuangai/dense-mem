@@ -8,12 +8,12 @@ import (
 
 	"github.com/google/uuid"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
-func (f *ontologyFixture) organizationEvidenceAt(t *testing.T, owner int, text, created, timezone string) ontology.SourceHandle {
+func (f *ontologyFixture) organizationEvidenceAt(t *testing.T, owner int, text, created, timezone string) topic.SourceHandle {
 	t.Helper()
 	metadata := map[string]any{}
 	if timezone != "" {
@@ -35,12 +35,12 @@ func (f *ontologyFixture) organizationEvidenceAt(t *testing.T, owner int, text, 
 	}))
 	_, err := f.knowledge.RetractEvidence(f.actor(owner, "member"), knowledge.RetractEvidenceInput{TeamID: f.team, OwnerProfileID: f.owners[owner], EvidenceIDs: []string{seed.ID}, Reason: "replace timestamp fixture seed", IdempotencyKey: uuid.NewString(), RequestHash: testHash("replace timestamp fixture")})
 	require.NoError(t, err)
-	_, err = f.store.ReadSources(context.Background(), f.team, []ontology.SourceHandle{seed})
-	require.ErrorIs(t, err, ontology.ErrSourceStale)
-	return ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: fragmentID, Version: 1}
+	_, err = f.store.ReadSources(context.Background(), f.team, []topic.SourceHandle{seed})
+	require.ErrorIs(t, err, topic.ErrSourceStale)
+	return topic.SourceHandle{Kind: topic.EvidenceSource, ID: fragmentID, Version: 1}
 }
 
-func seedStaleVocabulary(t *testing.T, f *ontologyFixture, staleCount, currentCount int) []ontology.Record {
+func seedStaleVocabulary(t *testing.T, f *ontologyFixture, staleCount, currentCount int) []topic.Record {
 	t.Helper()
 	ctx := context.Background()
 	support := f.organizationEvidence(t, 0, "Historical vocabulary support.", nil)
@@ -48,8 +48,8 @@ func seedStaleVocabulary(t *testing.T, f *ontologyFixture, staleCount, currentCo
 	page, err := f.store.ListRecords(ctx, f.team, "", "", 1)
 	require.NoError(t, err)
 	revision := page.Revision
-	var changes []ontology.Change
-	var current []ontology.Record
+	var changes []topic.Change
+	var current []topic.Record
 	publish := func() {
 		result, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication(uuid.NewString(), revision, changes...))
 		require.NoError(t, err)
@@ -60,7 +60,7 @@ func seedStaleVocabulary(t *testing.T, f *ontologyFixture, staleCount, currentCo
 		record := testTopic(fmt.Sprintf("obsolete-%04d", index))
 		record.ID = fmt.Sprintf("00000000-0000-4000-8000-%012d", index+1)
 		record.Definition.Description = strings.Repeat("PostgreSQL relational storage ", 8)
-		record.Sources = []ontology.SourceDependency{dependency}
+		record.Sources = []topic.SourceDependency{dependency}
 		if index >= staleCount {
 			n := index - staleCount
 			record.ID = fmt.Sprintf("ffffffff-ffff-4fff-8fff-%012d", n+1)
@@ -70,8 +70,8 @@ func seedStaleVocabulary(t *testing.T, f *ontologyFixture, staleCount, currentCo
 			record.Sources = nil
 			current = append(current, record)
 		}
-		changes = append(changes, ontology.Change{Record: record})
-		if len(changes) == ontology.MaxChanges {
+		changes = append(changes, topic.Change{Record: record})
+		if len(changes) == topic.MaxChanges {
 			publish()
 		}
 	}
