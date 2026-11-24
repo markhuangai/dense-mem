@@ -312,7 +312,7 @@ func NativeReady(observation NativeObservation, topicMaintenanceEnabled, paused 
 
 func fullTopicCoverage(status contract.MaintenanceStatus) error {
 	if status.ConfigurationError != "" || !status.DiscoveryComplete || !status.CoverageComplete || status.Counts.Pending != 0 || status.Counts.Failed != 0 || status.Counts.Ambiguous != 0 || status.Counts.Eligible <= 0 || status.Counts.Eligible != status.Counts.Organized {
-		return errors.New("Topic maintenance coverage is incomplete")
+		return errors.New("topic maintenance coverage is incomplete")
 	}
 	return nil
 }
