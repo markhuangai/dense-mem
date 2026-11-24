@@ -66,10 +66,12 @@ type Reproducibility struct {
 	Image                  string `json:"image"`
 	RegistryHash           string `json:"registry_sha256"`
 	Dataset                string `json:"dataset"`
+	Condition              string `json:"condition,omitempty"`
 	Model                  string `json:"model"`
 	EmbeddingModel         string `json:"embedding_model"`
 	EmbeddingDimensions    int    `json:"embedding_dimensions"`
 	ContextWindowTokens    int    `json:"context_window_tokens"`
+	AnswerWorkers          int    `json:"answer_workers"`
 	SeedImage              string `json:"seed_image,omitempty"`
 	SeedRelease            string `json:"seed_base_release,omitempty"`
 	SeedPreparationWorkers int    `json:"seed_preparation_workers,omitempty"`
@@ -78,23 +80,24 @@ type Reproducibility struct {
 }
 
 type Report struct {
-	Identity           Reproducibility               `json:"identity"`
-	Complete           bool                          `json:"complete"`
-	CaptureComplete    bool                          `json:"capture_complete"`
-	Failure            string                        `json:"failure,omitempty"`
-	ExpectedAnswers    int                           `json:"expected_answers"`
-	CompletedAnswers   int                           `json:"completed_answers"`
-	CorpusRows         int                           `json:"corpus_rows"`
-	ImportedRows       int                           `json:"restored_rows"`
-	ElapsedMS          float64                       `json:"elapsed_ms"`
-	Timings            map[string]float64            `json:"timings_ms,omitempty"`
-	Scores             []CaseScore                   `json:"scores"`
-	Matrix             []AxisSummary                 `json:"comparison_matrix"`
-	OntologyDelta      map[string]map[string]float64 `json:"ontology_delta"`
-	NativeMeasurements []NativeObservation           `json:"native_measurements"`
-	ServerUsage        map[string]UsageTotals        `json:"server_usage"`
-	CostUSD            *float64                      `json:"measured_cost_usd"`
-	Limitations        []string                      `json:"limitations"`
+	Identity           Reproducibility        `json:"identity"`
+	Complete           bool                   `json:"complete"`
+	CaptureComplete    bool                   `json:"capture_complete"`
+	CaptureFailure     *CaptureFailure        `json:"capture_failure,omitempty"`
+	ModelVerified      bool                   `json:"model_verified_before_cutoff"`
+	Failure            string                 `json:"failure,omitempty"`
+	ExpectedAnswers    int                    `json:"expected_answers"`
+	CompletedAnswers   int                    `json:"completed_answers"`
+	CorpusRows         int                    `json:"corpus_rows"`
+	ImportedRows       int                    `json:"restored_rows"`
+	ElapsedMS          float64                `json:"elapsed_ms"`
+	Timings            map[string]float64     `json:"timings_ms,omitempty"`
+	Scores             []CaseScore            `json:"scores"`
+	Matrix             []AxisSummary          `json:"comparison_matrix"`
+	NativeMeasurements []NativeObservation    `json:"native_measurements"`
+	ServerUsage        map[string]UsageTotals `json:"server_usage"`
+	CostUSD            *float64               `json:"measured_cost_usd"`
+	Limitations        []string               `json:"limitations"`
 }
 
 func NormalizeAnswer(answer string) string {
@@ -151,7 +154,7 @@ func AnswerScore(answer string, aliases []string) (float64, float64) {
 }
 
 func ScoreObservation(question Question, observation Observation, corpus map[string]CorpusItem, mapping KnowledgeMapping, canonical map[string]CanonicalEvidence) ([]CaseScore, error) {
-	if question.ID != observation.QuestionID || (observation.Condition != "off" && observation.Condition != "on") {
+	if question.ID != observation.QuestionID || observation.Condition != scoringCondition {
 		return nil, errors.New("observation identity mismatch")
 	}
 	gold := map[string]bool{}
@@ -283,18 +286,25 @@ func ScoreObservation(question Question, observation Observation, corpus map[str
 }
 
 func NewReport(manifest Manifest, corpusCount, questionCount int) Report {
-	return Report{Identity: Reproducibility{Version: 1, RunID: manifest.RunID, WorkflowRunID: manifest.WorkflowRunID, SourceRevision: manifest.SourceRevision, Image: manifest.Image, RegistryHash: manifest.RegistryHash, Dataset: manifest.Dataset, Model: manifest.Model, EmbeddingModel: manifest.EmbeddingModel, EmbeddingDimensions: manifest.EmbeddingDimensions, ContextWindowTokens: manifest.ContextWindowTokens, SeedImage: manifest.SeedImage, ScoringPolicy: "public-rag-em-f1-canonical-sources-v1"}, ExpectedAnswers: questionCount * 4, CorpusRows: corpusCount, Scores: []CaseScore{}, NativeMeasurements: []NativeObservation{}, Limitations: []string{"Complete published curated packs; original upstream datasets are larger.", "Pinned dataset README supplies no clear common license; upstream attribution and licensing remain dataset-specific.", "Reported token totals include only available measurements; unavailable and partial measurements remain explicit.", "Actual gateway billing is unavailable; no monetary cost is inferred.", "Current-run provider usage excludes historical seed preparation.", "Retrieval uses original canonical source IDs at the first 1/5/10 Evidence slots; partitions and equivalent IDs add no extra source credit."}}
+	return Report{Identity: Reproducibility{Version: 1, RunID: manifest.RunID, WorkflowRunID: manifest.WorkflowRunID, SourceRevision: manifest.SourceRevision, Image: manifest.Image, RegistryHash: manifest.RegistryHash, Dataset: manifest.Dataset, Condition: manifest.Condition, Model: manifest.Model, EmbeddingModel: manifest.EmbeddingModel, EmbeddingDimensions: manifest.EmbeddingDimensions, ContextWindowTokens: manifest.ContextWindowTokens, AnswerWorkers: manifest.effectiveAnswerWorkers(), SeedImage: manifest.SeedImage, ScoringPolicy: "public-rag-em-f1-canonical-sources-v1"}, ExpectedAnswers: questionCount * 2, CorpusRows: corpusCount, Scores: []CaseScore{}, NativeMeasurements: []NativeObservation{}, Limitations: []string{"Complete published curated packs; original upstream datasets are larger.", "Pinned dataset README supplies no clear common license; upstream attribution and licensing remain dataset-specific.", "Reported token totals include only available measurements; unavailable and partial measurements remain explicit.", "Actual gateway billing is unavailable; no monetary cost is inferred.", "Current-run provider usage excludes historical seed preparation.", "Retrieval uses original canonical source IDs at the first 1/5/10 Evidence slots; partitions and equivalent IDs add no extra source credit."}}
 }
 
 func FinalizeReport(report *Report) error {
-	questions := report.ExpectedAnswers / 4
-	if questions <= 0 {
+	report.Complete = false
+	questions := report.ExpectedAnswers / 2
+	if report.Identity.Condition != scoringCondition {
+		return errors.New("invalid scoring condition")
+	}
+	if questions <= 0 || report.ExpectedAnswers%2 != 0 {
 		return errors.New("invalid expected denominator")
 	}
 	report.Matrix = nil
 	report.CompletedAnswers = 0
 	seen := map[string]bool{}
 	for _, score := range report.Scores {
+		if score.Condition != scoringCondition || (score.Policy != "single" && score.Policy != "multi_turn") {
+			return errors.New("invalid scored condition or policy")
+		}
 		key := score.Condition + ":" + score.Policy + ":" + score.QuestionID
 		if seen[key] {
 			return errors.New("duplicate scored observation")
@@ -305,83 +315,68 @@ func FinalizeReport(report *Report) error {
 		a, b := report.Scores[i], report.Scores[j]
 		return a.Condition+":"+a.Policy+":"+a.QuestionID < b.Condition+":"+b.Policy+":"+b.QuestionID
 	})
-	for _, condition := range []string{"off", "on"} {
-		for _, policy := range []string{"single", "multi_turn"} {
-			axis := AxisSummary{Condition: condition, Policy: policy, Expected: questions}
-			for _, score := range report.Scores {
-				if score.Condition != condition || score.Policy != policy {
-					continue
-				}
-				axis.Observed++
-				if score.Completed {
-					axis.Completed++
-					report.CompletedAnswers++
-				} else {
-					axis.Failed++
-				}
-				axis.Mean.Recall1 += score.Recall1
-				axis.Mean.Recall5 += score.Recall5
-				axis.Mean.Recall10 += score.Recall10
-				if score.AllSupport {
-					axis.AllSupportRecovery++
-				}
-				axis.Mean.InitialTextCoverage += score.InitialTextCoverage
-				axis.Mean.FinalTextCoverage += score.FinalTextCoverage
-				axis.Mean.EM += score.EM
-				axis.Mean.F1 += score.F1
-				axis.Mean.CitedGoldCoverage += score.CitedGoldCoverage
-				axis.HostElapsedMS += score.ElapsedMS
-				axis.Citations += score.Citations
-				axis.ValidCitations += score.ValidCitations
-				if score.Citations == 0 {
-					axis.NoCitations++
-				}
-				axis.MemoryCalls += score.MemoryCalls
-				axis.ProviderCalls += score.ProviderCalls
-				axis.UsageUnavailable += score.UsageUnavailable
-				axis.UsageUnreconciled += score.UsageUnreconciled
-				axis.InputTokens += score.InputTokens
-				axis.OutputTokens += score.OutputTokens
-				axis.TotalTokens += score.TotalTokens
-			}
-			axis.Missing = questions - axis.Observed
-			if axis.Missing < 0 {
-				return errors.New("scored count exceeds public denominator")
-			}
-			denominator := float64(questions)
-			axis.Mean.Recall1 /= denominator
-			axis.Mean.Recall5 /= denominator
-			axis.Mean.Recall10 /= denominator
-			axis.AllSupportRecovery /= denominator
-			axis.Mean.InitialTextCoverage /= denominator
-			axis.Mean.FinalTextCoverage /= denominator
-			axis.Mean.EM /= denominator
-			axis.Mean.F1 /= denominator
-			axis.Mean.CitedGoldCoverage /= denominator
-			if axis.Observed > 0 {
-				axis.Mean.ElapsedMS = axis.HostElapsedMS / float64(axis.Observed)
-			}
-			if axis.HostElapsedMS > 0 {
-				throughput := float64(axis.Completed) * 1000 / axis.HostElapsedMS
-				axis.ThroughputPerSecond = &throughput
-			}
-			report.Matrix = append(report.Matrix, axis)
-		}
-	}
-	report.OntologyDelta = map[string]map[string]float64{}
 	for _, policy := range []string{"single", "multi_turn"} {
-		var off, on AxisSummary
-		for _, axis := range report.Matrix {
-			if axis.Policy == policy {
-				if axis.Condition == "off" {
-					off = axis
-				} else {
-					on = axis
-				}
+		axis := AxisSummary{Condition: scoringCondition, Policy: policy, Expected: questions}
+		for _, score := range report.Scores {
+			if score.Policy != policy {
+				continue
 			}
+			axis.Observed++
+			if score.Completed {
+				axis.Completed++
+				report.CompletedAnswers++
+			} else {
+				axis.Failed++
+			}
+			axis.Mean.Recall1 += score.Recall1
+			axis.Mean.Recall5 += score.Recall5
+			axis.Mean.Recall10 += score.Recall10
+			if score.AllSupport {
+				axis.AllSupportRecovery++
+			}
+			axis.Mean.InitialTextCoverage += score.InitialTextCoverage
+			axis.Mean.FinalTextCoverage += score.FinalTextCoverage
+			axis.Mean.EM += score.EM
+			axis.Mean.F1 += score.F1
+			axis.Mean.CitedGoldCoverage += score.CitedGoldCoverage
+			axis.HostElapsedMS += score.ElapsedMS
+			axis.Citations += score.Citations
+			axis.ValidCitations += score.ValidCitations
+			if score.Citations == 0 {
+				axis.NoCitations++
+			}
+			axis.MemoryCalls += score.MemoryCalls
+			axis.ProviderCalls += score.ProviderCalls
+			axis.UsageUnavailable += score.UsageUnavailable
+			axis.UsageUnreconciled += score.UsageUnreconciled
+			axis.InputTokens += score.InputTokens
+			axis.OutputTokens += score.OutputTokens
+			axis.TotalTokens += score.TotalTokens
 		}
-		report.OntologyDelta[policy] = map[string]float64{"recall_at_1": on.Mean.Recall1 - off.Mean.Recall1, "recall_at_5": on.Mean.Recall5 - off.Mean.Recall5, "recall_at_10": on.Mean.Recall10 - off.Mean.Recall10, "all_support_recovery_rate": on.AllSupportRecovery - off.AllSupportRecovery, "exact_match": on.Mean.EM - off.Mean.EM, "f1": on.Mean.F1 - off.Mean.F1, "supporting_text_coverage": on.Mean.FinalTextCoverage - off.Mean.FinalTextCoverage}
+		axis.Missing = questions - axis.Observed
+		if axis.Missing < 0 {
+			return errors.New("scored count exceeds public denominator")
+		}
+		denominator := float64(questions)
+		axis.Mean.Recall1 /= denominator
+		axis.Mean.Recall5 /= denominator
+		axis.Mean.Recall10 /= denominator
+		axis.AllSupportRecovery /= denominator
+		axis.Mean.InitialTextCoverage /= denominator
+		axis.Mean.FinalTextCoverage /= denominator
+		axis.Mean.EM /= denominator
+		axis.Mean.F1 /= denominator
+		axis.Mean.CitedGoldCoverage /= denominator
+		if axis.Observed > 0 {
+			axis.Mean.ElapsedMS = axis.HostElapsedMS / float64(axis.Observed)
+		}
+		if axis.HostElapsedMS > 0 {
+			throughput := float64(axis.Completed) * 1000 / axis.HostElapsedMS
+			axis.ThroughputPerSecond = &throughput
+		}
+		report.Matrix = append(report.Matrix, axis)
 	}
-	report.Complete = report.Failure == "" && report.CaptureComplete && report.CompletedAnswers == report.ExpectedAnswers && report.ImportedRows == report.CorpusRows
+	report.Complete = report.Failure == "" && report.CaptureComplete && report.ModelVerified &&
+		report.CompletedAnswers == report.ExpectedAnswers && report.ImportedRows == report.CorpusRows
 	return nil
 }

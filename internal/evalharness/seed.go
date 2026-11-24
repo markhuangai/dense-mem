@@ -112,6 +112,25 @@ func ReadSeed(dir string) (SeedMetadata, KnowledgeMapping, error) {
 }
 
 func VerifySeed(ctx context.Context, manifest Manifest, corpus []CorpusItem, client *HTTPClient, native *Native) (SeedMetadata, KnowledgeMapping, map[string]CanonicalEvidence, NativeObservation, error) {
+	seed, mapping, canonical, observation, err := verifySeedContent(ctx, manifest, corpus, client, native)
+	if err == nil {
+		err = verifySeedCondition(native, manifest, observation)
+	}
+	if err != nil {
+		_ = client.Capture.EmitTerminal(ctx, "seed_verification_failed", map[string]any{
+			"dataset": manifest.Dataset, "seed_image": manifest.SeedImage, "scope": native.Scope,
+			"expected_rows": len(corpus), "mapped_rows": len(mapping.BySourceDocID),
+			"expected_registry_sha256": manifest.RegistryHash, "observed_registry_sha256": seed.RegistryHash,
+			"expected_canonical_sha256": seed.CanonicalHash, "observed_canonical_sha256": observation.CanonicalHash,
+			"ontology_enabled": observation.Ontology.Enabled, "ontology_paused": observation.Ontology.Paused,
+			"organized": observation.Ontology.Counts.Organized, "attempts": len(observation.ProviderAttempts),
+			"search": observation.Search, "error": client.Capture.ProtectError(err),
+		})
+	}
+	return seed, mapping, canonical, observation, err
+}
+
+func verifySeedContent(ctx context.Context, manifest Manifest, corpus []CorpusItem, client *HTTPClient, native *Native) (SeedMetadata, KnowledgeMapping, map[string]CanonicalEvidence, NativeObservation, error) {
 	var observation NativeObservation
 	if err := native.ResolveScope(ctx); err != nil {
 		return SeedMetadata{}, KnowledgeMapping{}, nil, observation, err
@@ -136,11 +155,8 @@ func VerifySeed(ctx context.Context, manifest Manifest, corpus []CorpusItem, cli
 		}
 	}
 	observation, err = native.Snapshot(ctx)
-	if err == nil {
-		err = NativeReady(observation, false, true, manifest, native.Scope.TeamID)
-	}
-	if err == nil && (observation.CanonicalHash != seed.CanonicalHash || observation.Ontology.Counts.Organized != 0) {
-		err = errors.New("restored seed canonical data or ontology-off state differs")
+	if err == nil && (observation.CanonicalHash != seed.CanonicalHash || observation.ForeignSources != 0 || observation.ForeignWork != 0) {
+		err = errors.New("restored seed canonical data or scope differs")
 	}
 	if err == nil {
 		var searchHash string
@@ -150,6 +166,13 @@ func VerifySeed(ctx context.Context, manifest Manifest, corpus []CorpusItem, cli
 		}
 	}
 	return seed, mapping, canonical, observation, err
+}
+
+func verifySeedCondition(native *Native, manifest Manifest, observation NativeObservation) error {
+	if observation.Ontology.Counts.Organized != 0 || len(observation.ProviderAttempts) != 0 {
+		return errors.New("restored seed ontology-off state differs")
+	}
+	return NativeReady(observation, false, true, manifest, native.Scope.TeamID)
 }
 
 func Prepare(ctx context.Context, manifest Manifest, corpus []CorpusItem, client *HTTPClient, native *Native) (SeedMetadata, error) {

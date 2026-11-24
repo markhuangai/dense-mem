@@ -53,7 +53,11 @@ func ReadManifest(path string) (Manifest, error) {
 	if manifest.Mode != "live" && manifest.Mode != "fixtures" {
 		return manifest, errors.New("invalid runner campaign mode")
 	}
-	if manifest.RunID != manifest.ExecutionID()+"-"+manifest.Dataset {
+	if (manifest.Operation == "run" && manifest.Condition != scoringCondition) ||
+		(manifest.Operation != "run" && manifest.Condition != "") {
+		return manifest, errors.New("scored evaluation requires ontology off")
+	}
+	if manifest.RunID != manifest.DatasetRunID() {
 		return manifest, errors.New("manifest does not belong to this dataset job")
 	}
 	if !modelPattern.MatchString(manifest.Model) || strings.Contains(manifest.Model, "://") || manifest.EmbeddingModel != "text-embedding-3-small" || manifest.EmbeddingDimensions != 1536 || manifest.ContextWindowTokens < 16384 {
@@ -61,6 +65,14 @@ func ReadManifest(path string) (Manifest, error) {
 	}
 	if manifest.Operation != "prepare" && manifest.Operation != "run" && manifest.Operation != "bootstrap" && manifest.Operation != "verify-seed" {
 		return manifest, errors.New("invalid workflow-internal operation")
+	}
+	if manifest.Operation == "run" {
+		manifest.AnswerWorkers = manifest.effectiveAnswerWorkers()
+		if manifest.AnswerWorkers < defaultAnswerWorkers || manifest.AnswerWorkers > maxAnswerWorkers {
+			return manifest, errors.New("answer_workers must be 4..10")
+		}
+	} else if manifest.AnswerWorkers != 0 {
+		return manifest, errors.New("answer_workers applies only to scored evaluation")
 	}
 	if manifest.Operation == "prepare" || manifest.Operation == "bootstrap" {
 		if err := validateImportWorkers(manifest.ImportWorkers); err != nil {
@@ -78,17 +90,23 @@ func ReadManifest(path string) (Manifest, error) {
 	if manifest.Operation == "verify-seed" && !manifest.IntakeProof && !localImagePattern.MatchString(manifest.SeedImage) {
 		return manifest, errors.New("seed boot verification requires an immutable local PostgreSQL image")
 	}
-	if manifest.Operation == "run" && manifest.Mode == "fixtures" && manifest.SeedImage != "" && !localImagePattern.MatchString(manifest.SeedImage) {
+	if manifest.Operation == "run" && manifest.Mode == "fixtures" && !localImagePattern.MatchString(manifest.SeedImage) {
 		return manifest, errors.New("fixture seed must use an immutable local PostgreSQL image")
 	}
 	if manifest.DataDir == "" || manifest.OutputDir == "" || len(manifest.RegistryHash) != 64 {
 		return manifest, errors.New("manifest data and output identity missing")
 	}
-	maximum := 330 * time.Minute
-	if manifest.ModelDeadline.IsZero() || manifest.ModelDeadline.After(time.Now().Add(maximum)) {
+	if manifest.ModelDeadline.IsZero() || manifest.ModelDeadline.After(time.Now().Add(330*time.Minute)) {
 		return manifest, errors.New("model deadline is missing or exceeds the campaign limit")
 	}
 	return manifest, nil
+}
+
+func (m Manifest) effectiveAnswerWorkers() int {
+	if m.AnswerWorkers == 0 {
+		return defaultAnswerWorkers
+	}
+	return m.AnswerWorkers
 }
 
 func (m Manifest) PostgresRuntimeImage() string {
@@ -103,6 +121,14 @@ func (m Manifest) ExecutionID() string {
 		return m.SeedBuildID
 	}
 	return m.WorkflowRunID
+}
+
+func (m Manifest) DatasetRunID() string {
+	id := m.ExecutionID() + "-" + m.Dataset
+	if m.Condition != "" {
+		id += "-" + m.Condition
+	}
+	return id
 }
 
 func validateImportWorkers(workers int) error {

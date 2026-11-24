@@ -49,7 +49,7 @@ func TestRunnerGuardRejectsLocalExecutionAndReruns(t *testing.T) {
 func TestNativeReadinessRejectsUndrainedWorkAndCapacityDrift(t *testing.T) {
 	manifest := Manifest{Model: "synthetic", ContextWindowTokens: 500000, EmbeddingModel: "text-embedding-3-small", EmbeddingDimensions: 1536}
 	now := time.Now()
-	observation := NativeObservation{Ontology: ontology.MaintenanceStatus{Enabled: true, Paused: true, DiscoveryComplete: true, CoverageComplete: true,
+	observation := NativeObservation{Ontology: ontology.MaintenanceStatus{Enabled: true, Paused: true, DiscoveryComplete: true, CoverageComplete: true, Counts: ontology.MaintenanceCounts{Eligible: 1, Organized: 1},
 		Window: &ontology.MaintenanceWindow{Policy: domain.OntologyMaintenanceConfig{Model: manifest.Model, ContextWindowTokens: 500000, MaxConcurrency: 4, TeamMaxConcurrency: 4}}},
 		ProviderAttempts: []NativeAttempt{{OperationKey: "operation", AssessmentID: "assessment", Number: 1, Terminal: true, ReconciledAt: &now, UsageAvailable: true, Input: 2, Output: 3, Total: 5}}}
 	require.NoError(t, json.Unmarshal([]byte(`{"search":{"status":"converged","expected_documents":1,"current_documents":1,"contract":{"model":"text-embedding-3-small","dimensions":1536}}}`), &observation))
@@ -65,6 +65,7 @@ func TestNativeReadinessRejectsUndrainedWorkAndCapacityDrift(t *testing.T) {
 		"negative usage":       func(o *NativeObservation) { o.ProviderAttempts[0].Input = -1 },
 		"ontology state":       func(o *NativeObservation) { o.Ontology.Paused = false },
 		"coverage incomplete":  func(o *NativeObservation) { o.Ontology.CoverageComplete = false },
+		"empty ontology":       func(o *NativeObservation) { o.Ontology.Counts = ontology.MaintenanceCounts{} },
 		"model drift":          func(o *NativeObservation) { o.Ontology.Window.Policy.Model = "different" },
 		"context drift":        func(o *NativeObservation) { o.Ontology.Window.Policy.ContextWindowTokens-- },
 		"team override": func(o *NativeObservation) {
@@ -111,7 +112,7 @@ func TestRunnerStartupFailureStillDrainsAndCapturesCompleteDenominators(t *testi
 			collected = true
 			return errors.New("capture unavailable " + key)
 		}}
-	manifest := Manifest{RunID: capture.RunID, ImportWorkers: 20, OutputDir: t.TempDir(), ModelDeadline: time.Now().Add(time.Minute)}
+	manifest := Manifest{RunID: capture.RunID, Condition: "off", ImportWorkers: 20, OutputDir: t.TempDir(), ModelDeadline: time.Now().Add(time.Minute)}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	report, err := Run(ctx, manifest, []CorpusItem{{SourceDocID: "source", Content: "Public text."}}, []Question{{ID: "question", Query: "Public question?"}}, client, nil, native)
@@ -121,7 +122,7 @@ func TestRunnerStartupFailureStillDrainsAndCapturesCompleteDenominators(t *testi
 	require.EqualValues(t, 1, pauses.Load())
 	require.False(t, report.Complete)
 	require.False(t, report.CaptureComplete)
-	require.Equal(t, 4, report.ExpectedAnswers)
+	require.Equal(t, 2, report.ExpectedAnswers)
 	require.Zero(t, report.CompletedAnswers)
 	require.Equal(t, "seed verification incomplete", report.Failure)
 	body, err := os.ReadFile(filepath.Join(manifest.OutputDir, "scores.json"))
@@ -133,4 +134,26 @@ func TestRunnerStartupFailureStillDrainsAndCapturesCompleteDenominators(t *testi
 	for _, event := range events {
 		require.NotContains(t, string(event.Payload), key)
 	}
+}
+
+func TestRunnerRejectsInvalidSetupBeforeScoring(t *testing.T) {
+	capture := captureFixture(&bytes.Buffer{})
+	client := &HTTPClient{Capture: capture, Client: http.DefaultClient}
+	native := &Native{Client: client}
+	manifest := Manifest{Condition: "off", AnswerWorkers: 3}
+	_, err := Run(t.Context(), manifest, nil, nil, nil, nil, native)
+	require.ErrorContains(t, err, "runner dependencies are required")
+	_, err = Run(t.Context(), manifest, nil, nil, client, nil, native)
+	require.ErrorContains(t, err, "answer_workers must be 4..10")
+	manifest.AnswerWorkers = 4
+	manifest.OutputDir = filepath.Join(t.TempDir(), "output")
+	require.NoError(t, os.WriteFile(manifest.OutputDir, nil, 0600))
+	_, err = Run(t.Context(), manifest, nil, nil, client, nil, native)
+	var unavailable *os.PathError
+	require.ErrorAs(t, err, &unavailable)
+	require.Equal(t, manifest.OutputDir, unavailable.Path)
+	manifest.OutputDir = t.TempDir()
+	client.Capture = &Capture{}
+	_, err = Run(t.Context(), manifest, nil, nil, client, nil, native)
+	require.ErrorContains(t, err, "DEBUG benchmark console capture is required")
 }

@@ -21,9 +21,31 @@ func TestReadManifestValidatesExecutionPins(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, valid, actual)
 	for _, tc := range []struct {
+		name          string
+		workers, want int
+	}{
+		{"omitted", 0, 4}, {"minimum", 4, 4}, {"maximum", 10, 10}, {"too few", 3, 0}, {"too many", 11, 0},
+	} {
+		t.Run("answer workers "+tc.name, func(t *testing.T) {
+			manifest := valid
+			manifest.Operation, manifest.ImportWorkers, manifest.AnswerWorkers = "run", 0, tc.workers
+			manifest.Condition, manifest.RunID = "off", "42-hotpotqa-off"
+			manifest.SeedImage = "sha256:" + strings.Repeat("d", 64)
+			require.NoError(t, writeJSON(file, manifest))
+			read, err := ReadManifest(file)
+			if tc.want == 0 {
+				require.ErrorContains(t, err, "answer_workers must be 4..10")
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.want, read.AnswerWorkers)
+		})
+	}
+	for _, tc := range []struct {
 		name, message string
 		change        func(*Manifest)
 	}{
+		{"unknown operation", "workflow-internal operation", func(m *Manifest) { m.Operation = "retired" }},
 		{"version", "identity", func(m *Manifest) { m.Version = 2 }},
 		{"run identity", "identity", func(m *Manifest) { m.RunID = "" }},
 		{"workflow run", "identity", func(m *Manifest) { m.WorkflowRunID = "43" }},
@@ -44,6 +66,7 @@ func TestReadManifestValidatesExecutionPins(t *testing.T) {
 		{"embedding dimensions", "model and context", func(m *Manifest) { m.EmbeddingDimensions = 512 }},
 		{"retired embedding dimensions", "model and context", func(m *Manifest) { m.EmbeddingDimensions = 1024 }},
 		{"context", "model and context", func(m *Manifest) { m.ContextWindowTokens = 16383 }},
+		{"answer workers during preparation", "answer_workers applies only to scored evaluation", func(m *Manifest) { m.AnswerWorkers = 4 }},
 		{"missing import workers", "import workers", func(m *Manifest) { m.ImportWorkers = 0 }},
 		{"negative import workers", "import workers", func(m *Manifest) { m.ImportWorkers = -1 }},
 		{"excessive import workers", "import workers", func(m *Manifest) { m.ImportWorkers = 101 }},
@@ -55,6 +78,30 @@ func TestReadManifestValidatesExecutionPins(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			manifest := valid
+			tc.change(&manifest)
+			require.NoError(t, writeJSON(file, manifest))
+			_, err := ReadManifest(file)
+			require.ErrorContains(t, err, tc.message)
+		})
+	}
+	frozen := valid
+	frozen.Mode, frozen.Operation, frozen.ImportWorkers = "live", "run", 0
+	frozen.RunID, frozen.Condition = "42-hotpotqa-off", "off"
+	frozen.SeedImage = "ghcr.io/markhuangai/dense-mem-eval-postgres@sha256:" + strings.Repeat("d", 64)
+	require.NoError(t, writeJSON(file, frozen))
+	actual, err = ReadManifest(file)
+	require.NoError(t, err)
+	require.Equal(t, frozen.SeedImage, actual.PostgresRuntimeImage())
+	for _, tc := range []struct {
+		name, message string
+		change        func(*Manifest)
+	}{
+		{"scoring without a condition", "requires ontology off", func(m *Manifest) { m.RunID, m.Condition = "42-hotpotqa", "" }},
+		{"unknown condition", "requires ontology off", func(m *Manifest) { m.Condition = "both" }},
+		{"retired condition", "requires ontology off", func(m *Manifest) { m.Condition = "on" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manifest := frozen
 			tc.change(&manifest)
 			require.NoError(t, writeJSON(file, manifest))
 			_, err := ReadManifest(file)
@@ -103,6 +150,7 @@ func TestReadManifestPermitsOnlyPublicSeedOperationsLocally(t *testing.T) {
 		change func(*Manifest)
 	}{
 		{"scoring", func(m *Manifest) { m.Operation = "run" }},
+		{"retired ontology preparation", func(m *Manifest) { m.Operation = "bake-ontology" }},
 		{"fixtures", func(m *Manifest) { m.Mode = "fixtures" }},
 		{"hosted identity", func(m *Manifest) { m.WorkflowRunID = "42" }},
 		{"different local build", func(m *Manifest) { m.SeedBuildID = "local-" + strings.Repeat("f", 32) }},

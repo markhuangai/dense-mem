@@ -256,13 +256,17 @@ func (s fanoutLogSink) WriteLog(ctx context.Context, record LogRecord) error {
 // NewWithProtector creates one process root with a mutable sink attachment
 // point. Children returned by With share that attachment point.
 func NewWithProtector(level slog.Level, protector *CredentialProtector) *Logger {
+	return NewConsoleWithProtector(level, protector, os.Stdout)
+}
+
+func NewConsoleWithProtector(level slog.Level, protector *CredentialProtector, writer io.Writer) *Logger {
 	if protector == nil {
 		protector = NewCredentialProtector()
 	}
 	state := &sinkState{}
 	root := &loggerRoot{sink: state}
 	console := newCredentialRedactingHandler(
-		newConsoleJSONHandler(os.Stdout, level),
+		newConsoleJSONHandler(writer, level),
 		protector,
 	)
 	operation := newOperationLogHandlerWithState(level, state, protector)

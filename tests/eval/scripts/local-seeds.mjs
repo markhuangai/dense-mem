@@ -28,6 +28,9 @@ export function lockSeedBuild(directory) {
 }
 
 export function savedSeedRequest(receipt, id, registry, registryHash) {
+  if (receipt?.variant !== undefined || receipt?.parents !== undefined) {
+    throw new Error("Checkpoint belongs to retired ontology preparation");
+  }
   if (receipt?.resume_version !== 1 || receipt.build_id !== id || receipt.registry_sha256 !== registryHash ||
       (receipt.pr !== null && (!Number.isSafeInteger(receipt.pr) || receipt.pr < 1)) ||
       !Array.isArray(receipt.datasets) || typeof receipt.skip_ai_security_review !== "boolean") {

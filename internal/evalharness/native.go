@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 )
@@ -30,13 +29,15 @@ type Scope struct {
 }
 
 type Native struct {
-	DB           *sql.DB
-	Scope        Scope
-	ControlURL   string
-	ControlToken string
-	Client       *HTTPClient
-	RuntimeLogs  func(context.Context) error
-	ServerUsage  map[string]UsageTotals
+	DB                  *sql.DB
+	Scope               Scope
+	ControlURL          string
+	ControlToken        string
+	Client              *HTTPClient
+	StopRuntime         func(context.Context, bool) error
+	RuntimeLogs         func(context.Context) error
+	ServerUsage         map[string]UsageTotals
+	RequireRuntimeUsage bool
 }
 
 type NativeAttempt struct {
@@ -277,7 +278,34 @@ func NativeReady(observation NativeObservation, ontologyEnabled, paused bool, ma
 	if status.Enabled != ontologyEnabled || status.Paused != paused {
 		return errors.New("unexpected native ontology state")
 	}
-	if observation.ActiveBatches != 0 || observation.ActivePreparations != 0 || observation.Unreconciled != 0 || status.ActiveWork != 0 {
+	if err := nativeDrained(observation); err != nil {
+		return err
+	}
+	if !ontologyEnabled {
+		return nil
+	}
+	if err := fullOntologyCoverage(status); err != nil {
+		return err
+	}
+	return nativeOntologyPolicy(status, manifest, teamID)
+}
+
+func fullOntologyCoverage(status ontology.MaintenanceStatus) error {
+	if status.ConfigurationError != "" || !status.DiscoveryComplete || !status.CoverageComplete || status.Counts.Pending != 0 || status.Counts.Failed != 0 || status.Counts.Ambiguous != 0 || status.Counts.Eligible <= 0 || status.Counts.Eligible != status.Counts.Organized {
+		return errors.New("ontology coverage is incomplete")
+	}
+	return nil
+}
+
+func nativeOntologyPolicy(status ontology.MaintenanceStatus, manifest Manifest, teamID string) error {
+	if status.Window == nil || status.Window.Policy.Model != manifest.Model || status.Window.Policy.ContextWindowTokens != int64(manifest.ContextWindowTokens) || status.Window.Policy.MaxConcurrency != 4 || status.Window.Policy.TeamConcurrency(teamID) != 4 {
+		return errors.New("effective ontology capacity differs from campaign settings")
+	}
+	return nil
+}
+
+func nativeDrained(observation NativeObservation) error {
+	if observation.ActiveBatches != 0 || observation.ActivePreparations != 0 || observation.Unreconciled != 0 || observation.Ontology.ActiveWork != 0 {
 		return errors.New("native model work has not drained")
 	}
 	measurement, err := MeasureAttempts(observation.ProviderAttempts)
@@ -287,31 +315,7 @@ func NativeReady(observation NativeObservation, ontologyEnabled, paused bool, ma
 	if measurement.Unfinished != 0 {
 		return errors.New("durable attempts have not reconciled")
 	}
-	if !ontologyEnabled {
-		return nil
-	}
-	if status.ConfigurationError != "" || !status.DiscoveryComplete || !status.CoverageComplete || status.Counts.Pending != 0 || status.Counts.Failed != 0 || status.Counts.Ambiguous != 0 || status.Counts.Eligible != status.Counts.Organized {
-		return errors.New("ontology coverage is incomplete")
-	}
-	if status.Window == nil || status.Window.Policy.Model != manifest.Model || status.Window.Policy.ContextWindowTokens != int64(manifest.ContextWindowTokens) || status.Window.Policy.MaxConcurrency != 4 || status.Window.Policy.TeamConcurrency(teamID) != 4 {
-		return errors.New("effective ontology capacity differs from campaign settings")
-	}
 	return nil
-}
-
-func (n *Native) EnableOntology(ctx context.Context, manifest Manifest) error {
-	values := map[string]string{domain.AppConfigOntologyEnabled: "true", domain.AppConfigOntologyModel: manifest.Model, domain.AppConfigOntologyConcurrency: "4", domain.AppConfigOntologyTeamConcurrency: "4", domain.AppConfigOntologyContextWindow: strconv.Itoa(manifest.ContextWindowTokens)}
-	items := []map[string]string{}
-	for key, value := range values {
-		items = append(items, map[string]string{"key": key, "value": value})
-	}
-	if err := n.Control(ctx, http.MethodPatch, "/config/ontology-maintenance", map[string]any{"items": items}, nil); err != nil {
-		return err
-	}
-	if err := n.Control(ctx, http.MethodPost, "/ontology/resume", map[string]string{"operation_key": uuid.NewString()}, nil); err != nil {
-		return err
-	}
-	return n.Control(ctx, http.MethodPost, "/ontology/runs", map[string]any{"operation_key": uuid.NewString(), "max_batches": 0}, nil)
 }
 
 func (n *Native) Pause(ctx context.Context) error {

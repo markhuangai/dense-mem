@@ -16,6 +16,10 @@ on:
         description: Public seed suffix (latest or UTCtimestamp-release)
         type: string
         default: latest
+      answer_workers:
+        description: Concurrent answer workers per dataset (4–10)
+        type: string
+        default: '4'
       run_hotpotqa:
         description: HotpotQA
         type: boolean
@@ -112,6 +116,7 @@ jobs:
       source_revision: ${{ needs.authorize.outputs.source_revision }}
       mode: ${{ inputs.mode }}
       seed_version: ${{ inputs.seed_version }}
+      answer_workers: ${{ inputs.answer_workers }}
       dataset_selection: >-
         {"hotpotqa":${{ inputs.run_hotpotqa }},"musique":${{ inputs.run_musique }},
         "2wikimultihopqa":${{ inputs.run_2wikimultihopqa }},"nq_rear":${{ inputs.run_nq_rear }},

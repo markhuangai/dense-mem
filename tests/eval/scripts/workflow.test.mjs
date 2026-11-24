@@ -6,7 +6,7 @@ import test from "node:test";
 import imagePolicy from "../../../.github/scripts/image-release-policy.cjs";
 import { resolveSetting, resolveImportWorkers, requireEvaluationImportSupport, configuration, requireRunner, registryMatrix, aggregate, ownedResource, manualEvaluationRequest, resolveEvaluationImage, sha256 } from "../../../.github/scripts/evaluation-policy.mjs";
 import { readWorkflow, workflowJob, runStep } from "../../uat/workflow_helpers.mjs";
-import { serverEnvironment, databaseCapacity, startupTimings, control, main } from "./workflow.mjs";
+import { serverEnvironment, databaseCapacity, startupTimings, control, location, main, setup } from "./workflow.mjs";
 
 const registry = JSON.parse(fs.readFileSync(new URL("../datasets.json", import.meta.url)));
 const valid = { DENSE_MEM_EVAL_MODEL: "configured-model", DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS: "300000", DENSE_MEM_EVAL_IMPORT_WORKERS: "10", DENSE_MEM_EVAL_VERIFIER_URL: "https://provider.example/v1", DENSE_MEM_EVAL_EMBED_URL: "https://api.openai.com/v1", DENSE_MEM_EVAL_API_KEY: "generation-canary", DENSE_MEM_EVAL_EMBED_API_KEY: "embedding-canary", WORKFLOW_EMBEDDING_MODEL: "text-embedding-3-small", WORKFLOW_EMBEDDING_DIMENSIONS: "1536" };
@@ -17,6 +17,15 @@ const pinnedImage = `ghcr.io/${repository}@sha256:${"a".repeat(64)}`;
 const revision = "b".repeat(40);
 const manualRequest = { image: taggedImage, repository, ref: "refs/heads/main", runAttempt: 1, actorPermission: "admin", triggeringPermission: "admin" };
 const inspectedImage = { Os: "linux", Architecture: "amd64", RepoDigests: [pinnedImage], Config: { Labels: { "org.opencontainers.image.variant": "production", "org.opencontainers.image.source": `https://github.com/${repository}`, "org.opencontainers.image.revision": revision } } };
+
+test("the local runtime rejects the retired ontology preparation operation", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "retired-ontology-"));
+  t.after(() => fs.rmSync(root, { recursive: true }));
+  const env = { ...valid, EVAL_MODE: "live", EVAL_DATASET: "hotpotqa",
+    EVAL_LOCAL_SEED_ID: `local-${"a".repeat(32)}`, EVAL_LOCAL_SEED_ROOT: root };
+  await assert.rejects(setup(env, { operation: "bake-ontology" }), /only public seed preparation and restore verification/);
+  assert.equal(fs.existsSync(location(env).stateFile), false);
+});
 
 test("startup measurements separate migration from subsequent readiness and reject unavailable boundaries", () => {
   const start = Date.parse("2026-11-16T16:00:00Z");
@@ -222,13 +231,6 @@ test("import worker settings are explicit, bounded and shared with the server ge
   }
 });
 
-test("aggregation accepts frozen seeds prepared with different worker counts", () => {
-  const reports = registry.datasets.map((dataset) => ({ identity: { dataset: dataset.id, import_workers: 10 }, expected_answers: dataset.questions.rows * 4, corpus_rows: dataset.corpus.rows, completed_answers: 0 }));
-  assert.doesNotThrow(() => aggregate(registry, reports));
-  reports[1].identity.import_workers = 4;
-  assert.doesNotThrow(() => aggregate(registry, reports));
-});
-
 test("evaluation accepts only the pinned OpenAI embedding endpoint, model and dimensions", () => {
   assert.equal(configuration(valid).embedding, "https://api.openai.com/v1");
   assert.equal(configuration({ ...valid, DENSE_MEM_EVAL_EMBED_URL: "https://api.openai.com/v1/" }).embedding, "https://api.openai.com/v1/");
@@ -279,12 +281,11 @@ test("registry additions and removals change the matrix and all public denominat
   const extension = { ...registry.datasets[0], id: "new_pack" };
   assert.equal(registryMatrix({ ...registry, datasets: [...registry.datasets, extension] }).dataset.length, 6);
   assert.throws(() => registryMatrix({ ...registry, datasets: [...registry.datasets, registry.datasets[0]] }), /duplicate/);
-  const result = aggregate(registry, []);
-  assert.equal(result.expected_answers, 20000); assert.equal(result.completed_answers, 0); assert.equal(result.complete, false); assert.equal(result.datasets.length, 5);
-  const dataset = registry.datasets[0];
-  const partial = { identity: { dataset: dataset.id }, expected_answers: 4000, corpus_rows: dataset.corpus.rows, completed_answers: 4, complete: false, capture_complete: true };
-  const failed = aggregate(registry, [partial]); assert.equal(failed.expected_answers, 20000); assert.equal(failed.completed_answers, 4); assert.equal(failed.complete, false);
-  assert.throws(() => aggregate(registry, [{ ...partial, expected_answers: 4 }]), /denominator/);
+  const empty = aggregate(registry, [], {});
+  assert.equal(empty.expected_answers, 10000);
+  assert.equal(empty.completed_answers, 0);
+  assert.equal(empty.complete, false);
+  assert.equal(empty.datasets.length, 5);
 });
 
 test("execution and cleanup fail closed outside the owning hosted run", () => {
@@ -304,12 +305,21 @@ test("runner workflow reserves shutdown time, retains numeric artifacts and aggr
   assert.equal(datasets.env.WORKFLOW_EMBEDDING_DIMENSIONS, "1536");
   assert.equal(datasets.env.DENSE_MEM_EVAL_IMPORT_WORKERS, undefined);
   assert.equal(Object.hasOwn(workflow.on.workflow_call.inputs, "import_workers"), false);
+  assert.equal(Object.hasOwn(workflow.on.workflow_call.inputs, "ontology_seed_version"), false);
+  assert.equal(Object.hasOwn(datasets.env, "EVAL_CONDITION"), false);
+  const workerInput = workflow.on.workflow_call.inputs.answer_workers;
+  assert.deepEqual(workerInput, { type: "string", default: "4" });
   for (const entrypoint of ["run-evaluation.yml", "production-image-e2e.yml"]) {
     const caller = await readWorkflow(entrypoint);
     const inputs = caller.on.workflow_dispatch.inputs;
     const call = workflowJob(caller, "evaluation").with;
     assert.equal(Object.hasOwn(inputs, "import_workers"), false);
     assert.equal(Object.hasOwn(call, "import_workers"), false);
+    assert.equal(Object.hasOwn(inputs, "ontology_seed_version"), false);
+    assert.equal(Object.hasOwn(call, "ontology_seed_version"), false);
+    assert.equal(inputs.answer_workers.type, workerInput.type);
+    assert.equal(inputs.answer_workers.default, workerInput.default);
+    assert.equal(call.answer_workers, "${{ inputs.answer_workers }}");
     const chosen = {};
     for (const { id } of registry.datasets) {
       assert.equal(inputs[`run_${id}`]?.type, "boolean");
@@ -321,6 +331,8 @@ test("runner workflow reserves shutdown time, retains numeric artifacts and aggr
   }
   assert.equal(workflow.env.EVAL_DATASET_SELECTION, "${{ inputs.dataset_selection }}");
   assert.equal(datasets["runs-on"], "ubuntu-latest"); assert.equal(datasets["timeout-minutes"], 360); assert.equal(datasets.strategy["fail-fast"], false);
+  assert.equal(datasets.strategy["max-parallel"], "${{ fromJSON(needs.registry.outputs.max_parallel) }}");
+  assert.equal(datasets.env.EVAL_ANSWER_WORKERS, "${{ needs.registry.outputs.answer_workers }}");
   const deadline = datasets.steps.find((step) => step.name === "Freeze model deadline").run;
   assert.match(deadline, /minutes=330/);
   assert.ok(datasets.steps.filter((step) => step.uses?.startsWith("actions/upload-artifact@")).every((step) => step.with["retention-days"] === 2));
@@ -352,19 +364,26 @@ test("the matrix supports selected public datasets and requires at least one", a
   const output = path.join(directory, "output");
   const env = { ...hostedTest, GITHUB_OUTPUT: output };
   const liveSelection = { hotpotqa: true, musique: false, "2wikimultihopqa": true, nq_rear: false, popqa: false };
-  for (const [mode, selection, expected] of [
-    ["live", undefined, registry.datasets.map(({ id }) => id)],
-    ["live", JSON.stringify(liveSelection), ["hotpotqa", "2wikimultihopqa"]],
-    ["fixtures", '{"hotpotqa":false}', ["hotpotqa"]],
+  for (const [mode, selection, expected, workers, maxParallel] of [
+    ["live", undefined, registry.datasets.map(({ id }) => id), undefined, 5],
+    ["live", undefined, registry.datasets.map(({ id }) => id), "10", 2],
+    ["live", JSON.stringify(liveSelection), ["hotpotqa", "2wikimultihopqa"], "6", 3],
+    ["fixtures", '{"hotpotqa":false}', ["hotpotqa"], "4", 5],
   ]) {
     fs.writeFileSync(output, "");
-    await main("matrix", { ...env, EVAL_MODE: mode, EVAL_DATASET_SELECTION: selection });
-    const matrix = JSON.parse(fs.readFileSync(output, "utf8").trim().slice("matrix=".length));
-    assert.deepEqual(matrix.dataset, expected);
+    await main("matrix", { ...env, EVAL_MODE: mode, EVAL_DATASET_SELECTION: selection, EVAL_ANSWER_WORKERS: workers });
+    const [matrix, answerWorkers, parallelism] = fs.readFileSync(output, "utf8").trim().split("\n");
+    assert.deepEqual(JSON.parse(matrix.slice("matrix=".length)).include, expected.map((dataset) => ({ dataset })));
+    assert.equal(answerWorkers, `answer_workers=${workers ?? 4}`);
+    assert.equal(parallelism, `max_parallel=${maxParallel}`);
   }
   fs.writeFileSync(output, "");
   for (const selection of ['{"hotpotqa":false}', '{"hotpotqa":"true"}', '{"qasper":true}', "null", "not-json"]) {
     await assert.rejects(main("matrix", { ...env, EVAL_MODE: "live", EVAL_DATASET_SELECTION: selection }), /Dataset selection/);
+    assert.equal(fs.readFileSync(output, "utf8"), "");
+  }
+  for (const workers of ["0", "3", "11", "4.5", "invalid"]) {
+    await assert.rejects(main("matrix", { ...env, EVAL_MODE: "live", EVAL_ANSWER_WORKERS: workers }), /EVAL_ANSWER_WORKERS/);
     assert.equal(fs.readFileSync(output, "utf8"), "");
   }
   for (const mode of ["replay", "none", "unknown", ""]) await assert.rejects(main("matrix", { ...env, EVAL_MODE: mode }), /Invalid evaluation mode/);
@@ -378,24 +397,106 @@ test("pinning reports a missing selected seed without looking up unselected tags
     manifests.push(pathname);
     return new Response(null, { status: 404 });
   });
-  await assert.rejects(main("pin-seeds", { ...hostedTest, EVAL_MODE: "live", EVAL_DATASET_SELECTION: '{"hotpotqa":false,"popqa":true}' }), /Public seed is unavailable for popqa/);
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "evaluation-pins-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  await main("pin-seeds", { ...hostedTest, EVAL_MODE: "live", RUNNER_TEMP: directory, GITHUB_OUTPUT: path.join(directory, "output"),
+    EVAL_DATASET_SELECTION: '{"hotpotqa":false,"popqa":true}' });
+  const pins = JSON.parse(fs.readFileSync(path.join(directory, "output"), "utf8").trim().slice("images=".length));
+  assert.deepEqual(pins, { popqa: { failure: "published_seed_missing" } });
   assert.deepEqual(manifests, ["/v2/markhuangai/dense-mem-eval-postgres/manifests/popqa-latest"]);
 });
 
-test("a complete single-dataset report keeps its actual denominator and scope", async (t) => {
+const campaign = { runID: "42", source: revision, image: pinnedImage,
+  registryHash: sha256(fs.readFileSync(new URL("../datasets.json", import.meta.url))), answerWorkers: 10 };
+const seedPin = `ghcr.io/markhuangai/dense-mem-eval-postgres@sha256:${"d".repeat(64)}`;
+
+function frozenReport({ id, questions, corpus }) {
+  return {
+    identity: { dataset: id, condition: "off", run_id: `42-${id}-off`, workflow_run_id: "42", source_revision: campaign.source,
+      image: campaign.image, registry_sha256: campaign.registryHash, answer_workers: 10, seed_image: seedPin,
+      canonical_sha256: "c".repeat(64), model: "fixture", embedding_model: "text-embedding-3-small",
+      embedding_dimensions: 1536, context_window_tokens: 500000, scoring_policy: "fixture" },
+    corpus_rows: corpus.rows, restored_rows: corpus.rows, expected_answers: questions.rows * 2, completed_answers: questions.rows * 2,
+    complete: true, capture_complete: true, owned_cleanup: true, model_verified_before_cutoff: true,
+    comparison_matrix: ["single", "multi_turn"].map((policy) => ({ policy, condition: "off", expected: questions.rows, completed: questions.rows })),
+  };
+}
+
+test("a complete single-dataset run keeps its actual denominator and proves cleanup", async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "evaluation-aggregate-test-"));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
-  const reports = path.join(directory, "evaluation-reports", "evaluation-hotpotqa");
-  fs.mkdirSync(reports, { recursive: true });
-  fs.writeFileSync(path.join(reports, "scores.json"), JSON.stringify({
-    identity: { dataset: "hotpotqa" }, corpus_rows: registry.datasets[0].corpus.rows,
-    expected_answers: 4000, completed_answers: 4000, complete: true, capture_complete: true,
-  }));
-  await main("aggregate", { ...hostedTest, EVAL_MODE: "live", EVAL_DATASET_SELECTION: '{"hotpotqa":true}', RUNNER_TEMP: directory, GITHUB_STEP_SUMMARY: path.join(directory, "summary") });
-  const result = JSON.parse(fs.readFileSync(path.join(directory, "evaluation-reports", "aggregate", "comparison.json")));
+  const artifact = path.join(directory, "evaluation-reports", "evaluation-hotpotqa-off");
+  fs.mkdirSync(artifact, { recursive: true });
+  const fixture = frozenReport(registry.datasets[0]);
+  fs.writeFileSync(path.join(artifact, "scores.json"), JSON.stringify(fixture));
+  const cleanupReceipt = path.join(artifact, "cleanup.json");
+  fs.writeFileSync(cleanupReceipt, JSON.stringify({ run_id: fixture.identity.run_id, complete: true }));
+  const env = { ...hostedTest, EVAL_MODE: "live", EVAL_DATASET_SELECTION: '{"hotpotqa":true}', RUNNER_TEMP: directory,
+    EVAL_SOURCE_REVISION: campaign.source, EVAL_IMAGE: campaign.image, EVAL_ANSWER_WORKERS: "10",
+    EVAL_PINNED_SEEDS: JSON.stringify({ hotpotqa: { image: seedPin } }), GITHUB_STEP_SUMMARY: path.join(directory, "summary") };
+  const resultPath = path.join(directory, "evaluation-reports", "aggregate", "comparison.json");
+  const originalCode = process.exitCode;
+  t.after(() => { process.exitCode = originalCode; });
+  await main("aggregate", env);
+  const result = JSON.parse(fs.readFileSync(resultPath));
   assert.equal(result.complete, true);
   assert.equal(result.full_public_campaign, false);
-  assert.equal(result.expected_answers, 4000);
-  assert.equal(result.completed_answers, 4000);
+  assert.equal(result.expected_answers, 2000);
+  assert.equal(result.completed_answers, 2000);
   assert.deepEqual(result.datasets.map(({ dataset }) => dataset), ["hotpotqa"]);
+  fs.writeFileSync(cleanupReceipt, "{");
+  await main("aggregate", env);
+  const incomplete = JSON.parse(fs.readFileSync(resultPath));
+  assert.equal(incomplete.complete, false);
+  assert.equal(incomplete.completed_answers, 2000);
+  assert.equal(incomplete.datasets[0].owned_cleanup, false);
+  assert.equal(process.exitCode, 1);
+});
+
+test("a failed or missing dataset preserves a frozen denominator and other scores", () => {
+  const reports = registry.datasets.map(frozenReport);
+  for (const [index, report] of reports.entries()) report.identity.seed_preparation_workers = index + 4;
+  const pins = Object.fromEntries(registry.datasets.map(({ id }) => [id, { image: seedPin }]));
+  const all = (rows) => aggregate(registry, rows, { ...campaign, pins });
+  const complete = all(reports);
+  assert.equal(complete.complete, true);
+  assert.equal(complete.expected_answers, 10000);
+  assert.equal(complete.completed_answers, 10000);
+
+  const shortened = structuredClone(reports);
+  shortened[0].comparison_matrix[0].completed--;
+  shortened[0].completed_answers--;
+  shortened[0].capture_complete = false;
+  shortened[0].capture_failure = { reason: "matching_work_exceeded" };
+  const partial = all(shortened);
+  assert.equal(partial.complete, false);
+  assert.equal(partial.expected_answers, 10000);
+  assert.equal(partial.completed_answers, 9999);
+  assert.equal(partial.datasets[0].capture_failure.reason, "matching_work_exceeded");
+  assert.equal(partial.datasets[1].complete, true);
+
+  assert.equal(all(reports.slice(1)).completed_answers, 8000);
+  assert.equal(all([...reports, reports[0]]).datasets[0].unavailable, "duplicate reports");
+
+  for (const change of [
+    (row) => { row.identity.condition = "on"; },
+    (row) => { row.identity.answer_workers = 4; },
+    (row) => { row.identity.seed_image = "other"; },
+    (row) => { row.identity.run_id = "foreign-off"; },
+    (row) => { row.expected_answers = 1999; },
+    (row) => { row.comparison_matrix[1] = null; },
+  ]) {
+    const invalid = structuredClone(reports);
+    change(invalid[0]);
+    const result = all(invalid);
+    assert.equal(result.complete, false);
+    assert.equal(result.expected_answers, 10000);
+    assert.equal(result.completed_answers, 8000);
+    assert.equal(result.datasets[1].complete, true);
+  }
+
+  const mixed = structuredClone(reports);
+  mixed[0].identity.model = "other";
+  assert.equal(all(mixed).complete, false);
+  assert.match(all(mixed).failure, /different scoring settings/);
 });
