@@ -11,7 +11,7 @@ fallback: "The worker reads eligible shared Evidence from the current generation
 caption: "The worker can organize the current shared generation. Private Evidence stays within its own space."
 question: "What happens while maintenance is paused?"
 details: ["A pause stops background admissions while enabled foreground assignment and Topic reads continue.","The scheduler discovers eligible older Evidence and indexed matches affected by Topic changes. It checks source and Topic revisions before starting provider work."]
-source_revision: main
+source_revision: 6767dd33f5d3e2546b4afac39122db7bf01549f9
 refs: ["internal/topics/postgres/maintenance_discovery.go:18","internal/topics/maintenance.go:192","internal/topics/MANAGEMENT.md:27"]
 guide: "/Topics-And-Organization/"
 ---

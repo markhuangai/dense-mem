@@ -15,7 +15,7 @@ term:
   definition: "The scoped shortlist of up to 20 existing Topics."
 question: "What if a suitable topic does not exist?"
 details: ["With optional Decisions enabled, Dense-Mem checks each candidate and asks whether relevant meaning remains uncovered.","Structured generation can match several existing Topics and propose new ones in the same reply. It supplies an exact supporting quote for each selection or proposal.","An unclear passage can remain uncategorized. It is still searchable."]
-source_revision: main
+source_revision: 6767dd33f5d3e2546b4afac39122db7bf01549f9
 refs: ["internal/topicassignment/service.go:49","internal/topicassignment/generation.go:19","internal/topicassignment/decisions.go:17"]
 guide: "/Topics-And-Organization/"
 sequences: ["ai_topic_assignment"]

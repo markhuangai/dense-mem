@@ -11,7 +11,7 @@ fallback: "Retention duration and the legal-hold exception answer different ques
 caption: "Two passages share a topic here. They remain separate answers to different questions."
 question: "How is this different from intake reuse?"
 details: ["Intake reuse chooses a canonical Evidence identity for a new occurrence. Evidence equivalence groups eligible stored Evidence with the same meaning. Each member retains its own text and provenance.","The worker checks labels, metadata, relative time, and owner-sensitive wording before recording an equivalence outcome. Ambiguous comparisons can remain unresolved."]
-source_revision: main
+source_revision: 6767dd33f5d3e2546b4afac39122db7bf01549f9
 refs: ["internal/topics/contract/equivalence.go:15","internal/topics/maintenance.go:313","internal/recall/recall_ontology.go:80"]
 guide: "/Topics-And-Organization/"
 ---
