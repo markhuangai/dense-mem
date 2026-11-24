@@ -1,0 +1,5 @@
+<ul class="area-list"{% if include.animated %} data-enter{% endif %}>
+  {% for area in site.data.system %}
+    <li><a href="{{ '/system/' | relative_url }}#{{ area.id }}"><span>{{ area.title | escape }}</span><span aria-hidden="true">↗</span></a></li>
+  {% endfor %}
+</ul>

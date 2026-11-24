@@ -1,12 +1,24 @@
 @import url("tour.css");
 
 :root {
-  --link: #175d9a;
+  --link: var(--accent);
   scroll-padding-top: 16px;
   scroll-padding-bottom: 76px;
 }
 
-.site-nav { display: flex; align-items: center; gap: clamp(9px, 3vw, 31px); font-weight: 590; }
+.mast { column-gap: clamp(12px, 3vw, 31px); }
+.site-nav { display: flex; align-items: center; gap: clamp(9px, 3vw, 31px); margin-inline-start: auto; font-weight: 590; }
+.site-nav a { white-space: nowrap; }
+.theme-control {
+  min-height: 36px;
+  padding: 4px 8px;
+  background: var(--field);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  font-size: 15px;
+  font-weight: 580;
+  cursor: pointer;
+}
 .site-nav a, .site-footer a { color: var(--ink); text-decoration: none; }
 .site-nav a:hover, .site-footer a:hover { text-decoration: underline; }
 .brand { color: var(--ink); text-decoration: none; white-space: nowrap; }
@@ -79,12 +91,12 @@
   border-radius: 4px;
   font-weight: 550;
 }
-.variant-buttons button[aria-pressed=true] { color: var(--paper); background: var(--ink); border-color: var(--ink); }
+.variant-buttons button[aria-pressed=true] { color: var(--on-ink); background: var(--ink); border-color: var(--ink); }
 .sequence-player .static-variant { display: none; }
 .sequence-frame { background: var(--paper); border: 1px solid var(--line); border-radius: 6px; padding: 11px 13px; }
 .sequence-frame h3 { font-size: 17px; margin: 0 0 4px; }
 .sequence-frame p { margin: 0; color: var(--muted); }
-.sequence-frame .frame-stage { font-size: 13px; margin: 0 0 5px; color: var(--blue); }
+.sequence-frame .frame-stage { font-size: 13px; margin: 0 0 5px; color: var(--accent); }
 .sequence-frame + .sequence-frame:not([hidden]) { margin-top: 7px; }
 .sequence-controls { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .sequence-controls [data-frame-count] { font-variant-numeric: tabular-nums; color: var(--muted); }
@@ -101,7 +113,7 @@ pre.payload { margin-top: 6px; max-height: 285px; overflow-y: auto; }
 .process-flow { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: center; gap: 0; }
 .process-node { width: min(100%, 420px); border-left: 3px solid var(--line); }
 .process-node b { display: block; }
-.process-node.current { border-color: #4b7fa8; background: #f6fafd; }
+.process-node.current { border-color: var(--accent); background: var(--pale); }
 .process-flow .down { height: 12px; }
 .reference { display: grid; grid-template-columns: 190px minmax(0,850px); align-items: start; gap: clamp(22px,4vw,60px); padding-top: 31px; }
 .reference:has(.prose:only-child) { display: block; }
@@ -143,7 +155,7 @@ pre.payload { margin-top: 6px; max-height: 285px; overflow-y: auto; }
 .search form { margin-top: 15px; }
 .search label { display: block; color: var(--muted); margin-bottom: 4px; }
 .search input { min-width: 0; flex: 1; font: inherit; color: var(--ink); background: var(--paper); border: 1px solid var(--line); border-radius: 5px; padding: 6px 10px; }
-.search input:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.search input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .search .search-results { margin-top: 14px; padding-left: 21px; }
 .search-results li { border-top: 1px solid var(--line); padding: 9px 2px 12px; }
 .search-results li a { font-weight: 650; }
@@ -153,6 +165,12 @@ pre.payload { margin-top: 6px; max-height: 285px; overflow-y: auto; }
 .diagram-disclosure > details { margin-top: 6px; }
 .diagram-render { overflow-x: auto; max-width: 100%; }
 .diagram-render svg { display: block; margin: 8px auto; height: auto; }
+
+@media (max-width: 640px) {
+  .mast { display: grid; grid-template-columns: 1fr auto; row-gap: 5px; padding-block: 6px; }
+  .theme-control { grid-column: 2; grid-row: 1; }
+  .site-nav { grid-column: 1 / -1; grid-row: 2; margin-inline-start: 0; justify-content: space-between; }
+}
 
 @media (max-width: 790px) {
   .walkthrough .intro { align-items: flex-start; flex-direction: column; gap: 10px; }
@@ -170,4 +188,11 @@ pre.payload { margin-top: 6px; max-height: 285px; overflow-y: auto; }
   .chapter { min-height: 37px; }
   .prose { font-size: 16px; }
   .process-node { padding: 7px 10px; }
+}
+
+.related-walkthroughs { margin-block: .8rem; }
+.related-walkthroughs summary { cursor: pointer; color: var(--link); font-weight: 625; }
+.related-walkthroughs .trail-grid { margin-top: .8rem; }
+@media (max-width: 350px) {
+  .site-nav { flex-wrap: wrap; }
 }

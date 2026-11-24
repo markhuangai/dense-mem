@@ -11,6 +11,8 @@ The current memory contract is `dense-mem.v2.8.0`. MCP at `/mcp` or `/teams/{tea
 
 Examples below are tool argument/result objects except where explicitly shown as complete JSON-RPC envelopes. Replace `<returned_...>` placeholders with authorized returned IDs, and generate and retain each `<new_..._key>` before sending a mutation.
 
+[Browse all MCP fields and constraints]({{ '/fields/' | relative_url }}).
+
 ## Tool Catalog
 
 | Tool | Required access | Result |
@@ -62,7 +64,7 @@ Public errors are bounded and actionable. [Request Lifecycle And Security]({{ '/
 | --- | --- |
 | `target_space` | Required `private` or `team_shared`; one destination for the whole request. |
 | `idempotency_key` | Required nonempty string, at most 128 characters. |
-| `evidence` | 1–20 items; each requires nonempty `content`, at most 999 Unicode code points. |
+| `evidence` | 1–20 items; each requires nonempty `content`, at most 16,384 Unicode code points. |
 | `source_type` | Optional `conversation`, `document`, `observation`, or `manual`. |
 | `source`, `source_group`, `source_key`, revision tokens | Optional bounded provenance strings, at most 256 characters each. |
 | `authority` | Optional `authoritative`, `primary`, `secondary`, `inferred`, or `unknown`. |
@@ -335,7 +337,7 @@ Array order conveys rank. Conflicts use `kind: evidence_conflict` and exact occu
 | --- | --- |
 | `evidence_id` | Required authorized Evidence UUID. |
 | `max_events` | 1–500; default 100, shared across bounded history. |
-| `max_fragment_content_runes` | 1–8000; default 2000. |
+| `max_fragment_content_runes` | 1–16,384; default 2,000. |
 | Result collections | `evidence`, `occurrences`, `source_revisions`, `decisions`, `lifecycle`, and `search_documents`. |
 | Completeness | Explicit `truncated` and `omissions`; content can be omitted or truncated. |
 

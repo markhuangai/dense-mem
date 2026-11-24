@@ -1,0 +1,42 @@
+# Every view uses these exact strings and IDs.
+note: &original |-
+  We rehearse in Room 4.
+  Bring headphones.
+room: "We rehearse in Room 4."
+gear: "Bring headphones."
+question: &question "Where’s practice?"
+answer: "Room 4."
+replacement: "We rehearse in Room 7."
+source: &chat Band chat
+space: &shared team_shared
+private_space: private
+operation: &key band-note-01
+private_operation: &private_key band-note-private-01
+room_id: &room 00000000-0000-4000-8000-000000000001
+gear_id: 00000000-0000-4000-8000-000000000002
+replacement_id: 00000000-0000-4000-8000-000000000003
+topic_id: 10000000-0000-4000-8000-000000000001
+occurrence: 20000000-0000-4000-8000-000000000001
+source_item: 20000000-0000-4000-8000-000000000002
+span_start: 0
+span_end: 23
+topic: Rehearsals
+requests:
+  save:
+    tool: remember
+    arguments:
+      target_space: *shared
+      idempotency_key: *key
+      evidence: [{content: *original, source_type: manual, source: *chat}]
+  save-private:
+    tool: remember
+    arguments:
+      target_space: private
+      idempotency_key: *private_key
+      evidence: [{content: *original, source_type: manual, source: *chat}]
+  answer:
+    tool: recall_memory
+    arguments: {query: *question, limit: 1}
+  show-source:
+    tool: trace_memory
+    arguments: {evidence_id: *room, include_evidence_content: true}

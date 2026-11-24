@@ -1,0 +1,35 @@
+---
+layout: base
+experience: true
+title: MCP field reference
+permalink: /fields/
+---
+<main id="content" class="field-reference">
+  <h1>MCP field reference</h1>
+  <p>Field types and constraints for {{ site.contract_version }}. Required fields inside an optional object apply when that object is present.</p>
+  <ul class="field-catalog-nav" aria-label="Tools">
+    {% for item in site.data.contracts.tools %}
+    <li><a href="#{{ item[0] }}"><code>{{ item[0] }}</code></a></li>
+    {% endfor %}
+    <li><a href="#error">Public errors</a></li>
+  </ul>
+  {% for item in site.data.contracts.tools %}
+  <section class="catalog-tool" id="{{ item[0] }}">
+    <h2><code>{{ item[0] }}</code></h2>
+    <p><a href="{{ '/Technical-Reference/' | relative_url }}#{{ item[0] }}">Tool contract and complete examples</a></p>
+    {% for direction in item[1] %}
+    <section id="{{ item[0] }}-{{ direction[0] }}" class="catalog-direction">
+      <h3>{{ direction[0] | capitalize }}</h3>
+      {% assign entries = direction[1] %}
+      {% assign prefix = item[0] | append: '-' | append: direction[0] %}
+      {% include field-list.html fields=entries prefix=prefix %}
+    </section>
+    {% endfor %}
+  </section>
+  {% endfor %}
+  <section class="catalog-tool" id="error">
+    <h2>Public errors</h2>
+    {% include field-list.html fields=site.data.contracts.error prefix='error' %}
+  </section>
+  <p>Generated from the <a href="{{ site.source_repository }}/tree/{{ site.lesson_source_revision }}/internal/tools/registry">pinned application registry</a>.</p>
+</main>

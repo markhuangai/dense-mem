@@ -1,5 +1,91 @@
 ---
-layout: walkthrough
-workflow: evidence
-title: The life of a memory
+layout: base
+experience: true
+title: Where’s band practice?
 ---
+{% assign story = site.lessons | where: 'slug', 'rehearsal' | first %}
+<main id="content" class="learn-home">
+  <header class="learn-hero">
+    <div class="learn-hero-copy">
+      <h1>Where’s band <br>practice?</h1>
+      <div class="learn-intro">
+        <p>See how Dense-Mem helps an assistant find a saved message and show where the answer came from.</p>
+        <div class="learn-actions">
+          <a class="learn-button" href="{{ story.url | relative_url }}">Start with a story <span aria-hidden="true">→</span></a>
+          <a class="learn-link" href="{{ '/system/' | relative_url }}">Explore the system <span aria-hidden="true">↗</span></a>
+        </div>
+      </div>
+    </div>
+    <div class="learn-preview">
+      <div class="preview-photo">
+        <img src="{{ '/assets/images/rehearsal.webp' | relative_url }}"
+             srcset="{{ '/assets/images/rehearsal-small.webp' | relative_url }} 720w, {{ '/assets/images/rehearsal.webp' | relative_url }} 1440w"
+             sizes="(min-width: 1280px) 1204px, calc(100vw - 32px)"
+             width="1440" height="960" fetchpriority="high"
+             alt="Three bandmates playing guitar, bass, and drums in a rehearsal room.">
+      </div>
+      <aside class="preview-example" data-ui aria-label="Example from the band chat">
+        <div class="preview-chat">
+          <p class="preview-label">Sam asks</p>
+          <p class="preview-question">{{ site.data.rehearsal.question | escape }}</p>
+          <div class="preview-answer">
+            <p class="preview-label">Sam’s assistant</p>
+            <p>{{ site.data.rehearsal.answer | escape }}</p>
+          </div>
+        </div>
+        <details class="preview-source">
+          <summary>Show original</summary>
+          <div class="preview-origin">
+            <p class="preview-label">Maya · {{ site.data.rehearsal.source | escape }}</p>
+            <blockquote><mark>{{ site.data.rehearsal.room | escape }}</mark><br>{{ site.data.rehearsal.gear | escape }}</blockquote>
+            <a href="{{ story.url | relative_url }}#show-source" class="learn-link">Follow the source <span aria-hidden="true">→</span></a>
+          </div>
+        </details>
+      </aside>
+    </div>
+  </header>
+  <section class="home-system" aria-labelledby="explore-title">
+    <div>
+      <h2 id="explore-title" data-enter>Explore the system</h2>
+      <div class="rehearsal-details">
+        <img src="{{ '/assets/images/room-four.webp' | relative_url }}" width="640" height="427" loading="lazy" alt="The door marked Room 4." data-enter>
+        <img src="{{ '/assets/images/headphones.webp' | relative_url }}" width="640" height="427" loading="lazy" alt="Headphones resting on a guitar amp." data-enter>
+      </div>
+    </div>
+    {% include area-list.html animated=true %}
+  </section>
+  <section class="home-screens" aria-labelledby="same-note-title">
+    <div class="home-screens-heading">
+      <h2 id="same-note-title" data-enter>Follow one note</h2>
+      <img src="{{ '/assets/images/mixing-desk.webp' | relative_url }}" width="720" height="480" loading="lazy" alt="" data-enter>
+    </div>
+    <div class="home-screens-grid">
+      <figure class="screen-sample screen-search" data-ui data-enter>
+        <figcaption>User Portal</figcaption>
+        <p class="screen-title">Search memory</p>
+        <blockquote>{{ site.data.rehearsal.room | escape }}</blockquote>
+        <p>Source · {{ site.data.rehearsal.source | escape }}</p>
+        <a class="learn-link" href="{{ '/learn/portal-search/#inspect' | relative_url }}">Open the result <span aria-hidden="true">→</span></a>
+      </figure>
+      <figure class="screen-sample screen-control" data-ui data-enter>
+        <figcaption>Control Portal</figcaption>
+        <p class="screen-title">Ontology coverage</p>
+        <dl><div><dt>Pending</dt><dd>{{ site.data.lesson_fields.maintenance-pending.value }}</dd></div><div><dt>Active work</dt><dd>0</dd></div></dl>
+        <a class="learn-link" href="{{ '/learn/rehearsal-topic/?scenario=paused#organize' | relative_url }}">See what pauses <span aria-hidden="true">→</span></a>
+      </figure>
+      <figure class="screen-sample screen-worker" data-ui data-enter>
+        <figcaption>Search worker</figcaption>
+        <p class="screen-title">Search readiness</p>
+        <p>Outdated search records <strong>{{ site.data.lesson_fields.convergence.value }}</strong></p>
+        <a class="learn-link" href="{{ '/learn/repair-search/#repair' | relative_url }}">Watch the repair <span aria-hidden="true">→</span></a>
+      </figure>
+    </div>
+  </section>
+  <aside class="bookmark-targets" aria-label="Original Atlas walkthrough links">
+    {% assign old_steps = site.steps | where: 'workflow', 'evidence' | sort: 'order' %}
+    {% for step in old_steps %}
+    <p class="bookmark" id="{{ step.anchor }}"><a data-bookmark href="{{ '/walkthroughs/atlas/' | relative_url }}#{{ step.anchor }}">{{ step.title | escape }} in the Atlas walkthrough</a></p>
+    <p class="bookmark" id="{{ step.legacy }}"><a data-bookmark href="{{ '/walkthroughs/atlas/' | relative_url }}#{{ step.anchor }}">{{ step.title | escape }} in the Atlas walkthrough</a></p>
+    {% endfor %}
+  </aside>
+</main>

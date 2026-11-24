@@ -9,7 +9,51 @@ const fixtureLine = atlas.subject.content.slice(0, atlas.subject.content.indexOf
 const visibleStep = page => page.locator("article[data-step]:visible");
 const payload = async (scope, name) => JSON.parse(await scope.locator('[data-sample="' + name + '"]').first().textContent());
 
-async function navigate(page, path = "./") {
+test("follows system changes and remembers both explicit themes", async ({page}) => {
+  await page.emulateMedia({colorScheme: "dark"});
+  await page.goto("./");
+  const control = page.getByRole("combobox", {name: "Color theme"});
+  const root = page.locator("html");
+  const body = page.locator("body");
+  await expect(control).toHaveValue("system");
+  await expect(root).toHaveCSS("color-scheme", "dark");
+  const darkBackground = await body.evaluate(element => getComputedStyle(element).backgroundColor);
+  await page.emulateMedia({colorScheme: "light"});
+  await expect(root).toHaveCSS("color-scheme", "light");
+  await expect(body).not.toHaveCSS("background-color", darkBackground);
+
+  await control.selectOption("dark");
+  await expect(body).toHaveCSS("background-color", darkBackground);
+  await page.getByRole("navigation", {name: "Documentation"}).getByRole("link", {name: "Quick Start"}).click();
+  await expect(control).toHaveValue("dark");
+  await expect(root).toHaveCSS("color-scheme", "dark");
+  await page.emulateMedia({colorScheme: "dark"});
+  await control.selectOption("light");
+  await page.reload();
+  await expect(control).toHaveValue("light");
+  await expect(root).toHaveCSS("color-scheme", "light");
+
+  await control.selectOption("system");
+  await expect(root).toHaveCSS("color-scheme", "dark");
+  await page.reload();
+  await expect(control).toHaveValue("system");
+  await page.emulateMedia({colorScheme: "light"});
+  await expect(root).toHaveCSS("color-scheme", "light");
+});
+
+test("keeps dark mode readable and the header usable at 320 pixels", async ({page}) => {
+  await page.setViewportSize({width: 320, height: 760});
+  await page.emulateMedia({colorScheme: "dark"});
+  await page.goto("./");
+  await expect(page.getByRole("combobox", {name: "Color theme"})).toBeInViewport({ratio: 1});
+  await expect(page.getByRole("navigation", {name: "Documentation"})).toBeInViewport({ratio: 1});
+  await expect(page.getByRole("link", {name: "Start with a story"})).toBeInViewport({ratio: 1});
+  await expect(page.locator("html")).toHaveJSProperty("scrollWidth", 320);
+  const result = await new AxeBuilder({page}).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+  expect(result.violations).toEqual([]);
+});
+
+async function navigate(page, path = "./walkthroughs/atlas/") {
   await page.goto(path);
   await expect(page.locator("[data-enhanced=true]")).toHaveCount(1);
 }
@@ -17,7 +61,7 @@ async function navigate(page, path = "./") {
 test("walks all 17 Atlas steps and preserves named and numbered deep links", async ({page}) => {
   await navigate(page);
   await expect(page.getByRole("heading", {name: "The life of a memory"})).toBeVisible();
-  for (const label of ["Quick Start", "All guides", "Search"]) {
+  for (const label of ["Quick Start", "Reference", "Search"]) {
     await expect(page.getByRole("navigation", {name: "Documentation"}).getByRole("link", {name: label})).toBeVisible();
   }
   for (let step = 1; step <= 17; step++) {
@@ -32,9 +76,9 @@ test("walks all 17 Atlas steps and preserves named and numbered deep links", asy
   await page.goBack();
   await expect(visibleStep(page)).toHaveId("trace-source");
 
-  await navigate(page, "./#step-8");
+  await navigate(page, "./walkthroughs/atlas/#step-8");
   await expect(visibleStep(page)).toHaveId("choose-topic");
-  await navigate(page, "./#choose-topic");
+  await navigate(page, "./walkthroughs/atlas/#choose-topic");
   await expect(visibleStep(page)).toHaveId("choose-topic");
   await page.getByRole("button", {name: "Steps", exact: true}).click();
   await page.getByRole("dialog").getByRole("link", {name: "Split the note by meaning"}).click();
@@ -43,7 +87,7 @@ test("walks all 17 Atlas steps and preserves named and numbered deep links", asy
 });
 
 test("reconstructs exact spans and compares valid and invalid provider responses", async ({page}) => {
-  await navigate(page, "./#split-by-meaning");
+  await navigate(page, "./walkthroughs/atlas/#split-by-meaning");
   const sequence = page.locator('[data-sequence="ai_partition"]');
   await sequence.locator("summary").first().click();
   const request = await payload(sequence, "partitionRequest");
@@ -60,7 +104,7 @@ test("reconstructs exact spans and compares valid and invalid provider responses
   await sequence.locator("[data-frame-next]").click();
   await expect(sequence.getByText("Published Evidence")).toBeVisible();
 
-  await navigate(page, "./#trace-source");
+  await navigate(page, "./walkthroughs/atlas/#trace-source");
   const trace = await payload(page, "tracePartition");
   const exact = Array.from(atlas.subject.content).slice(trace.span_start, trace.span_end).join("");
   expect(exact).toBe(fixtureLine);
@@ -69,7 +113,7 @@ test("reconstructs exact spans and compares valid and invalid provider responses
 });
 
 test("plays a database commit and rollback with one shared source identity", async ({page}) => {
-  await navigate(page, "./#commit-evidence");
+  await navigate(page, "./walkthroughs/atlas/#commit-evidence");
   const sequence = page.locator('[data-sequence="database_commit"]');
   await sequence.locator("summary").first().click();
   await sequence.locator("[data-frame-next]").click();
@@ -97,7 +141,7 @@ test("plays a database commit and rollback with one shared source identity", asy
 });
 
 test("reveals definitions and contrasts reuse with new definitions", async ({page}) => {
-  await navigate(page, "./#choose-topic");
+  await navigate(page, "./walkthroughs/atlas/#choose-topic");
   const term = page.getByRole("button", {name: "Bounded vocabulary"});
   const definition = page.locator("#vocabulary-definition");
   await term.hover();
@@ -127,12 +171,12 @@ test("reveals definitions and contrasts reuse with new definitions", async ({pag
 });
 
 test("calculates hybrid and lexical ranks and applies direct topic membership", async ({page}) => {
-  await navigate(page, "./#combine-ranks");
+  await navigate(page, "./walkthroughs/atlas/#combine-ranks");
   await expect(visibleStep(page).locator("tbody .score-value")).toHaveText([(2/61).toFixed(5), (1/62).toFixed(5), (1/63).toFixed(5)]);
   await page.getByRole("button", {name: "Words only"}).click();
   await expect(visibleStep(page).locator("tbody .ticket")).toHaveText(["E1"]);
   await expect(visibleStep(page).locator("tbody .score-value")).toHaveText([(1/61).toFixed(5)]);
-  await navigate(page, "./#follow-topic");
+  await navigate(page, "./walkthroughs/atlas/#follow-topic");
   await expect(visibleStep(page).locator(".found .ticket")).toHaveText(["E3"]);
   await page.getByRole("button", {name: "Parent only"}).click();
   await expect(visibleStep(page).locator(".found")).toContainText("no directly assigned Evidence");
@@ -149,7 +193,7 @@ test("works on touch, supports reduced motion and exposes the read-all view", as
     const page = await context.newPage();
     const notes = [];
     page.on("pageerror", error => notes.push(error.message));
-    await page.goto("http://127.0.0.1:4173/dense-mem/#step-8");
+    await page.goto("http://127.0.0.1:4173/dense-mem/walkthroughs/atlas/#step-8");
     await expect(page.locator("[data-enhanced=true]")).toHaveCount(1);
     await page.getByRole("button", {name: "Bounded vocabulary"}).tap();
     await expect(page.locator("#vocabulary-definition")).toBeVisible();
@@ -186,7 +230,7 @@ test("runs all workflow guides and finds configuration anchors from search", asy
   await page.goto("./guides/");
   const links = await page.locator(".trail-grid a").evaluateAll(items => items.map(a => a.href));
   expect(links).toHaveLength(Object.keys(JSON.parse(readFileSync("_data/workflows.json", "utf8"))).length);
-  for (const link of links.filter(url => /\/walkthroughs\//.test(url))) {
+  for (const link of links.filter(url => !url.endsWith("/walkthroughs/atlas/"))) {
     await navigate(page, link);
     await expect(visibleStep(page).locator(".process-node.current")).toHaveCount(1);
     await page.locator("[data-next]").click();
@@ -225,14 +269,44 @@ test("renders each of the migrated Mermaid diagrams", async ({page}) => {
   expect(failed).toEqual([]);
 });
 
-test("renders a readable transcript with scripting off", async ({browser}) => {
-  const context = await browser.newContext({javaScriptEnabled: false});
+test("refreshes an open Mermaid diagram when the theme changes", async ({page}) => {
+  await page.emulateMedia({colorScheme: "light"});
+  await page.goto("./Architecture/");
+  const control = page.getByRole("combobox", {name: "Color theme"});
+  const diagram = page.locator(".diagram-disclosure").first();
+  const nodeLabel = diagram.locator(".diagram-render .nodeLabel").first();
+  await control.selectOption("dark");
+  await expect(diagram.locator("svg")).toHaveCount(0);
+  await diagram.getByText("Show diagram", {exact: true}).click();
+  await expect(nodeLabel).toHaveCSS("color", "rgb(204, 204, 204)");
+  await control.selectOption("system");
+  await expect(nodeLabel).toHaveCSS("color", "rgb(51, 51, 51)");
+  await page.emulateMedia({colorScheme: "dark"});
+  await expect(nodeLabel).toHaveCSS("color", "rgb(204, 204, 204)");
+  await control.evaluate(select => {
+    for (const theme of ["light", "dark", "light"]) {
+      select.value = theme;
+      select.dispatchEvent(new Event("change", {bubbles: true}));
+    }
+  });
+  await expect(nodeLabel).toHaveCSS("color", "rgb(51, 51, 51)");
+  await diagram.getByText("Diagram source", {exact: true}).click();
+  await expect(diagram.locator(".language-mermaid")).toBeVisible();
+});
+
+test("uses the system palette and shows a readable transcript with scripting off", async ({browser}) => {
+  const context = await browser.newContext({javaScriptEnabled: false, colorScheme: "dark"});
   try {
     const page = await context.newPage();
-    await page.goto("http://127.0.0.1:4173/dense-mem/");
+    await page.goto("./walkthroughs/atlas/");
     await expect(page.locator("article[data-step]:visible")).toHaveCount(17);
     await expect(page.locator("#choose-topic").getByText(atlas.topics.retention.name, {exact: true})).toBeVisible();
     await expect(page.getByRole("link", {name: "Quick Start"})).toBeVisible();
+    await expect(page.locator("[data-theme-control]")).toBeHidden();
+    const root = page.locator("html");
+    await expect(root).toHaveCSS("background-color", "rgb(24, 25, 27)");
+    await page.emulateMedia({colorScheme: "light"});
+    await expect(root).toHaveCSS("background-color", "rgb(246, 246, 244)");
   } finally {
     await context.close();
   }

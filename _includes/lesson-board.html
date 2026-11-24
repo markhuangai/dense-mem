@@ -1,0 +1,25 @@
+{% assign pieces = include.override | default: include.pieces %}
+<ol class="lesson-board{% if include.flow %} lesson-flow{% endif %}"{% if include.diagram %} data-diagram="{{ include.diagram | escape }}"{% endif %} data-ui>
+  {% for piece in pieces %}
+    {% assign value = piece[2] %}
+    {% assign prefix = value | slice: 0, 1 %}
+    {% if prefix == '$' %}
+      {% assign fixture_key = value | remove_first: '$' %}
+      {% assign value = site.data.rehearsal[fixture_key] %}
+    {% endif %}
+    <li class="lesson-piece{% if piece[3] %} piece-{{ piece[3] }}{% endif %}" data-piece="{{ piece[0] | escape }}"{% if piece[4] %} data-origin="{{ piece[4] | escape }}"{% endif %}>
+      {% assign piece_id = piece[0] %}
+      {% assign note = include.notes[piece_id] %}
+      {% if note %}
+        {% assign note_id = include.scope | append: '--note-' | append: piece_id %}
+        <details class="piece-note">
+          <summary class="piece-label" data-preview-trigger aria-describedby="{{ note_id }}">{{ piece[1] | escape }}</summary>
+          <p id="{{ note_id }}">{{ note | escape }}</p>
+        </details>
+      {% else %}
+        <span class="piece-label">{{ piece[1] | escape }}</span>
+      {% endif %}
+      <p>{% if piece[3] == 'highlight' %}<mark>{{ site.data.rehearsal.room | escape }}</mark><br>{{ site.data.rehearsal.gear | escape }}{% elsif fixture_key == 'note' and prefix == '$' %}<span data-fragment="room">{{ site.data.rehearsal.room | escape }}</span><br><span data-fragment="gear">{{ site.data.rehearsal.gear | escape }}</span>{% else %}{{ value | escape }}{% endif %}</p>
+    </li>
+  {% endfor %}
+</ol>

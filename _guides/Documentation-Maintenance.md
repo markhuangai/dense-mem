@@ -52,7 +52,7 @@ If the build or deployment fails, inspect the run for the failing step and sourc
 
 | Subject | Owner |
 | --- | --- |
-| Reader orientation and navigation | [Home]({{ '/Home/' | relative_url }}) and All guides. |
+| Reader orientation and navigation | [Story]({{ '/' | relative_url }}), [system index]({{ '/system/' | relative_url }}), and [reference guides]({{ '/guides/' | relative_url }}). |
 | Components, dependency direction, runtime composition | [Architecture]({{ '/Architecture/' | relative_url }}). |
 | Exact Evidence, occurrence/revision meaning, ownership, lifecycle, temporal semantics | [Evidence Model And Lifecycle]({{ '/Evidence-Model-And-Lifecycle/' | relative_url }}). |
 | Topics, direct membership, equivalence, freshness, maintenance and manager publication | [Topics And Organization]({{ '/Topics-And-Organization/' | relative_url }}). |

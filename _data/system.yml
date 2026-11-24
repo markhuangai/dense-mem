@@ -1,0 +1,18 @@
+- id: assistants
+  title: Assistants and integrations
+  prompt: Save, find, and check a note.
+- id: user-portal
+  title: User Portal
+  prompt: Search your workspace and manage team access.
+- id: control-portal
+  title: Control Portal
+  prompt: Configure a deployment and investigate what happened.
+- id: backend
+  title: Inside the backend
+  prompt: See how requests become searchable memory.
+- id: workers
+  title: Background workers
+  prompt: Follow the jobs that run after a request.
+- id: operations
+  title: Running and verifying Dense-Mem
+  prompt: Start, monitor, recover, and evaluate a deployment.

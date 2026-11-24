@@ -15,5 +15,48 @@ permalink: /assets/search.json
       {% assign url = flow.url | relative_url | append: '#' | append: step.anchor %}
       {"title": {{ step.title | jsonify }}, "guide": {{ flow.title | jsonify }}, "url": {{ url | jsonify }}, "html": {{ step.content | jsonify }}, "detail": {{ step.details | join: ' ' | jsonify }}}{% unless forloop.last %},{% endunless %}
     {% endfor %}
+  ],
+  "lessons": [
+    {% for lesson in site.lessons %}
+      {% assign lesson_url = lesson.url | relative_url %}
+      {% for frame in lesson.frames %}
+        {% assign url = lesson_url | append: '#' | append: frame.id %}
+        {"title": {{ frame.title | jsonify }}, "url": {{ url | jsonify }}, "context": {{ lesson.title | jsonify }}, "text": {{ frame.behavior | append: ' ' | append: frame.mechanics | jsonify }}}{% unless forloop.last %},{% endunless %}
+      {% endfor %}{% unless forloop.last %},{% endunless %}
+    {% endfor %}
+  ],
+  "fields": [
+    {% assign fields_url = '/fields/' | relative_url %}
+    {% for tool in site.data.contracts.tools %}
+      {% for direction in tool[1] %}
+        {% assign direction_anchor = tool[0] | append: '-' | append: direction[0] %}
+        {% for field in direction[1] %}
+          {% assign field_anchor = field.path | slugify %}
+          {% assign url = fields_url | append: '#' | append: direction_anchor | append: '-' | append: field_anchor %}
+          {"title": {{ field.path | jsonify }}, "url": {{ url | jsonify }}, "context": {{ tool[0] | append: ' ' | append: direction[0] | jsonify }}, "text": {{ field.purpose | jsonify }}},
+        {% endfor %}
+      {% endfor %}
+    {% endfor %}
+    {% for lesson in site.lessons %}
+      {% assign lesson_url = lesson.url | relative_url %}
+      {% for frame in lesson.frames %}
+        {% for id in frame.fields %}
+          {% assign field = site.data.lesson_fields[id] %}
+          {% assign url = lesson_url | append: '?view=data&field=' | append: id | append: '#' | append: frame.id %}
+          {"title": {{ field.path | jsonify }}, "url": {{ url | jsonify }}, "context": {{ lesson.title | jsonify }}, "text": {{ field.use | jsonify }}},
+        {% endfor %}
+        {% assign alternative = lesson.variant.frames[frame.id] %}
+        {% for id in alternative.fields %}
+          {% assign field = site.data.lesson_fields[id] %}
+          {% assign url = lesson_url | append: '?view=data&scenario=' | append: lesson.variant.id | append: '&field=' | append: id | append: '#' | append: frame.id %}
+          {"title": {{ field.path | jsonify }}, "url": {{ url | jsonify }}, "context": {{ lesson.title | jsonify }}, "text": {{ field.use | jsonify }}},
+        {% endfor %}
+      {% endfor %}
+    {% endfor %}
+    {% for field in site.data.contracts.error %}
+      {% assign field_anchor = field.path | slugify %}
+      {% assign url = fields_url | append: '#error-' | append: field_anchor %}
+      {"title": {{ field.path | jsonify }}, "url": {{ url | jsonify }}, "context": "Public errors", "text": {{ field.purpose | jsonify }}}{% unless forloop.last %},{% endunless %}
+    {% endfor %}
   ]
 }

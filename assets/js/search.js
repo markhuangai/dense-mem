@@ -24,7 +24,7 @@ function searchEntries(index, query) {
     const text = normalize(entry.text);
     const body = title + " " + normalize(entry.context) + " " + text;
     if (terms.some(term => !body.includes(term))) return null;
-    const score = (title === normalized ? 100 : 0) + (title.includes(normalized) ? 40 : 0) +
+    const score = (title === normalized ? 100 : 0) + (entry.url.includes("?view=data") ? 8 : 0) + (title.includes(normalized) ? 40 : 0) +
       (text.includes(normalized) ? 12 : 0) + terms.filter(term => title.includes(term)).length * 5;
     return {...entry, score};
   }).filter(Boolean).sort((a,b) => b.score - a.score || a.title.localeCompare(b.title)).slice(0, 30);
@@ -51,6 +51,8 @@ export function setupSearch(root) {
     const index = await response.json();
     return [
       ...index.guides.flatMap(guideSections),
+      ...index.lessons,
+      ...index.fields,
       ...index.steps.map(step => ({
         title: step.title, url: step.url, context: step.guide,
         text: new DOMParser().parseFromString(step.html, "text/html").body.textContent + " " + step.detail

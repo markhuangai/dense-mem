@@ -1,0 +1,28 @@
+---
+layout: base
+experience: true
+title: Explore the system
+permalink: /system/
+---
+<main id="content" class="learn-index">
+  <header class="system-heading">
+    <div>
+      <h1>Explore the system</h1>
+      <p>Pick a question and watch what happens. Open the same moment under the hood or follow the data through it.</p>
+      {% include area-list.html %}
+    </div>
+    <img src="{{ '/assets/images/mixing-desk.webp' | relative_url }}" width="720" height="480" alt="">
+  </header>
+  {% for area in site.data.system %}
+  {% assign lessons = site.lessons | where: 'area', area.id | sort: 'order' %}
+  <section id="{{ area.id }}" class="system-area" aria-labelledby="{{ area.id }}-title">
+    <header><h2 id="{{ area.id }}-title">{{ area.title | escape }}</h2><p>{{ area.prompt | escape }}</p></header>
+    <ul class="lesson-list">
+      {% for lesson in lessons %}
+        <li><a href="{{ lesson.url | relative_url }}"><strong>{{ lesson.title | escape }}</strong><span>{{ lesson.summary | escape }}</span><span class="lesson-arrow" aria-hidden="true">→</span></a></li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endfor %}
+  <p class="system-reference"><a class="learn-link" href="{{ '/guides/' | relative_url }}">Browse the reference guides <span aria-hidden="true">→</span></a></p>
+</main>
