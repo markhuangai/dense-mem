@@ -1767,10 +1767,7 @@ test(`${shardCount} precheck shards preserve every real runner selection exactly
     "repository/TestOntologyOrganizationPreservesPerRecordDependencyBounds",
     "repository/TestOntologyOrganizationPreservesValidLargeSourceContext",
     "repository/TestOntologyUnavailableSnapshotRetainsScopedHandleForMaintenance",
-  ].filter((id) => shardCount !== 7 || ![
-    "repository/TestOntologyVocabularyUsesCurrentCandidateWindow",
-    "repository/TestOntologyOrganizationPreservesPerRecordDependencyBounds",
-  ].includes(id)).sort();
+  ].sort();
   const measurement = "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement";
   const coalescing = "repository/TestOntologyMaintenanceCoalescingMeasurement";
   if (shardCount === 7) dedicated.push(

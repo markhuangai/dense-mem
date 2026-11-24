@@ -590,10 +590,7 @@ if (shardCount >= 6) {
       "repository/TestOntologyOrganizationPreservesValidLargeSourceContext",
       "repository/TestOntologyOrganizationPreservesPerRecordDependencyBounds",
     ].filter((id) => ontology?.caseIds.includes(id)),
-  ].filter((id) => shardCount !== 7 || ![
-    "repository/TestOntologyVocabularyUsesCurrentCandidateWindow",
-    "repository/TestOntologyOrganizationPreservesPerRecordDependencyBounds",
-  ].includes(id)).sort();
+  ].sort();
   const measurement = "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement";
   const coalescing = "repository/TestOntologyMaintenanceCoalescingMeasurement";
   if (shardCount === 7) {
