@@ -17,35 +17,35 @@ const ontologyConfigBodyKey = "ontologyConfig"
 const ontologyCommandBodyKey = "ontologyCommand"
 const ontologyPauseBodyKey = "ontologyPause"
 
-type controlOntologyConfigItem struct {
+type controlTopicMaintenanceConfigItem struct {
 	Key   string `json:"key" validate:"required,max=64"`
 	Value string `json:"value" validate:"max=16384"`
 }
-type controlOntologyConfigRequest struct {
-	Items []controlOntologyConfigItem `json:"items" validate:"required,min=1,max=9,dive"`
+type controlTopicMaintenanceConfigRequest struct {
+	Items []controlTopicMaintenanceConfigItem `json:"items" validate:"required,min=1,max=9,dive"`
 }
-type controlOntologyRunRequest struct {
+type controlTopicMaintenanceRunRequest struct {
 	OperationKey string `json:"operation_key" validate:"required,max=128"`
 	MaxBatches   int    `json:"max_batches" validate:"min=0,max=100"`
 }
-type controlOntologyPauseRequest struct {
+type controlTopicMaintenancePauseRequest struct {
 	OperationKey string `json:"operation_key" validate:"required,max=128"`
 }
 
 func registerOntologyMaintenanceRoutes(api *echo.Group, h *controlPortalHandler) {
 	if h.appConfig != nil {
 		api.GET("/config/topic-maintenance", h.getOntologyMaintenanceConfig)
-		api.PATCH("/config/topic-maintenance", h.updateOntologyMaintenanceConfig, middleware.BindAndValidateStrict[controlOntologyConfigRequest](ontologyConfigBodyKey))
+		api.PATCH("/config/topic-maintenance", h.updateOntologyMaintenanceConfig, middleware.BindAndValidateStrict[controlTopicMaintenanceConfigRequest](ontologyConfigBodyKey))
 	}
 	if h.ontology == nil {
 		return
 	}
 	api.GET("/topic-maintenance/status", h.getOntologyMaintenanceStatus)
 	api.GET("/topic-maintenance/runs", h.listOntologyMaintenanceRuns)
-	api.POST("/topic-maintenance/runs", h.runOntologyMaintenance, middleware.BindAndValidateStrict[controlOntologyRunRequest](ontologyCommandBodyKey))
-	api.POST("/topic-maintenance/runs/:runId/retry", h.retryOntologyMaintenance, middleware.BindAndValidateStrict[controlOntologyRunRequest](ontologyCommandBodyKey))
-	api.POST("/topic-maintenance/pause", h.pauseOntologyMaintenance, middleware.BindAndValidateStrict[controlOntologyPauseRequest](ontologyPauseBodyKey))
-	api.POST("/topic-maintenance/resume", h.resumeOntologyMaintenance, middleware.BindAndValidateStrict[controlOntologyPauseRequest](ontologyPauseBodyKey))
+	api.POST("/topic-maintenance/runs", h.runOntologyMaintenance, middleware.BindAndValidateStrict[controlTopicMaintenanceRunRequest](ontologyCommandBodyKey))
+	api.POST("/topic-maintenance/runs/:runId/retry", h.retryOntologyMaintenance, middleware.BindAndValidateStrict[controlTopicMaintenanceRunRequest](ontologyCommandBodyKey))
+	api.POST("/topic-maintenance/pause", h.pauseOntologyMaintenance, middleware.BindAndValidateStrict[controlTopicMaintenancePauseRequest](ontologyPauseBodyKey))
+	api.POST("/topic-maintenance/resume", h.resumeOntologyMaintenance, middleware.BindAndValidateStrict[controlTopicMaintenancePauseRequest](ontologyPauseBodyKey))
 }
 
 func (h *controlPortalHandler) getOntologyMaintenanceConfig(c *echo.Context) error {
@@ -57,7 +57,7 @@ func (h *controlPortalHandler) getOntologyMaintenanceConfig(c *echo.Context) err
 }
 
 func (h *controlPortalHandler) updateOntologyMaintenanceConfig(c *echo.Context) error {
-	body := middleware.MustGetValidatedBody[controlOntologyConfigRequest](c.Request().Context(), ontologyConfigBodyKey)
+	body := middleware.MustGetValidatedBody[controlTopicMaintenanceConfigRequest](c.Request().Context(), ontologyConfigBodyKey)
 	values := map[string]string{}
 	for _, item := range body.Items {
 		if _, duplicate := values[item.Key]; duplicate {
@@ -112,7 +112,7 @@ func (h *controlPortalHandler) retryOntologyMaintenance(c *echo.Context) error {
 	return h.ontologyRunCommand(c, "retry", id.String())
 }
 func (h *controlPortalHandler) ontologyRunCommand(c *echo.Context, action, runID string) error {
-	body := middleware.MustGetValidatedBody[controlOntologyRunRequest](c.Request().Context(), ontologyCommandBodyKey)
+	body := middleware.MustGetValidatedBody[controlTopicMaintenanceRunRequest](c.Request().Context(), ontologyCommandBodyKey)
 	return h.ontologyCommand(c, domain.TopicMaintenanceCommand{OperationKey: body.OperationKey, Action: action, MaxBatches: body.MaxBatches, RetryRunID: runID})
 }
 func (h *controlPortalHandler) pauseOntologyMaintenance(c *echo.Context) error {
@@ -122,7 +122,7 @@ func (h *controlPortalHandler) resumeOntologyMaintenance(c *echo.Context) error 
 	return h.ontologyPauseCommand(c, "resume")
 }
 func (h *controlPortalHandler) ontologyPauseCommand(c *echo.Context, action string) error {
-	body := middleware.MustGetValidatedBody[controlOntologyPauseRequest](c.Request().Context(), ontologyPauseBodyKey)
+	body := middleware.MustGetValidatedBody[controlTopicMaintenancePauseRequest](c.Request().Context(), ontologyPauseBodyKey)
 	return h.ontologyCommand(c, domain.TopicMaintenanceCommand{OperationKey: body.OperationKey, Action: action})
 }
 func (h *controlPortalHandler) ontologyCommand(c *echo.Context, input domain.TopicMaintenanceCommand) error {

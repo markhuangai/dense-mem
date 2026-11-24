@@ -180,7 +180,7 @@ func ontologyDiagnosticCapture(sink observability.LogSink, protector observabili
 		NewRecorder: func() modelprovider.SnapshotRecorder { return observability.NewProviderExchangeRecorder(protector) },
 		RecordFailure: func(ctx context.Context, claim contract.MaintenanceClaim, result contract.OrganizationResult, exchanges []modelprovider.ProviderExchange) error {
 			if sink == nil || protector == nil {
-				return errors.New("ontology diagnostic sink unavailable")
+				return errors.New("topic diagnostic sink unavailable")
 			}
 			if _, err := uuid.Parse(claim.TeamID); err != nil {
 				return err
@@ -202,7 +202,7 @@ func ontologyDiagnosticCapture(sink observability.LogSink, protector observabili
 				}
 				body, reason := protector.ProtectDiagnosticBytes(body, observability.MaxOperationMetadataBytes, observability.AuthenticationSecretsFromContext(ctx)...)
 				if reason != observability.CredentialProtectionAvailable {
-					return errors.New("ontology diagnostic metadata unavailable")
+					return errors.New("topic diagnostic metadata unavailable")
 				}
 				var protected map[string]any
 				if err := json.Unmarshal(body, &protected); err != nil {
@@ -211,13 +211,13 @@ func ontologyDiagnosticCapture(sink observability.LogSink, protector observabili
 				if chunk != nil {
 					metadata, ok := protected["payload_chunk"].(map[string]any)
 					if !ok || metadata["body"] != "" {
-						return errors.New("ontology diagnostic chunk metadata unavailable")
+						return errors.New("topic diagnostic chunk metadata unavailable")
 					}
 					// Complete bodies are protected before splitting so credential matches cannot cross chunk boundaries.
 					metadata["body"] = chunk.Body
 					body, err = json.Marshal(protected)
 					if err != nil || len(body) > observability.MaxOperationMetadataBytes {
-						return errors.New("ontology diagnostic metadata exceeds record budget")
+						return errors.New("topic diagnostic metadata exceeds record budget")
 					}
 				}
 				return sink.WriteLog(ctx, observability.LogRecord{Timestamp: time.Now().UTC(), Severity: "DEBUG", Message: event, TeamID: claim.TeamID, Attrs: protected, Contextual: true})
@@ -242,7 +242,7 @@ func ontologyDiagnosticCapture(sink observability.LogSink, protector observabili
 			manifest := map[string]any{"failure_code": result.FailureCode, "exchange_count": len(exchanges), "record_count": records, "attempts": result.Attempts}
 			if result.FreshnessRejection != nil {
 				if !result.FreshnessRejection.Valid() {
-					return errors.New("ontology freshness diagnostics invalid")
+					return errors.New("topic freshness diagnostics invalid")
 				}
 				body, err := json.Marshal(result.FreshnessRejection)
 				if err != nil {

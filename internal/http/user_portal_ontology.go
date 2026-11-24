@@ -19,7 +19,7 @@ const ontologyDraftBodyKey = "ontologyDraftCommand"
 const ontologyPreviewBodyKey = "ontologyDraftPreview"
 const ontologyRollbackBodyKey = "ontologyRollback"
 
-type ontologySaveDraftRequest struct {
+type topicSaveDraftRequest struct {
 	OperationKey     string                    `json:"operation_key" validate:"required,max=128"`
 	ExpectedVersion  *int64                    `json:"expected_version" validate:"required,min=0"`
 	ExpectedRevision *int64                    `json:"expected_revision" validate:"required,min=0"`
@@ -40,7 +40,7 @@ func registerOntologyManagementRoutes(api *echo.Group, service *ontology.Managem
 			}
 			return err
 		}
-	}, mw.RequireRole(access.CredentialRoleManager), userPortalServiceAvailable(service != nil, "ontology management unavailable"), func(next echo.HandlerFunc) echo.HandlerFunc {
+	}, mw.RequireRole(access.CredentialRoleManager), userPortalServiceAvailable(service != nil, "topic management unavailable"), func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c *echo.Context) error {
 			c.Response().Header().Set(echo.HeaderCacheControl, "no-store")
 			ctx := ontology.WithManagementAuditContext(c.Request().Context(), c.RealIP(), mw.GetCorrelationID(c.Request().Context()))
@@ -55,14 +55,14 @@ func registerOntologyManagementRoutes(api *echo.Group, service *ontology.Managem
 	group.GET("/status", h.status, read, ontologyQuery())
 	group.GET("/drafts", h.drafts, read, ontologyQuery("cursor", "limit"))
 	group.GET("/drafts/:id", h.draft, read, ontologyQuery())
-	group.POST("/drafts", h.saveDraft, write, ontologyQuery(), mw.BindAndValidateStrict[ontologySaveDraftRequest](ontologySaveBodyKey))
-	group.PUT("/drafts/:id", h.saveDraft, write, ontologyQuery(), mw.BindAndValidateStrict[ontologySaveDraftRequest](ontologySaveBodyKey))
-	group.POST("/drafts/:id/preview", h.preview, read, ontologyQuery(), mw.BindAndValidateStrict[dto.OntologyPreviewRequest](ontologyPreviewBodyKey))
-	group.POST("/drafts/:id/publish", h.publish, write, ontologyQuery(), mw.BindAndValidateStrict[dto.OntologyDraftCommandRequest](ontologyDraftBodyKey))
-	group.POST("/drafts/:id/discard", h.discard, write, ontologyQuery(), mw.BindAndValidateStrict[dto.OntologyDraftCommandRequest](ontologyDraftBodyKey))
+	group.POST("/drafts", h.saveDraft, write, ontologyQuery(), mw.BindAndValidateStrict[topicSaveDraftRequest](ontologySaveBodyKey))
+	group.PUT("/drafts/:id", h.saveDraft, write, ontologyQuery(), mw.BindAndValidateStrict[topicSaveDraftRequest](ontologySaveBodyKey))
+	group.POST("/drafts/:id/preview", h.preview, read, ontologyQuery(), mw.BindAndValidateStrict[dto.TopicPreviewRequest](ontologyPreviewBodyKey))
+	group.POST("/drafts/:id/publish", h.publish, write, ontologyQuery(), mw.BindAndValidateStrict[dto.TopicDraftCommandRequest](ontologyDraftBodyKey))
+	group.POST("/drafts/:id/discard", h.discard, write, ontologyQuery(), mw.BindAndValidateStrict[dto.TopicDraftCommandRequest](ontologyDraftBodyKey))
 	group.GET("/publications", h.publications, read, ontologyQuery("after", "limit"))
 	group.GET("/publications/:id", h.publication, read, ontologyQuery())
-	group.POST("/publications/:id/rollback", h.rollback, write, ontologyQuery(), mw.BindAndValidateStrict[dto.OntologyRollbackRequest](ontologyRollbackBodyKey))
+	group.POST("/publications/:id/rollback", h.rollback, write, ontologyQuery(), mw.BindAndValidateStrict[dto.TopicRollbackRequest](ontologyRollbackBodyKey))
 }
 
 func ontologyQuery(allowed ...string) echo.MiddlewareFunc {
@@ -70,7 +70,7 @@ func ontologyQuery(allowed ...string) echo.MiddlewareFunc {
 		return func(c *echo.Context) error {
 			for name, values := range c.QueryParams() {
 				if !slices.Contains(allowed, name) || len(values) != 1 {
-					return httperr.New(httperr.VALIDATION_ERROR, "unknown or repeated ontology query parameter")
+					return httperr.New(httperr.VALIDATION_ERROR, "unknown or repeated topic query parameter")
 				}
 			}
 			return next(c)
@@ -85,7 +85,7 @@ func ontologyIntQuery(c *echo.Context, name string, fallback int64) (int64, erro
 	}
 	value, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil || value < 0 {
-		return 0, httperr.New(httperr.VALIDATION_ERROR, "invalid ontology query value")
+		return 0, httperr.New(httperr.VALIDATION_ERROR, "invalid topic query value")
 	}
 	return value, nil
 }
@@ -96,7 +96,7 @@ func ontologyPageLimit(c *echo.Context) (int, error) {
 		return 0, err
 	}
 	if value < 1 || value > ontology.MaxPageSize {
-		return 0, httperr.New(httperr.VALIDATION_ERROR, "ontology page limit must be 1..200")
+		return 0, httperr.New(httperr.VALIDATION_ERROR, "topic page limit must be between 1 and 200")
 	}
 	return int(value), nil
 }
@@ -109,13 +109,13 @@ func managementResponse(c *echo.Context, value any, err error) error {
 	case errors.Is(err, ontology.ErrUnauthorized):
 		return httperr.New(httperr.FORBIDDEN, "manager authorization required")
 	case errors.Is(err, ontology.ErrNotFound):
-		return httperr.New(httperr.NOT_FOUND, "ontology item not found")
+		return httperr.New(httperr.NOT_FOUND, "topic management item not found")
 	case errors.Is(err, ontology.ErrConflict), errors.Is(err, ontology.ErrSourceStale):
-		return httperr.New(httperr.CONFLICT, "ontology state changed; refresh the draft before resubmitting")
+		return httperr.New(httperr.CONFLICT, "topic state changed. Refresh the draft before resubmitting")
 	case errors.Is(err, ontology.ErrInvalid), errors.Is(err, ontology.ErrOverride):
-		return httperr.New(httperr.VALIDATION_ERROR, "invalid or incompatible ontology correction")
+		return httperr.New(httperr.VALIDATION_ERROR, "invalid or incompatible topic edit")
 	default:
-		return httperr.New(httperr.SERVICE_UNAVAILABLE, "ontology management unavailable")
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "topic management unavailable")
 	}
 }
 
@@ -164,12 +164,12 @@ func (h *ontologyManagementHandler) draft(c *echo.Context) error {
 	return managementResponse(c, value, err)
 }
 func (h *ontologyManagementHandler) saveDraft(c *echo.Context) error {
-	body := mw.MustGetValidatedBody[ontologySaveDraftRequest](c.Request().Context(), ontologySaveBodyKey)
+	body := mw.MustGetValidatedBody[topicSaveDraftRequest](c.Request().Context(), ontologySaveBodyKey)
 	value, err := h.service.SaveDraft(c.Request().Context(), c.Param("id"), ontology.SaveDraftInput{OperationKey: body.OperationKey, ExpectedVersion: *body.ExpectedVersion, ExpectedRevision: *body.ExpectedRevision, Reason: body.Reason, Edits: body.Edits})
 	return managementResponse(c, value, err)
 }
 func (h *ontologyManagementHandler) preview(c *echo.Context) error {
-	body := mw.MustGetValidatedBody[dto.OntologyPreviewRequest](c.Request().Context(), ontologyPreviewBodyKey)
+	body := mw.MustGetValidatedBody[dto.TopicPreviewRequest](c.Request().Context(), ontologyPreviewBodyKey)
 	value, err := h.service.Preview(c.Request().Context(), c.Param("id"), *body.ExpectedVersion)
 	return managementResponse(c, value, err)
 }
@@ -180,7 +180,7 @@ func (h *ontologyManagementHandler) discard(c *echo.Context) error {
 	return h.commandDraft(c, "discard")
 }
 func (h *ontologyManagementHandler) commandDraft(c *echo.Context, action string) error {
-	body := mw.MustGetValidatedBody[dto.OntologyDraftCommandRequest](c.Request().Context(), ontologyDraftBodyKey)
+	body := mw.MustGetValidatedBody[dto.TopicDraftCommandRequest](c.Request().Context(), ontologyDraftBodyKey)
 	value, err := h.service.CommandDraft(c.Request().Context(), c.Param("id"), action, ontology.DraftCommand{OperationKey: body.OperationKey, ExpectedVersion: *body.ExpectedVersion, ExpectedRevision: *body.ExpectedRevision, Reason: body.Reason})
 	return managementResponse(c, value, err)
 }
@@ -201,7 +201,7 @@ func (h *ontologyManagementHandler) publication(c *echo.Context) error {
 	return managementResponse(c, value, err)
 }
 func (h *ontologyManagementHandler) rollback(c *echo.Context) error {
-	body := mw.MustGetValidatedBody[dto.OntologyRollbackRequest](c.Request().Context(), ontologyRollbackBodyKey)
+	body := mw.MustGetValidatedBody[dto.TopicRollbackRequest](c.Request().Context(), ontologyRollbackBodyKey)
 	value, err := h.service.Rollback(c.Request().Context(), c.Param("id"), ontology.DraftCommand{OperationKey: body.OperationKey, ExpectedRevision: *body.ExpectedRevision, Reason: body.Reason})
 	return managementResponse(c, value, err)
 }

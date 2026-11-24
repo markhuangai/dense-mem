@@ -47,13 +47,14 @@ func TestOntologyManagementHTTPClosedInputsAndPermissions(t *testing.T) {
 				diagnostics = append(diagnostics, diagnostic)
 			})
 			registerOntologyManagementRoutes(router.Group("/ui/api"), service)
-			req := httptest.NewRequest(tc.method, "/ui/api/ontology"+tc.path, strings.NewReader(tc.body))
+			req := httptest.NewRequest(tc.method, "/ui/api/topics"+tc.path, strings.NewReader(tc.body))
 			req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 			ctx := mw.SetPrincipalForTest(req.Context(), &mw.Principal{Role: tc.role, Grants: tc.grants})
 			ctx = requestctx.WithActor(ctx, requestctx.Actor{TeamID: uuid.New(), OwnerID: uuid.New(), Role: tc.role, Grants: tc.grants})
 			rec := httptest.NewRecorder()
 			router.ServeHTTP(rec, req.WithContext(ctx))
 			require.Equal(t, tc.status, rec.Code, rec.Body.String())
+			require.NotContains(t, strings.ToLower(rec.Body.String()), "ontology")
 			if tc.status == http.StatusForbidden {
 				require.Len(t, diagnostics, 1)
 				require.True(t, diagnostics[0].Management)
@@ -83,5 +84,6 @@ func TestOntologyManagementHTTPBoundedErrors(t *testing.T) {
 		require.Equal(t, tc.status, rec.Code)
 		require.NotContains(t, rec.Body.String(), "private canary")
 		require.NotContains(t, rec.Body.String(), "storage detail")
+		require.NotContains(t, strings.ToLower(rec.Body.String()), "ontology")
 	}
 }
