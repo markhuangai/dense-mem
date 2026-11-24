@@ -189,7 +189,7 @@ See [Configuration]({{ '/Configuration/#topic-maintenance' | relative_url }}) an
 ## Topic Storage Upgrade
 
 1. Pause the old worker, drain leases, and verify provider usage reconciliation. Stop all old application writers.
-2. Record the source image and PostgreSQL schema version. Verify the pre-cutover backup by restoring it in isolation and checking scoped counts, canonical fingerprints, holds, and historical receipts.
+2. Record the source image and PostgreSQL schema version. Rehearse the [custom-format restore]({{ '/Operations-Runbook/#pre-cutover-custom-format-restore' | relative_url }}) in isolation. Verify scoped counts, canonical fingerprints, holds, and historical receipts.
 3. Start the compatible image with service traffic held. Follow migration phase, checkpoint, and fingerprint records in protected stdout. Startup opens listeners after the storage layout is verified.
 4. Verify Recall, catalog history, and preserved operator settings before reopening traffic. If interrupted, resume with the same compatible image and inspect its checkpoint verification. Restore the verified backup only within the pre-write recovery boundary. After new writes, recover forward.
 
@@ -222,6 +222,16 @@ Protect the dump. Record database/server versions, schema, pgvector, active sear
 5. Restore traffic only through the authorized deployment procedure.
 
 Do not restore erased private content by resetting a space generation. After incompatible migrations or new writes, retain compatible readers/writers and recover forward as required.
+
+### Pre-Cutover Custom-Format Restore
+
+Use a new, isolated database with the source roles available. Run each `pg_restore` stage with `--exit-on-error --single-transaction`. Preserve archive ownership and grants.
+
+1. Restore the schema with `--section=pre-data`.
+2. Load `public.memory_spaces` with `--data-only --schema=public --table=memory_spaces`. Legacy inline scope checks consult this table while dependent rows are copied.
+3. Create a remaining-entries list with `pg_restore --list` and comment out only the `TABLE DATA public memory_spaces` entry. Restore with `--section=data --section=post-data --use-list=<remaining-entries>`.
+
+If a stage fails, stop the rehearsal and use a fresh isolated database for the retry. After all stages succeed, verify the pre-cutover catalog and preserved history with the restricted runtime role.
 
 ## Routine Maintenance And Shutdown
 
