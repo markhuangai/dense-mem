@@ -41,7 +41,7 @@ type OrganizationError struct {
 	Cause error
 }
 
-func (e *OrganizationError) Error() string { return "ontology organization failed: " + e.Code }
+func (e *OrganizationError) Error() string { return "topic organization failed: " + e.Code }
 func (e *OrganizationError) Unwrap() error { return e.Cause }
 
 func (s *Service) AssessMaintenanceEquivalence(ctx context.Context, claim contract.MaintenanceClaim) (contract.OrganizationResult, error) {

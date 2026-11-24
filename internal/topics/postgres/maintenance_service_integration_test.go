@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -604,18 +605,32 @@ func TestOntologyMaintenanceContextConfigurationAndManualReuse(t *testing.T) {
 	require.EqualValues(t, 1, status.Counts.Organized)
 	require.Positive(t, calls())
 	t.Run("assignment uses the active window", testActiveAssignmentWindowPolicy)
+	t.Run("full sequential assignment renews the batch lease", testSequentialAssignmentLease)
 }
 
 type observedAssignmentTransport struct {
 	modelprovider.StructuredTransport
 	assignments []modelprovider.StructuredRequest
+	delay       time.Duration
 }
 
 func (t *observedAssignmentTransport) Complete(ctx context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
-	if request.SchemaName == "topic_assignment_v1" {
-		t.assignments = append(t.assignments, request)
+	if request.SchemaName != "topic_assignment_v1" {
+		return t.StructuredTransport.Complete(ctx, request)
 	}
-	return t.StructuredTransport.Complete(ctx, request)
+	t.assignments = append(t.assignments, request)
+	result, err := t.StructuredTransport.Complete(ctx, request)
+	if err != nil || t.delay <= 0 {
+		return result, err
+	}
+	timer := time.NewTimer(t.delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return result, nil
+	case <-ctx.Done():
+		return result, ctx.Err()
+	}
 }
 
 func testActiveAssignmentWindowPolicy(t *testing.T) {
@@ -645,4 +660,42 @@ func testActiveAssignmentWindowPolicy(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, window.ID, status.Window.ID)
 	require.EqualValues(t, 1, status.Counts.Organized)
+}
+
+func testSequentialAssignmentLease(t *testing.T) {
+	f := newOrganizationFixture(t)
+	for index := range topic.MaxOrganizationSources {
+		f.organizationEvidence(t, 0, fmt.Sprintf("Archive entry %d has identifier %s.", index, uuid.NewString()), nil)
+	}
+	ctx := context.Background()
+	settings := maintenanceSettings(t, f)
+	window := maintenanceWindow(t, f, settings)
+	limits := assessor.DefaultSemanticAssessmentLimits()
+	upstream, _ := cohortTopicTransport(t, window.Policy.Model)
+	transport := &observedAssignmentTransport{StructuredTransport: upstream, delay: time.Second}
+	const providerTimeout = 2 * time.Second
+	service := organization.NewMaintenanceService(organization.MaintenanceDependencies{
+		Repository: f.store, Config: settings, DefaultModel: window.Policy.Model, ProviderTimeout: providerTimeout,
+		Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *organization.Service {
+			organizer, _ := organizationFixtureServiceWithAccounting(t, f, nil, nil, model, limits, accounting, int(contextWindowTokens))
+			return organizer
+		},
+	})
+	assigner := topicassignment.NewService(f.store, settings, transport, nil, limits, window.Policy.Model, nil)
+	service.WithTopicProcessing(assigner, f.store, f.store, organization.CommunityAssessor{Transport: transport, Limits: limits})
+
+	progress, err := service.RunTurn(ctx)
+	require.NoError(t, err)
+	require.True(t, progress)
+	require.Len(t, transport.assignments, topic.MaxOrganizationSources)
+	status, err := service.Status(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, topic.MaxOrganizationSources, status.Counts.Organized)
+	require.Zero(t, status.Counts.Failed)
+	require.Zero(t, status.Usage.UnreconciledAttempts)
+	var durationSeconds float64
+	require.NoError(t, f.admin.Raw(`SELECT EXTRACT(EPOCH FROM lease_until-created_at)
+		FROM topic_maintenance_batches WHERE team_id=?::uuid AND jsonb_array_length(sources)=?`,
+		f.team, topic.MaxOrganizationSources).Row().Scan(&durationSeconds))
+	require.Greater(t, durationSeconds, (3*providerTimeout + 15*time.Second).Seconds())
 }

@@ -55,7 +55,7 @@ func ReadManifest(path string) (Manifest, error) {
 	}
 	if (manifest.Operation == "run" && manifest.Condition != scoringCondition) ||
 		(manifest.Operation != "run" && manifest.Condition != "") {
-		return manifest, errors.New("scored evaluation requires ontology off")
+		return manifest, errors.New("scored evaluation requires topic maintenance to be disabled")
 	}
 	if manifest.RunID != manifest.DatasetRunID() {
 		return manifest, errors.New("manifest does not belong to this dataset job")

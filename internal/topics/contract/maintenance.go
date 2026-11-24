@@ -14,13 +14,13 @@ const MaintenanceDefinitionGroupSize = 20
 const MaxManualBatches = 100
 
 var (
-	ErrMaintenancePaused   = errors.New("ontology maintenance paused")
-	ErrMaintenanceDisabled = errors.New("ontology maintenance disabled")
-	ErrWindowClosed        = errors.New("ontology maintenance window closed")
-	ErrConfiguration       = errors.New("ontology maintenance configuration invalid")
-	ErrLeaseLost           = errors.New("ontology maintenance lease lost")
-	ErrAccounting          = errors.New("ontology maintenance accounting unavailable")
-	ErrAuditUnavailable    = errors.New("ontology maintenance audit unavailable")
+	ErrMaintenancePaused   = errors.New("topic maintenance paused")
+	ErrMaintenanceDisabled = errors.New("topic maintenance disabled")
+	ErrWindowClosed        = errors.New("topic maintenance window closed")
+	ErrConfiguration       = errors.New("topic maintenance configuration invalid")
+	ErrLeaseLost           = errors.New("topic maintenance lease lost")
+	ErrAccounting          = errors.New("topic maintenance accounting unavailable")
+	ErrAuditUnavailable    = errors.New("topic maintenance audit unavailable")
 )
 
 type MaintenanceWindow struct {
@@ -69,6 +69,7 @@ type MaintenanceClaim struct {
 	Generation            int64
 	LeaseToken            string
 	LeaseUntil            time.Time
+	AttemptLease          time.Duration
 	Sources               []SourceHandle
 	Revisions             map[string]int64
 	PriorAssignmentHashes map[string]string

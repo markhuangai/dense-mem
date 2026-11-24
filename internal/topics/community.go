@@ -178,10 +178,19 @@ func (s *MaintenanceService) placeCommunity(ctx context.Context, work maintenanc
 	}
 	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer finishCancel()
+	status := outcome.Status
 	var persistErr error
 	var committed bool
 	if !errors.Is(err, contract.ErrMaintenancePaused) && !errors.Is(err, contract.ErrMaintenanceDisabled) && !errors.Is(err, contract.ErrWindowClosed) {
 		persistErr = s.deps.Communities.CompleteCommunity(finishCtx, claim, input, outcome, failure, s.deps.Now())
+		if errors.Is(persistErr, contract.ErrConflict) {
+			err = persistErr
+			failure = "community_hierarchy_conflict"
+			rejected := outcome
+			rejected.Status, rejected.ParentID = "failed", ""
+			persistErr = s.deps.Communities.CompleteCommunity(finishCtx, claim, input, rejected, failure, s.deps.Now())
+			status = rejected.Status
+		}
 		committed = persistErr == nil
 	}
 	if persistErr != nil || errors.Is(err, contract.ErrMaintenancePaused) || errors.Is(err, contract.ErrMaintenanceDisabled) || errors.Is(err, contract.ErrWindowClosed) {
@@ -195,7 +204,6 @@ func (s *MaintenanceService) placeCommunity(ctx context.Context, work maintenanc
 		level = slog.LevelError
 	}
 	if s.deps.Logger != nil {
-		status := outcome.Status
 		if !committed {
 			status = "not_committed"
 		}
@@ -209,7 +217,7 @@ func (s *MaintenanceService) placeCommunity(ctx context.Context, work maintenanc
 			slog.String("method", outcome.Method), slog.String("status", status), slog.String("failure_code", failure),
 			slog.Any("error", errors.Join(err, persistErr)),
 		}
-		if !committed && (outcome.Status == "placed" || outcome.Status == "standalone") {
+		if status != outcome.Status && (outcome.Status == "placed" || outcome.Status == "standalone") {
 			fields = append(fields, slog.String("proposed_status", outcome.Status))
 		}
 		s.deps.Logger.LogAttrs(finishCtx, level, "community_placement.outcome", fields...)

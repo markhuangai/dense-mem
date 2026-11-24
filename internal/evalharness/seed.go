@@ -170,7 +170,7 @@ func verifySeedContent(ctx context.Context, manifest Manifest, corpus []CorpusIt
 
 func verifySeedCondition(native *Native, manifest Manifest, observation NativeObservation) error {
 	if observation.TopicMaintenance.Counts.Organized != 0 || len(observation.ProviderAttempts) != 0 {
-		return errors.New("restored seed ontology-off state differs")
+		return errors.New("restored seed contains organized sources or topic maintenance attempts")
 	}
 	return NativeReady(observation, false, true, manifest, native.Scope.TeamID)
 }
@@ -194,7 +194,7 @@ func Prepare(ctx context.Context, manifest Manifest, corpus []CorpusItem, client
 		return seed, err
 	}
 	if (before.EvidenceCount != 0 && manifest.ResumeScope == nil) || before.ForeignSources != 0 || before.TopicMaintenance.Enabled || !before.TopicMaintenance.Paused {
-		return seed, errors.New("seed preparation requires an empty bootstrap with ontology disabled and paused")
+		return seed, errors.New("seed preparation requires an empty bootstrap with topic maintenance disabled and paused")
 	}
 	options := corpusImportOptions{native: native}
 	if manifest.SeedBuildID != "" && !manifest.IntakeProof {

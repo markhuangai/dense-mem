@@ -38,7 +38,7 @@ func augmentRecallVectorChannel(existing, topicStore []SearchHit, limit int, sco
 		return existing, nil
 	}
 	if len(pooled)+len(ids) > 2*limit {
-		return nil, fmt.Errorf("recall: ontology scoring pool exceeds twice the candidate limit")
+		return nil, fmt.Errorf("recall: organization scoring pool exceeds twice the candidate limit")
 	}
 	// Ordinary scores remain valid in the same repeatable-read transaction used for organization augmentation.
 	hits, err := score(ids)

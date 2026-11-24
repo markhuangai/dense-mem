@@ -33,12 +33,12 @@ const (
 )
 
 var (
-	ErrInvalid      = errors.New("invalid ontology input")
-	ErrConflict     = errors.New("ontology revision or operation conflict")
-	ErrSourceStale  = errors.New("ontology source is unavailable or stale")
-	ErrNotFound     = errors.New("ontology record not found")
-	ErrUnauthorized = errors.New("ontology operation is not authorized")
-	ErrOverride     = errors.New("ontology change conflicts with manager override")
+	ErrInvalid      = errors.New("invalid topic input")
+	ErrConflict     = errors.New("topic revision or operation conflict")
+	ErrSourceStale  = errors.New("topic source is unavailable or stale")
+	ErrNotFound     = errors.New("topic record not found")
+	ErrUnauthorized = errors.New("topic operation is not authorized")
+	ErrOverride     = errors.New("topic change conflicts with manager override")
 )
 
 type SourceHandle struct {

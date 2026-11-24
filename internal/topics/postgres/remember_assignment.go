@@ -324,8 +324,9 @@ func (s *Store) assignmentDefinitions(tx *gorm.DB, fence scope, outcome assignme
 			continue
 		}
 		id := organization.OrganizationRecordID(fence.TeamID, organization.Topic, name)
-		if _, exists := byID[id]; exists {
-			return nil, nil, assignment.ErrStale
+		if _, exists := heads[id]; exists {
+			// A released name must not overwrite the history at its original ID.
+			id = uuid.NewString()
 		}
 		topic := organization.Record{ID: id, Kind: organization.Topic, Definition: &organization.Definition{Key: name, Label: p.Label, Description: p.Description}}
 		changes = append(changes, organization.Change{Record: topic})

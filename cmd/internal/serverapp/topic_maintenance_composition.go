@@ -16,8 +16,8 @@ type topicMaintenanceStore interface {
 	contract.OrganizationRepository
 }
 
-func buildTopicMaintenance(store topicMaintenanceStore, config topics.MaintenanceConfigSource, transport modelprovider.StructuredTransport, limits assessor.SemanticAssessmentLimits, model string, timeout time.Duration, audit topics.MaintenanceAuditPreparer, logger *slog.Logger, diagnostics topics.MaintenanceDiagnosticCapture) *topics.MaintenanceService {
-	return topics.NewMaintenanceService(topics.MaintenanceDependencies{Repository: store, Config: config, DefaultModel: model, ProviderTimeout: timeout, Audit: audit, Logger: logger,
+func buildTopicMaintenance(store topicMaintenanceStore, config topics.MaintenanceConfigSource, transport modelprovider.StructuredTransport, limits assessor.SemanticAssessmentLimits, model string, timeout, decisionTimeout time.Duration, audit topics.MaintenanceAuditPreparer, logger *slog.Logger, diagnostics topics.MaintenanceDiagnosticCapture) *topics.MaintenanceService {
+	return topics.NewMaintenanceService(topics.MaintenanceDependencies{Repository: store, Config: config, DefaultModel: model, ProviderTimeout: timeout, DecisionTimeout: decisionTimeout, Audit: audit, Logger: logger,
 		Diagnostics: diagnostics, Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *topics.Service {
 			configured := limits
 			configured.ProviderModel = model

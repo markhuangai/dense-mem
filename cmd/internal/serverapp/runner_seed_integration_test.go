@@ -221,7 +221,7 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	rls := storagepostgres.NewRLS()
 	restoredSettings := settings.NewAppConfigService(settingspg.NewAppConfigRepository(restored, rls), nil)
 	restoredMaintenance := buildTopicMaintenance(topicpg.NewStore(restored, rls), restoredSettings, nil,
-		assessor.DefaultSemanticAssessmentLimits(), manifest.Model, 0, nil, nil, organization.MaintenanceDiagnosticCapture{})
+		assessor.DefaultSemanticAssessmentLimits(), manifest.Model, 0, 0, nil, nil, organization.MaintenanceDiagnosticCapture{})
 	restoredControl := runnerControlServer(t, restoredMaintenance, restoredSettings, searchapp.NewSearchConvergenceService(
 		searchpg.NewStore(restored, rls), knowledgepg.NewStore(restored, rls),
 	))

@@ -192,6 +192,7 @@ func TestOntologyMaintenanceExpiredLeaseAndNewInvalidation(t *testing.T) {
 	}))
 	_, err = f.store.PublishAutomatic(topic.WithMaintenanceClaim(ctx, *claim), f.team, testPublication("expired-probe", 0, topic.Change{Record: testTopic("expired-probe")}))
 	require.ErrorIs(t, err, topic.ErrLeaseLost)
+	claim.AttemptLease = time.Minute
 	require.ErrorIs(t, f.store.AdmitMaintenanceAttempt(ctx, *claim, uuid.NewString(), 1, 100, 100, time.Now().UTC()), topic.ErrLeaseLost)
 	require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn))
 	turn, claim = maintenanceClaim(t, f, window)

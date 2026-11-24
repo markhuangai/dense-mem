@@ -35,6 +35,7 @@ type MaintenanceDependencies struct {
 	Placement       CommunityAssessor
 	DefaultModel    string
 	ProviderTimeout time.Duration
+	DecisionTimeout time.Duration
 	Audit           MaintenanceAuditPreparer
 	Now             func() time.Time
 	Logger          *slog.Logger
@@ -257,7 +258,28 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 		return s.placeCommunity(ctx, work)
 	}
 	claim := work.claim
-	turnCtx, cancel := context.WithDeadline(ctx, claim.LeaseUntil.Add(-5*time.Second))
+	accounting := &maintenanceAttemptAccounting{repository: s.deps.Repository, claim: claim, now: s.deps.Now, admitted: map[maintenanceAttemptKey]bool{}}
+	deadline := claim.LeaseUntil.Add(-5 * time.Second)
+	var turnCtx context.Context
+	var cancel context.CancelFunc
+	if s.deps.Assign == nil {
+		turnCtx, cancel = context.WithDeadline(ctx, deadline)
+	} else {
+		leaseCtx, cancelLease := context.WithCancelCause(ctx)
+		turnCtx, cancel = leaseCtx, func() { cancelLease(nil) }
+		timer := time.AfterFunc(time.Until(deadline), func() { cancelLease(contract.ErrLeaseLost) })
+		defer timer.Stop()
+		accounting.attemptLease = 3*s.deps.ProviderTimeout + 15*time.Second
+		accounting.decisionLease = s.deps.DecisionTimeout + 15*time.Second
+		accounting.extend = func(leaseUntil time.Time) {
+			next := leaseUntil.Add(-5 * time.Second)
+			// Once the local lease has expired, let cancellation finish the turn.
+			if next.After(deadline) && timer.Stop() {
+				deadline = next
+				timer.Reset(time.Until(deadline))
+			}
+		}
+	}
 	defer cancel()
 	claimCtx := contract.WithMaintenanceClaim(turnCtx, claim)
 	var result contract.OrganizationResult
@@ -268,6 +290,9 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 	}
 	claimCtx = observability.WithExchangeScope(claimCtx, observability.ExchangeScope{TeamID: claim.TeamID, RunID: claim.RunID, BatchID: claim.ID})
 	defer func() {
+		if runErr != nil && errors.Is(context.Cause(turnCtx), contract.ErrLeaseLost) {
+			runErr = errors.Join(contract.ErrLeaseLost, runErr)
+		}
 		failure := contract.MaintenanceFailureCode(runErr)
 		if failure == "" {
 			failure = result.FailureCode
@@ -306,7 +331,6 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 			}
 		}
 	}()
-	accounting := &maintenanceAttemptAccounting{repository: s.deps.Repository, claim: claim, now: s.deps.Now, admitted: map[maintenanceAttemptKey]bool{}}
 	organizer := s.deps.Organizer(work.policy.Model, work.policy.ContextWindowTokens, accounting)
 	organizer.policy = &work.policy
 	assessmentCtx := observability.WithAIOperation(claimCtx, observability.AIOperationLegacyOrganization, len(claim.Sources))
@@ -355,20 +379,34 @@ type maintenanceAttemptKey struct {
 }
 
 type maintenanceAttemptAccounting struct {
-	repository contract.MaintenanceRepository
-	claim      contract.MaintenanceClaim
-	now        func() time.Time
-	mu         sync.Mutex
-	admitted   map[maintenanceAttemptKey]bool
+	repository    contract.MaintenanceRepository
+	claim         contract.MaintenanceClaim
+	now           func() time.Time
+	attemptLease  time.Duration
+	decisionLease time.Duration
+	extend        func(time.Time)
+	mu            sync.Mutex
+	admitted      map[maintenanceAttemptKey]bool
 }
 
 func (a *maintenanceAttemptAccounting) BeforeAttempt(ctx context.Context, id string, number, input, output int) (context.Context, error) {
+	claim := a.claim
+	if a.extend != nil {
+		claim.AttemptLease = a.attemptLease
+		if modelprovider.DecisionAccountingFromContext(ctx) != nil {
+			claim.AttemptLease = max(claim.AttemptLease, a.decisionLease)
+		}
+	}
 	return modelprovider.WithAdmissionCallback(ctx, func(dispatchCtx context.Context) error {
-		if err := a.repository.AdmitMaintenanceAttempt(dispatchCtx, a.claim, id, number, input, output, a.now()); err != nil {
+		now := a.now()
+		if err := a.repository.AdmitMaintenanceAttempt(dispatchCtx, claim, id, number, input, output, now); err != nil {
 			return err
 		}
 		a.mu.Lock()
 		a.admitted[maintenanceAttemptKey{id, number}] = true
+		if a.extend != nil {
+			a.extend(now.Add(claim.AttemptLease))
+		}
 		a.mu.Unlock()
 		return nil
 	}), nil

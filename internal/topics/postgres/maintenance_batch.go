@@ -330,7 +330,7 @@ func completeMaintenanceBatch(tx *gorm.DB, claim topic.MaintenanceClaim, result 
 	if status == "completed" {
 		return nil
 	}
-	if status != "running" || !live || !now.Before(claim.LeaseUntil) {
+	if status != "running" || !live {
 		return topic.ErrLeaseLost
 	}
 	*phase = "receipt_revalidation"

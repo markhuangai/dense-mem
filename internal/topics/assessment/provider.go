@@ -121,7 +121,7 @@ func (p *Provider) Assess(ctx context.Context, request Request) (Response, []top
 		return Response{}, nil, err
 	}
 	if len(request.Items) < 1 || len(request.Items) > 20 || len(request.Definitions) > 20 || len(request.Pairs) > 190 {
-		return Response{}, nil, &modelprovider.ProviderError{Provider: "ontology", Message: "organization request exceeds bounds", FailureClass: modelprovider.ProviderFailureClassRequestInvalid}
+		return Response{}, nil, &modelprovider.ProviderError{Provider: "topic organization", Message: "organization request exceeds bounds", FailureClass: modelprovider.ProviderFailureClassRequestInvalid}
 	}
 	if request.EquivalenceOnly != p.equivalenceOnly {
 		return Response{}, nil, topic.ErrInvalid
@@ -132,12 +132,12 @@ func (p *Provider) Assess(ctx context.Context, request Request) (Response, []top
 		return response, []topic.AssessmentAttempt{}, Validate(request, response)
 	}
 	if p.transport == nil || p.model == "" {
-		return Response{}, nil, &modelprovider.ProviderError{Provider: "ontology", Message: "organization transport is unavailable", FailureClass: modelprovider.ProviderFailureClassProviderUnavailable}
+		return Response{}, nil, &modelprovider.ProviderError{Provider: "topic organization", Message: "organization transport is unavailable", FailureClass: modelprovider.ProviderFailureClassProviderUnavailable}
 	}
 	if fits, err := p.VocabularyFits(request.Definitions); err != nil {
 		return Response{}, nil, err
 	} else if !fits {
-		return Response{}, nil, &modelprovider.ProviderError{Provider: "ontology", Message: "organization vocabulary exceeds token budget", FailureClass: modelprovider.ProviderFailureClassRequestInvalid}
+		return Response{}, nil, &modelprovider.ProviderError{Provider: "topic organization", Message: "organization vocabulary exceeds token budget", FailureClass: modelprovider.ProviderFailureClassRequestInvalid}
 	}
 	payload, err := json.Marshal(request)
 	if err != nil {
@@ -152,7 +152,7 @@ func (p *Provider) Assess(ctx context.Context, request Request) (Response, []top
 		correction = fmt.Sprintf("Return a complete corrected equivalence response for request_id %q, with one decision per requested pair and empty definitions and items.", request.RequestID)
 	}
 	result, err := service.Run(ctx, generation.Task[Response]{
-		ID: request.RequestID, Capability: "ontology", Tokenizer: p.limits.Tokenizer,
+		ID: request.RequestID, Capability: "topic_organization", Tokenizer: p.limits.Tokenizer,
 		InitialInputLimit: p.MaxInitialInputTokens(),
 		Request:           p.structuredRequest([]modelprovider.Message{{Role: "system", Content: prompt}, {Role: "user", Content: string(payload)}}, p.schema(request.RequestID)),
 		Correction:        correction,

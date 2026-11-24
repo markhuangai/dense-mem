@@ -273,7 +273,9 @@ func RunActiveServer(
 	}
 	sessionAssessmentLimits := assessmentLimits
 	sessionAssessmentLimits.MaxEvidenceItems = 100
-	topicMaintenance := buildTopicMaintenance(topicStore, appConfigService, assessorProvider, assessmentLimits, sessionModels.remember, time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second, auditService, rootDiagnosticLogger(logger), topicMaintenanceDiagnostics(operationLogService, diagnosticProtector, rootDiagnosticLogger(logger)))
+	topicMaintenance := buildTopicMaintenance(topicStore, appConfigService, assessorProvider, assessmentLimits, sessionModels.remember,
+		time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second, time.Duration(cfg.Decision.TimeoutSeconds)*time.Second,
+		auditService, rootDiagnosticLogger(logger), topicMaintenanceDiagnostics(operationLogService, diagnosticProtector, rootDiagnosticLogger(logger)))
 	rootLogger := rootDiagnosticLogger(logger)
 	topicAssignment := topicassignment.NewService(topicStore, appConfigService, assessorProvider, decisions, assessmentLimits, sessionModels.remember, rootLogger)
 	knowledgeStore.WithTopicAssignments(topicStore)

@@ -31,7 +31,7 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 		return report, errors.New("runner dependencies are required")
 	}
 	if manifest.Condition != scoringCondition {
-		return report, errors.New("scoring requires ontology off")
+		return report, errors.New("scoring requires topic maintenance to be disabled")
 	}
 	manifest.AnswerWorkers = manifest.effectiveAnswerWorkers()
 	if manifest.AnswerWorkers < defaultAnswerWorkers || manifest.AnswerWorkers > maxAnswerWorkers {

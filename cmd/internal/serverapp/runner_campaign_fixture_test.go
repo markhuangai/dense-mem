@@ -110,7 +110,7 @@ func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
 	t.Cleanup(upstream.Close)
 	transport := structured.NewOpenAI(&config.Config{AIVerifierAPIURL: upstream.URL, AIVerifierAPIKey: "synthetic", AIVerifierModel: "runner-ontology"}, upstream.Client())
 	limits := assessor.DefaultSemanticAssessmentLimits()
-	maintenance := buildTopicMaintenance(topicStore, configuration, transport, limits, "runner-ontology", 0, audit, nil, organization.MaintenanceDiagnosticCapture{})
+	maintenance := buildTopicMaintenance(topicStore, configuration, transport, limits, "runner-ontology", 0, 0, audit, nil, organization.MaintenanceDiagnosticCapture{})
 	assignment := topicassignment.NewService(topicStore, configuration, transport, nil, limits, "runner-ontology", nil)
 	maintenance.WithTopicProcessing(assignment, topicStore, topicStore, organization.CommunityAssessor{Transport: transport, Limits: limits})
 	_, err = maintenance.Command(ctx, domain.TopicMaintenanceCommand{Action: "pause", OperationKey: uuid.NewString()}, "", "")

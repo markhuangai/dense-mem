@@ -3,11 +3,15 @@
 package postgres
 
 import (
+	"context"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	assignment "github.com/markhuangai/dense-mem/internal/topicassignment/contract"
+	"github.com/markhuangai/dense-mem/internal/topics"
+	"github.com/markhuangai/dense-mem/internal/topics/assessment"
 	"github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -88,6 +92,77 @@ func TestCommunityPlacementChecksRevisionsAndAccountsForProviderWork(t *testing.
 	require.EqualValues(t, 1, status.Usage.UnavailableUsageAttempts)
 
 	t.Run("manager publication rolls back when a later edge closes a mixed cycle", testCommunityMixedHierarchyPublicationRollback)
+	t.Run("rejected hierarchy placement is deferred", testCommunityHierarchyRejectionDeferred)
+}
+
+type communityPlacementTransport func(context.Context, modelprovider.StructuredRequest) (modelprovider.StructuredResult, error)
+
+func (transport communityPlacementTransport) Complete(ctx context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+	return transport(ctx, request)
+}
+
+func testCommunityHierarchyRejectionDeferred(t *testing.T) {
+	ctx := t.Context()
+	f := newOntologyFixture(t)
+	manager := f.actor(0, "manager")
+	parent, child := testTopic("database"), testTopic("database-backup")
+	parent.ID, child.ID = "10000000-0000-4000-8000-000000000001", "10000000-0000-4000-8000-000000000002"
+	parent.Definition.Label, child.Definition.Label = "Database", "Database backup"
+	child.Definition.ParentID = parent.ID
+	_, err := f.store.PublishManager(manager, f.team, testPublication("hierarchy-rejection-seed", 0,
+		contract.Change{Record: parent}, contract.Change{Record: child}))
+	require.NoError(t, err)
+
+	choices := []string{child.ID, parent.ID}
+	calls := 0
+	transport := communityPlacementTransport(func(ctx context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+		if err := modelprovider.NotifyAdmission(ctx); err != nil {
+			return modelprovider.StructuredResult{}, err
+		}
+		require.Equal(t, "community_placement_v1", request.SchemaName)
+		require.Less(t, calls, len(choices))
+		selected := choices[calls]
+		calls++
+		return modelprovider.StructuredResult{Content: `{"parent_id":"` + selected + `"}`}, nil
+	})
+	limits := maintenanceFixtureLimits()
+	service := topics.NewMaintenanceService(topics.MaintenanceDependencies{
+		Repository: f.store, Config: maintenanceSettings(t, f), Communities: f.store,
+		Placement: topics.CommunityAssessor{Transport: transport, Limits: limits},
+		Organizer: func(model string, capacity int64, _ assessment.AttemptAccounting) *topics.Service {
+			return topics.NewService(nil, assessment.NewProvider(nil, model, limits, int(capacity)))
+		},
+	})
+	progress, err := service.RunTurn(ctx)
+	require.True(t, progress)
+	require.ErrorIs(t, err, contract.ErrConflict)
+	require.Equal(t, 1, calls)
+	var disposition, failure string
+	var deferred bool
+	require.NoError(t, f.admin.Raw(`SELECT outcome.status,batch.failure_code,work.ready_at>statement_timestamp()
+		FROM community_placement_outcomes AS outcome
+		JOIN topic_maintenance_batches AS batch ON batch.batch_id=outcome.operation_id
+		JOIN topic_maintenance_community_work AS work
+		  ON (work.team_id,work.shared_space_id,work.space_generation,work.topic_id)=(outcome.team_id,outcome.shared_space_id,outcome.space_generation,outcome.topic_id)
+		WHERE work.team_id=?::uuid AND work.topic_id=?::uuid`, f.team, parent.ID).
+		Row().Scan(&disposition, &failure, &deferred))
+	require.Equal(t, "failed", disposition)
+	require.Equal(t, "community_hierarchy_conflict", failure)
+	require.True(t, deferred)
+
+	progress, err = service.RunTurn(ctx)
+	require.NoError(t, err)
+	require.True(t, progress)
+	require.Equal(t, 2, calls)
+	view, err := f.store.GetRecord(manager, f.team, child.ID, 0)
+	require.NoError(t, err)
+	require.Equal(t, parent.ID, view.CommunityParentID)
+	status, err := f.store.MaintenanceStatus(ctx, time.Now())
+	require.NoError(t, err)
+	require.EqualValues(t, 1, status.Communities.Failed)
+	require.Zero(t, status.ActiveWork)
+	require.EqualValues(t, 2, status.Usage.Attempts)
+	require.Zero(t, status.Usage.UnreconciledAttempts)
 }
 
 func testCommunityMixedHierarchyPublicationRollback(t *testing.T) {
@@ -150,35 +225,36 @@ func testCommunityMixedHierarchyPublicationRollback(t *testing.T) {
 func TestConcurrentTopicProposalsReuseScopedName(t *testing.T) {
 	ctx := t.Context()
 	f := newOntologyFixture(t)
-	sources := []struct {
-		id, content string
-	}{
-		{content: "PostgreSQL backups retain seven daily restore points."},
-		{content: "Test PostgreSQL backups after changing storage providers."},
+	const label = "PostgreSQL backups"
+	propose := func(contents ...string) []string {
+		t.Helper()
+		evidenceIDs := make([]string, len(contents))
+		for i, content := range contents {
+			evidenceIDs[i] = f.organizationEvidence(t, i, content, nil).ID
+		}
+		start := make(chan struct{})
+		result := make(chan error, len(contents))
+		for i, content := range contents {
+			go func() {
+				<-start
+				outcome := assignment.Outcome{
+					Text: content, InputHash: "sha256:proposal", Method: "generation",
+					Proposals: []assignment.Proposal{{Label: label, Description: "Backing up a PostgreSQL database", Quote: label}},
+				}
+				result <- f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
+					return f.store.PublishAssignmentsTx(ctx, tx, assignment.Scope{
+						TeamID: f.team, SpaceID: f.space, Generation: f.generation, OperationID: uuid.NewString(),
+					}, []assignment.Publication{{EvidenceID: evidenceIDs[i], Outcome: outcome}})
+				})
+			}()
+		}
+		close(start)
+		for range contents {
+			require.NoError(t, <-result)
+		}
+		return evidenceIDs
 	}
-	for i := range sources {
-		sources[i].id = f.organizationEvidence(t, i, sources[i].content, nil).ID
-	}
-	start := make(chan struct{})
-	result := make(chan error, len(sources))
-	for _, source := range sources {
-		go func() {
-			<-start
-			outcome := assignment.Outcome{
-				Text: source.content, InputHash: "sha256:proposal", Method: "generation",
-				Proposals: []assignment.Proposal{{Label: "PostgreSQL backups", Description: "Backing up a PostgreSQL database", Quote: "PostgreSQL backups"}},
-			}
-			result <- f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
-				return f.store.PublishAssignmentsTx(ctx, tx, assignment.Scope{
-					TeamID: f.team, SpaceID: f.space, Generation: f.generation, OperationID: uuid.NewString(),
-				}, []assignment.Publication{{EvidenceID: source.id, Outcome: outcome}})
-			})
-		}()
-	}
-	close(start)
-	for range sources {
-		require.NoError(t, <-result)
-	}
+	propose("PostgreSQL backups retain seven daily restore points.", "Test PostgreSQL backups after changing storage providers.")
 	var topics, members, distinct int
 	require.NoError(t, f.admin.Raw(`SELECT count(*) FILTER(WHERE kind='topic'),
 		count(*) FILTER(WHERE kind='assignment'),count(DISTINCT topic_id)
@@ -186,4 +262,43 @@ func TestConcurrentTopicProposalsReuseScopedName(t *testing.T) {
 	require.Equal(t, 1, topics)
 	require.Equal(t, 2, members)
 	require.Equal(t, 1, distinct)
+
+	manager := f.actor(0, "manager")
+	before, err := f.store.ListRecords(manager, f.team, contract.Topic, "", 10)
+	require.NoError(t, err)
+	require.Len(t, before.Records, 1)
+	original := before.Records[0]
+	require.Equal(t, contract.OrganizationRecordID(f.team, contract.Topic, contract.NormalizeName(label)), original.ID)
+	renamed := original.Record
+	definition := *renamed.Definition
+	definition.Key, definition.Label = "snapshot archives", "Snapshot archives"
+	renamed.Definition = &definition
+	_, err = f.store.PublishManager(manager, f.team, testPublication("rename-backup-topic", before.Revision,
+		contract.Change{Record: renamed, ExpectedVersion: original.Version}))
+	require.NoError(t, err)
+
+	evidenceIDs := propose("PostgreSQL backups use archive compression.", "Verify PostgreSQL backups every month.")
+	after, err := f.store.ListRecords(manager, f.team, contract.Topic, "", 10)
+	require.NoError(t, err)
+	require.Len(t, after.Records, 2)
+	for _, record := range after.Records {
+		if record.ID == original.ID {
+			require.Equal(t, original.Version+1, record.Version)
+			require.Equal(t, renamed.Definition, record.Definition)
+			continue
+		}
+		require.Equal(t, label, record.Definition.Label)
+		require.EqualValues(t, 1, record.Version)
+		for _, evidenceID := range evidenceIDs {
+			var topicID string
+			require.NoError(t, f.admin.Raw(`SELECT topic_id::text FROM topic_record_heads
+				WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?
+				AND kind='assignment' AND NOT retired AND evidence_id=?::uuid`,
+				f.team, f.space, f.generation, evidenceID).Row().Scan(&topicID))
+			require.Equal(t, record.ID, topicID)
+		}
+	}
+	historical, err := f.store.GetRecord(manager, f.team, original.ID, original.Version)
+	require.NoError(t, err)
+	require.Equal(t, original.Record, historical.Record)
 }
