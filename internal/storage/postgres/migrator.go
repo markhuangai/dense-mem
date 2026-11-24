@@ -256,6 +256,10 @@ func newMigrationProviderWithFilesystem(
 			&goose.GoFunc{RunDB: operationLogInvocationIndexMigrationDown, Mode: goose.TransactionDisabled},
 		))
 	}
+	if _, ok := filesystem[topicStorageDataFile]; ok {
+		excludedNames = append(excludedNames, topicStorageDataFile)
+		goMigrations = append(goMigrations, topicStorageDataMigration())
+	}
 	if source, ok := filesystem[evidenceOnlyMigrationSQLName]; ok {
 		migration, err := newEvidenceOnlyMigration(source.Data)
 		if err != nil {

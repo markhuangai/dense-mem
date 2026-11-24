@@ -35,14 +35,14 @@ import { useConfirmation } from "../ui/confirmation";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "../ui/primitives/dialog";
 
 const TeamManagementPanel = lazy(() => import("./TeamManagementPanel").then((module) => ({ default: module.TeamManagementPanel })));
-const OntologyPanel = lazy(() => import("./OntologyPanel").then((module) => ({ default: module.OntologyPanel })));
+const TopicsPanel = lazy(() => import("./TopicsPanel").then((module) => ({ default: module.TopicsPanel })));
 
 const TOKEN_STORAGE_KEY = "denseMem.userApiKey";
 const THEME_STORAGE_KEY = "denseMem.userTheme";
 
 type Theme = ThemeName;
 type AuthMode = "none" | "api_key" | "api_key_session" | "sso";
-type UserTab = "search" | "team" | "credential" | "ontology";
+type UserTab = "search" | "team" | "credential" | "topics";
 type CredentialPermission = "read" | "read_write";
 
 function sessionAuthMode(session: UserSession, token: string): AuthMode {
@@ -263,7 +263,7 @@ function UserPortal({
   const [session, setSession] = useState<UserSession | null>(null);
   const { parameters, navigate, transition } = usePortalNavigation();
   const requestedTab = parameters.get("section");
-  const allowedTabs: UserTab[] = ["search", ...(canManageTeam(session) ? ["ontology", "team"] as const : []), ...(canShowMyCredential(session) ? ["credential"] as const : [])];
+  const allowedTabs: UserTab[] = ["search", ...(canManageTeam(session) ? ["topics", "team"] as const : []), ...(canShowMyCredential(session) ? ["credential"] as const : [])];
   const activeTab: UserTab = allowedTabs.includes(requestedTab as UserTab) ? requestedTab as UserTab : "search";
   function setActiveTab(section: UserTab) { return navigate({ section, tab: null, team_id: null, team_tab: null, remember_view: null, attempt_id: null, invocation_id: null }); }
   const [error, setError] = useState("");
@@ -322,7 +322,7 @@ function UserPortal({
     { id: "search", label: "Search memory", group: "Explore", icon: <Search size={17} aria-hidden="true" />, active: activeTab === "search", href: portalHref({ section: "search", tab: null }), disabled: !session || switchingTeam, onClick: () => setActiveTab("search") },
 
     ...(canManageTeam(session) ? [
-      { id: "ontology", label: "Ontology", group: "Manage", icon: <Network size={17} aria-hidden="true" />, active: activeTab === "ontology", href: portalHref({ section: "ontology", tab: null }), disabled: !session || switchingTeam, onClick: () => setActiveTab("ontology") },
+      { id: "topics", label: "Topics", group: "Manage", icon: <Network size={17} aria-hidden="true" />, active: activeTab === "topics", href: portalHref({ section: "topics", tab: null }), disabled: !session || switchingTeam, onClick: () => setActiveTab("topics") },
       { id: "team", label: "Team", group: "Manage", icon: <Users size={17} aria-hidden="true" />, active: activeTab === "team", href: portalHref({ section: "team", tab: null }), disabled: !session || switchingTeam, onClick: () => setActiveTab("team") },
     ] : []),
     ...(canShowMyCredential(session) ? [
@@ -351,7 +351,7 @@ function UserPortal({
       {(!session || switchingTeam) ? <LoadingState label={switchingTeam ? "Switching team" : loading ? "Loading workspace" : "Workspace unavailable. Refresh your session to retry."} /> : <LazyPanelErrorBoundary key={session.team.id + ":" + activeTab}>
         <Suspense fallback={<LazyPanelFallback />}>
           {activeTab === "search" && <SearchPanel api={api} />}
-          {activeTab === "ontology" && session && canManageTeam(session) && <OntologyPanel key={session.team.id} api={api} session={session} />}
+          {activeTab === "topics" && session && canManageTeam(session) && <TopicsPanel key={session.team.id} api={api} session={session} />}
           {activeTab === "team" && session && canManageTeam(session) && (
             <TeamManagementPanel
               api={api}

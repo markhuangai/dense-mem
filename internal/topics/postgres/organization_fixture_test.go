@@ -1,0 +1,163 @@
+package postgres
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"sync/atomic"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/assessor"
+	"github.com/markhuangai/dense-mem/internal/config"
+	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	"github.com/markhuangai/dense-mem/internal/provider/structured"
+	organization "github.com/markhuangai/dense-mem/internal/topics"
+	"github.com/markhuangai/dense-mem/internal/topics/assessment"
+	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go"
+)
+
+func newOrganizationFixture(t *testing.T) *ontologyFixture {
+	t.Helper()
+	return newOrganizationFixtureWithMaintenance(t, true)
+}
+
+func newOrganizationFixtureWithMaintenance(t *testing.T, maintenance bool) *ontologyFixture {
+	t.Helper()
+	if os.Getenv("DENSE_MEM_REPOSITORY_TESTCONTAINERS") != "1" {
+		testcontainers.SkipIfProviderIsNotHealthy(t)
+	}
+	t.Setenv("DENSE_MEM_REPOSITORY_TESTCONTAINERS", "1")
+	return newOntologyFixtureWithMaintenance(t, maintenance)
+}
+
+func (f *ontologyFixture) organizationEvidence(t *testing.T, owner int, text string, metadata map[string]any) ontology.SourceHandle {
+	t.Helper()
+	result, err := f.knowledge.CreateIngestForTest(context.Background(), knowledge.CreateIngestInput{TeamID: f.team, OwnerProfileID: f.owners[owner], IdempotencyKey: uuid.NewString(), RequestHash: testHash(text + uuid.NewString()), Evidence: []knowledge.EvidenceInput{{FragmentID: uuid.NewString(), Content: text, ForceInsert: true, Metadata: metadata}}})
+	require.NoError(t, err)
+	return ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: result.Evidence[0].FragmentID, Version: 1}
+}
+
+func organizationFixtureResponse(request assessment.Request, equivalent func(assessment.Item, assessment.Item) bool) assessment.Response {
+	response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
+	definitions := map[string]string{}
+	items := map[string]assessment.Item{}
+	for _, item := range request.Items {
+		items[item.Ref] = item
+		if request.EquivalenceOnly || item.LockedDefinitionRef != "" {
+			continue
+		}
+		ref := item.PreferredDefinitionRef
+		if ref == "" {
+			for _, d := range request.Definitions {
+				if item.Kind == ontology.EvidenceSource && d.Kind == ontology.Topic {
+					ref = d.Ref
+					break
+				}
+			}
+		}
+		if ref == "" {
+			kind, key := ontology.Topic, "postgresql"
+			if definitions[key] == "" {
+				ref = "new-" + key
+				definitions[key] = ref
+				response.Definitions = append(response.Definitions, assessment.Definition{Ref: ref, Kind: kind, Key: key, Label: key, Description: "Synthetic organization vocabulary", Aliases: []string{}})
+			} else {
+				ref = definitions[key]
+			}
+		}
+		response.Items = append(response.Items, assessment.Decision{Ref: item.Ref, Status: "classified", DefinitionRef: ref})
+	}
+	for _, pair := range request.Pairs {
+		if pair.RequiredRelation != "" {
+			continue
+		}
+		relation := "distinct"
+		if equivalent != nil && equivalent(items[pair.LeftRef], items[pair.RightRef]) {
+			relation = "equivalent"
+		}
+		response.Equivalence = append(response.Equivalence, assessment.Equivalence{Ref: pair.Ref, Relation: relation})
+	}
+	return response
+}
+
+func organizationFixtureService(t *testing.T, f *ontologyFixture, equivalent func(assessment.Item, assessment.Item) bool, edit func(assessment.Request, *assessment.Response)) (*organization.Service, *atomic.Int32) {
+	return organizationFixtureServiceWithIdentity(t, f, equivalent, edit, "fixture-model", assessor.DefaultSemanticAssessmentLimits())
+}
+
+func organizationFixtureServiceWithIdentity(t *testing.T, f *ontologyFixture, equivalent func(assessment.Item, assessment.Item) bool, edit func(assessment.Request, *assessment.Response), model string, limits assessor.SemanticAssessmentLimits) (*organization.Service, *atomic.Int32) {
+	return organizationFixtureServiceWithAccounting(t, f, equivalent, edit, model, limits, nil, 300000)
+}
+
+func organizationFixtureServiceWithAccounting(t *testing.T, f *ontologyFixture, equivalent func(assessment.Item, assessment.Item) bool, edit func(assessment.Request, *assessment.Response), model string, limits assessor.SemanticAssessmentLimits, accounting assessment.AttemptAccounting, contextWindowTokens int, usage ...map[string]int) (*organization.Service, *atomic.Int32) {
+	t.Helper()
+	calls := &atomic.Int32{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		var envelope struct {
+			Messages       []struct{ Role, Content string }
+			ResponseFormat struct {
+				JSONSchema struct {
+					Name string `json:"name"`
+				} `json:"json_schema"`
+			} `json:"response_format"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&envelope); err != nil {
+			t.Error(err)
+			w.WriteHeader(400)
+			return
+		}
+		var request assessment.Request
+		if len(envelope.Messages) < 2 {
+			t.Error("missing immutable request")
+			w.WriteHeader(400)
+			return
+		}
+		if err := json.Unmarshal([]byte(envelope.Messages[1].Content), &request); err != nil {
+			t.Error(err)
+			w.WriteHeader(400)
+			return
+		}
+		expectedSchema := assessment.SchemaName
+		if request.EquivalenceOnly {
+			expectedSchema = assessment.EquivalenceSchemaName
+		}
+		if envelope.ResponseFormat.JSONSchema.Name != expectedSchema {
+			t.Error("wrong response schema")
+		}
+		response := organizationFixtureResponse(request, equivalent)
+		if edit != nil {
+			edit(request, &response)
+		}
+		encoded, err := json.Marshal(response)
+		if err != nil {
+			t.Error(err)
+			w.WriteHeader(500)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		body := map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": string(encoded)}}}}
+		if len(usage) > 0 {
+			body["usage"] = usage[0]
+		}
+		if err := json.NewEncoder(w).Encode(body); err != nil && r.Context().Err() == nil {
+			t.Error(err)
+		}
+	}))
+	t.Cleanup(server.Close)
+	cfg := &config.Config{AIVerifierAPIURL: server.URL, AIVerifierAPIKey: "synthetic-provider-key", AIVerifierModel: model}
+	transport := structured.NewOpenAI(cfg, server.Client())
+	provider := assessment.NewProviderWithAccounting(transport, cfg.AIVerifierModel, limits, accounting, contextWindowTokens)
+	return organization.NewService(f.store, provider), calls
+}
+
+func receiptCount(t *testing.T, f *ontologyFixture) int {
+	t.Helper()
+	var count int
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM historical_organization_assessments WHERE team_id=?::uuid`, f.team).Row().Scan(&count))
+	return count
+}

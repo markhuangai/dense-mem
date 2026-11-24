@@ -88,7 +88,7 @@ const server = createServer(async (request, response) => {
     return;
   }
 
-  if (handleDecisionFixture(request, response, payload)) return;
+  if (handleDecisionFixture(request, response, payload, fixtureTopicAssignment, fixtureCommunityParent)) return;
 
   if (request.method === "POST" && request.url === "/ontology-fixture") {
     if (!["normal", "matching", "ambiguous", "fail-three-then-success", "hold"].includes(payload.mode)) {
@@ -112,7 +112,7 @@ const server = createServer(async (request, response) => {
       schema_name: typeof payload.response_format?.json_schema?.name === "string" ? payload.response_format.json_schema.name : "",
       fault: routeFault,
       generated_fields: Object.keys(payload.response_format?.json_schema?.schema?.properties || {}),
-      source_kinds: payload.response_format?.json_schema?.name === "ontology_evidence_organization_v4"
+      source_kinds: ["ontology_evidence_organization_v4", "evidence_equivalence_v1"].includes(payload.response_format?.json_schema?.name)
         ? [...new Set((assessmentInput(payload).items || []).map((item) => item.kind))] : [],
     });
   }
@@ -208,7 +208,7 @@ const server = createServer(async (request, response) => {
       return;
     }
     let assessment;
-    if (payload.response_format?.json_schema?.name === "ontology_evidence_organization_v4") {
+    if (["ontology_evidence_organization_v4", "evidence_equivalence_v1", "topic_assignment_v1", "community_placement_v1"].includes(payload.response_format?.json_schema?.name)) {
       activeOntologyRequests += 1;
       maxActiveOntologyRequests = Math.max(maxActiveOntologyRequests, activeOntologyRequests);
       try {
@@ -307,7 +307,19 @@ function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
     return result;
   }
   if (schemaName === "session_evidence_excerpts_v2") return fixtureSessionExtraction(structuredInput(payload, (input) => input.window));
-  if (schemaName === "ontology_evidence_organization_v4") return fixtureOntologyOrganization(payload);
+  if (schemaName === "topic_assignment_v1") {
+    const result = fixtureTopicAssignment(structuredInput(payload, (input) => typeof input.evidence === "string" && Array.isArray(input.topics)));
+    if (ontologyFailuresRemaining > 0) {
+      ontologyFailuresRemaining--;
+      result.request_id = "wrong-request";
+    }
+    return result;
+  }
+  if (schemaName === "community_placement_v1") {
+    const input = structuredInput(payload, (request) => request.topic && Array.isArray(request.candidates));
+    return { parent_id: fixtureCommunityParent(input) };
+  }
+  if (["ontology_evidence_organization_v4", "evidence_equivalence_v1"].includes(schemaName)) return fixtureOntologyOrganization(payload);
   if (schemaName !== "dense_mem_evidence_assessment_response") throw new Error(`unsupported fixture schema ${schemaName}`);
   const assessment = fixtureAssessment(assessmentInput(payload), requestFault);
   if (requestFault === "routed-field-repair" || requestFault === "routed-field-exhausted") {
@@ -329,13 +341,44 @@ function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
   return assessment;
 }
 
+function fixtureCommunityParent(input) {
+  const storage = input.candidates.find((topic) => topic.name === "memory-storage");
+  return input.topic.name === "storage-backups" && storage ? storage.id : "";
+}
+
+function fixtureTopicAssignment(input) {
+  const result = { request_id: input.request_id, status: "uncategorized", matches: [], proposals: [] };
+  if (ontologyMode === "ambiguous") return result;
+  const rules = [
+    [/postgresql|sqlite|durable memory|database platform/i, "memory-storage", "Database platform storage with PostgreSQL or SQLite."],
+    [/redis|keydb|coordination platform/i, "memory-coordination", "Coordination platform using Redis or KeyDB."],
+    [/backups?/i, "storage-backups", "Backup storage within a database platform."],
+  ];
+  if (ontologyMode === "matching") {
+    const selected = [[/\bheliostat\b/i,"suntracker"],[/\babout\b/i,"about"],[/\band\b/i,"conjunctioncatalog"]].find(([pattern]) => pattern.test(input.evidence));
+    if (selected) rules.splice(0, rules.length, [...selected, "Named topic in the matching fixture."]);
+  }
+  for (const [pattern,label,description] of rules) {
+    const quote = input.evidence.match(pattern)?.[0];
+    if (!quote) continue;
+    const existing = input.topics.find((topic) => [topic.label,...(topic.aliases || [])].includes(label));
+    if (existing) result.matches.push({ id: existing.id, quote });
+    else result.proposals.push({ label, description, quote });
+  }
+  const newlyIntroduced = input.topics.find((topic) => topic.label === "Atlas PostgreSQL alternative vocabulary");
+  const pg = input.evidence.match(/PostgreSQL/i);
+  if (newlyIntroduced && pg) result.matches.push({ id: newlyIntroduced.id, quote: pg[0] });
+  if (result.matches.length || result.proposals.length) result.status = "assigned";
+  return result;
+}
+
 function fixtureOntologyOrganization(payload) {
   const input = structuredInput(payload, (value) => Array.isArray(value.items) && Array.isArray(value.pairs));
   if (ontologyFailuresRemaining > 0) {
     ontologyFailuresRemaining -= 1;
     return { request_id: input.request_id, definitions: [], items: [], equivalence: [] };
   }
-  const questions = input.items.filter((item) => !item.locked_definition_ref);
+  const questions = input.equivalence_only ? [] : input.items.filter((item) => !item.locked_definition_ref);
   const pairs = input.pairs.filter((pair) => !pair.required_relation);
   if (ontologyMode === "ambiguous") {
     return {
@@ -423,7 +466,11 @@ export function fixtureFault(payload, route) {
     const input = structuredInput(payload, (value) => value.window);
     return faultMarker([input.window?.before, ...(input.window?.core || []), input.window?.after].filter(Boolean).map((segment) => segment.text));
   }
-  if (schemaName === "ontology_evidence_organization_v4") {
+  if (schemaName === "topic_assignment_v1") {
+    const input = structuredInput(payload, (value) => typeof value.evidence === "string");
+    return faultMarker([input.evidence]);
+  }
+  if (["ontology_evidence_organization_v4", "evidence_equivalence_v1"].includes(schemaName)) {
     const input = structuredInput(payload, (value) => Array.isArray(value.items));
     return faultMarker((input.items || []).map((item) => item.text));
   }

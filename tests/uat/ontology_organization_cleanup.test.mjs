@@ -25,18 +25,18 @@ test("temporary response diagnosis distinguishes discarded upstream details with
 for (const failures of [[], ["reset"], ["reset", "resume"]]) {
   test(`ontology UAT restores settings after failures: ${failures.join(",") || "original only"}`, async () => {
     const calls = [];
-    const original = { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "false" }] };
+    const original = { items: [{ key: "TOPIC_MAINTENANCE_ENABLED", value: "false" }] };
     const server = createServer(async (request, response) => {
       const chunks = [];
       for await (const chunk of request) chunks.push(chunk);
       const body = chunks.length ? JSON.parse(Buffer.concat(chunks)) : null;
       let status = 200;
       let data = {};
-      if (request.url === "/control/api/config/ontology-maintenance") {
+      if (request.url === "/control/api/config/topic-maintenance") {
         if (request.method === "GET") data = original;
         else if (body.items[0].value === "false") calls.push("restore");
-      } else if (request.url === "/control/api/ontology/status") data = { paused: true, counts: {} };
-      else if (request.url === "/control/api/ontology/resume") {
+      } else if (request.url === "/control/api/topic-maintenance/status") data = { paused: true, counts: {} };
+      else if (request.url === "/control/api/topic-maintenance/resume") {
         calls.push("resume");
         if (failures.includes("resume")) status = 503;
       } else if (request.url === "/ontology-fixture") {
@@ -82,8 +82,8 @@ for (const failedTeam of ["fixture-team", "foreign-team"]) test(`ontology UAT pr
     calls.push(request.url);
     let data = {};
     if (request.url === "/health") data = { chat_requests: [] };
-    else if (request.url === "/control/api/config/ontology-maintenance") data = { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "false" }] };
-    else if (request.url === "/control/api/ontology/status") data = { paused: true, counts: {} };
+    else if (request.url === "/control/api/config/topic-maintenance") data = { items: [{ key: "TOPIC_MAINTENANCE_ENABLED", value: "false" }] };
+    else if (request.url === "/control/api/topic-maintenance/status") data = { paused: true, counts: {} };
     else if (request.url === "/control/api/teams") data = { id: "foreign-team" };
     else if (request.url.endsWith("/credentials")) data = { api_key: request.url.includes("foreign-team") ? "foreign-key" : "fixture-key", credential: { memory_access: { team_shared: { write: true } } } };
     else if (request.url.startsWith(`/control/api/remember-attempts?team_id=${failedTeam}&`)) data = [{ attempt_id: attemptID, correlation_id: correlationID }];

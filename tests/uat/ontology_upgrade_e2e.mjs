@@ -16,7 +16,7 @@ async function control(path, body) {
   return (await response.json()).data;
 }
 
-const initial = await control("/ontology/status");
+const initial = await control("/topic-maintenance/status");
 assert.equal(initial.paused, false, "startup must restore its automatic pause");
 assert.equal(initial.enabled, true, "upgrade must retain saved enablement");
 assert.equal(initial.configuration_error, "configuration_invalid", "missing model capacity remains visible");
@@ -26,16 +26,16 @@ const provider = await fetch("http://synchronous-write-provider:8787/health", { 
 assert.equal(provider.status, 200);
 assert.equal((await provider.json()).assessment_calls, 0, "upgrade preparation must not call a model");
 
-await control("/config/ontology-maintenance", {
+await control("/config/topic-maintenance", {
   items: [
-    { key: "ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS", value: "300000" },
-    { key: "ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY", value: "8" },
-    { key: "ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY", value: "8" },
+    { key: "TOPIC_MAINTENANCE_CONTEXT_WINDOW_TOKENS", value: "300000" },
+    { key: "TOPIC_MAINTENANCE_MAX_CONCURRENCY", value: "8" },
+    { key: "TOPIC_MAINTENANCE_TEAM_MAX_CONCURRENCY", value: "8" },
   ],
 });
 let status;
 for (let attempt = 0; attempt < 120; attempt++) {
-  status = await control("/ontology/status");
+  status = await control("/topic-maintenance/status");
   if (status.counts.organized > 0 && status.usage.attempts > 0 && status.active_work === 0 && status.usage.unreconciled_attempts === 0) break;
   await new Promise((resolve) => setTimeout(resolve, 1000));
 }

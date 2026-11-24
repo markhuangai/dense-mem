@@ -15,11 +15,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
 )
 
 //go:embed maintenance_snapshot.sql
 var MaintenanceSnapshotSQL string
+
+//go:embed legacy_maintenance_snapshot.sql
+var legacyMaintenanceSnapshotSQL string
 
 type Scope struct {
 	TeamID       string `json:"team_id"`
@@ -30,13 +33,14 @@ type Scope struct {
 }
 
 type Native struct {
-	DB           *sql.DB
-	Scope        Scope
-	ControlURL   string
-	ControlToken string
-	Client       *HTTPClient
-	RuntimeLogs  func(context.Context) error
-	ServerUsage  map[string]UsageTotals
+	legacyOrganization bool
+	DB                 *sql.DB
+	Scope              Scope
+	ControlURL         string
+	ControlToken       string
+	Client             *HTTPClient
+	RuntimeLogs        func(context.Context) error
+	ServerUsage        map[string]UsageTotals
 }
 
 type NativeAttempt struct {
@@ -129,7 +133,7 @@ func (n *Native) ResolveScope(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback()
-	err = tx.QueryRowContext(ctx, `SELECT a.legacy_owner_id::text,m.id::text,m.generation FROM ownership_aliases a JOIN memory_spaces m ON m.team_id=a.team_id AND m.kind='team_shared' AND m.lifecycle_state='active' WHERE a.team_id=$1::uuid AND a.credential_id=$2::uuid`, n.Scope.TeamID, n.Scope.CredentialID).Scan(&n.Scope.OwnerID, &n.Scope.SpaceID, &n.Scope.Generation)
+	err = tx.QueryRowContext(ctx, `SELECT a.legacy_owner_id::text,m.id::text,m.generation,to_regclass('public.topic_record_heads') IS NULL FROM ownership_aliases a JOIN memory_spaces m ON m.team_id=a.team_id AND m.kind='team_shared' AND m.lifecycle_state='active' WHERE a.team_id=$1::uuid AND a.credential_id=$2::uuid`, n.Scope.TeamID, n.Scope.CredentialID).Scan(&n.Scope.OwnerID, &n.Scope.SpaceID, &n.Scope.Generation, &n.legacyOrganization)
 	return err
 }
 
@@ -138,7 +142,7 @@ func (n *Native) systemTx(ctx context.Context) (*sql.Tx, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err = tx.ExecContext(ctx, `SELECT set_config('app.tx_mode','system',true),set_config('app.storage_layout','feature-storage-v1',true)`); err != nil {
+	if _, err = tx.ExecContext(ctx, `SELECT set_config('app.tx_mode','system',true),set_config('app.storage_layout','feature-storage-v1',true),set_config('app.topic_layout','topic-storage-v1',true)`); err != nil {
 		tx.Rollback()
 		return nil, err
 	}
@@ -146,6 +150,10 @@ func (n *Native) systemTx(ctx context.Context) (*sql.Tx, error) {
 }
 
 func (n *Native) Control(ctx context.Context, method, path string, input, out any) error {
+	if n.legacyOrganization {
+		path = strings.Replace(path, "/config/topic-maintenance", "/config/ontology-maintenance", 1)
+		path = strings.Replace(path, "/topic-maintenance/", "/ontology/", 1)
+	}
 	var envelope struct {
 		Data json.RawMessage `json:"data"`
 	}
@@ -250,13 +258,17 @@ func (n *Native) Snapshot(ctx context.Context) (NativeObservation, error) {
 		return observation, err
 	}
 	var raw []byte
-	if err = tx.QueryRowContext(ctx, MaintenanceSnapshotSQL, n.Scope.TeamID, n.Scope.OwnerID, n.Scope.SpaceID, n.Scope.Generation, n.Scope.CredentialID).Scan(&raw); err != nil {
+	snapshotSQL := MaintenanceSnapshotSQL
+	if n.legacyOrganization {
+		snapshotSQL = legacyMaintenanceSnapshotSQL
+	}
+	if err = tx.QueryRowContext(ctx, snapshotSQL, n.Scope.TeamID, n.Scope.OwnerID, n.Scope.SpaceID, n.Scope.Generation, n.Scope.CredentialID).Scan(&raw); err != nil {
 		return observation, err
 	}
 	if err = json.Unmarshal(raw, &observation); err != nil {
 		return observation, err
 	}
-	if err = n.Control(ctx, http.MethodGet, "/ontology/status", nil, &observation.Ontology); err != nil {
+	if err = n.Control(ctx, http.MethodGet, "/topic-maintenance/status", nil, &observation.Ontology); err != nil {
 		return observation, err
 	}
 	if err = n.Control(ctx, http.MethodGet, "/search/convergence", nil, &observation.Search); err != nil {
@@ -300,22 +312,25 @@ func NativeReady(observation NativeObservation, ontologyEnabled, paused bool, ma
 }
 
 func (n *Native) EnableOntology(ctx context.Context, manifest Manifest) error {
-	values := map[string]string{domain.AppConfigOntologyEnabled: "true", domain.AppConfigOntologyModel: manifest.Model, domain.AppConfigOntologyConcurrency: "4", domain.AppConfigOntologyTeamConcurrency: "4", domain.AppConfigOntologyContextWindow: strconv.Itoa(manifest.ContextWindowTokens)}
+	values := map[string]string{domain.AppConfigTopicMaintenanceEnabled: "true", domain.AppConfigTopicMaintenanceModel: manifest.Model, domain.AppConfigTopicMaintenanceConcurrency: "4", domain.AppConfigTopicMaintenanceTeamConcurrency: "4", domain.AppConfigTopicMaintenanceContextWindow: strconv.Itoa(manifest.ContextWindowTokens)}
 	items := []map[string]string{}
 	for key, value := range values {
+		if n.legacyOrganization {
+			key = strings.Replace(key, "TOPIC_MAINTENANCE_", "ONTOLOGY_MAINTENANCE_", 1)
+		}
 		items = append(items, map[string]string{"key": key, "value": value})
 	}
-	if err := n.Control(ctx, http.MethodPatch, "/config/ontology-maintenance", map[string]any{"items": items}, nil); err != nil {
+	if err := n.Control(ctx, http.MethodPatch, "/config/topic-maintenance", map[string]any{"items": items}, nil); err != nil {
 		return err
 	}
-	if err := n.Control(ctx, http.MethodPost, "/ontology/resume", map[string]string{"operation_key": uuid.NewString()}, nil); err != nil {
+	if err := n.Control(ctx, http.MethodPost, "/topic-maintenance/resume", map[string]string{"operation_key": uuid.NewString()}, nil); err != nil {
 		return err
 	}
-	return n.Control(ctx, http.MethodPost, "/ontology/runs", map[string]any{"operation_key": uuid.NewString(), "max_batches": 0}, nil)
+	return n.Control(ctx, http.MethodPost, "/topic-maintenance/runs", map[string]any{"operation_key": uuid.NewString(), "max_batches": 0}, nil)
 }
 
 func (n *Native) Pause(ctx context.Context) error {
-	return n.Control(ctx, http.MethodPost, "/ontology/pause", map[string]string{"operation_key": uuid.NewString()}, nil)
+	return n.Control(ctx, http.MethodPost, "/topic-maintenance/pause", map[string]string{"operation_key": uuid.NewString()}, nil)
 }
 
 func (n *Native) VerifyMappings(ctx context.Context, corpus []CorpusItem, mapping KnowledgeMapping) (map[string]CanonicalEvidence, error) {

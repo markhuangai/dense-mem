@@ -16,6 +16,7 @@ import (
 )
 
 func TestFeatureStoragePostgresFreshAndPopulated(t *testing.T) {
+	t.Run("topic_layout_capture_and_membership_resume", testTopicStorageUpgrade)
 	t.Run("fresh", func(t *testing.T) {
 		db, cleanup := openMigrationSQLDB(t, context.Background())
 		defer cleanup()
@@ -31,14 +32,14 @@ func TestFeatureStoragePostgresFreshAndPopulated(t *testing.T) {
 		require.NoError(t, NewMigratorWithDB(db).RunUp(context.Background()))
 		t.Logf("feature_storage_fixture_migration rows=210 duration_ms=%d", time.Since(started).Milliseconds())
 		require.Equal(t, evidence, featureStorageSnapshot(t, db, "evidence_fragments"))
-		require.JSONEq(t, revisions, featureStorageSnapshot(t, db, "ontology_revision_records"))
-		require.JSONEq(t, drafts, featureStorageSnapshot(t, db, "ontology_draft_revision_records"))
+		require.JSONEq(t, revisions, featureStorageSnapshot(t, db, "topic_revision_records"))
+		require.JSONEq(t, drafts, featureStorageSnapshot(t, db, "topic_draft_revision_records"))
 		var payloads, edits int
 		require.NoError(t, execPostgresTxMode(context.Background(), db, "system", func(tx *sql.Tx) error {
-			if err := tx.QueryRow(`SELECT count(*) FROM ontology_topic_revision_payloads`).Scan(&payloads); err != nil {
+			if err := tx.QueryRow(`SELECT count(*) FROM topic_revision_payloads`).Scan(&payloads); err != nil {
 				return err
 			}
-			return tx.QueryRow(`SELECT count(*) FROM ontology_override_draft_payloads WHERE container='edit'`).Scan(&edits)
+			return tx.QueryRow(`SELECT count(*) FROM historical_topic_override_draft_payloads WHERE container='edit'`).Scan(&edits)
 		}))
 		require.Equal(t, 210, payloads)
 		require.Equal(t, 1, edits)
@@ -227,7 +228,7 @@ func TestFeatureStoragePostgresRestartAndWriterFence(t *testing.T) {
 	}
 	require.ErrorContains(t, write(FeatureStorageLayout), "incompatible writer")
 	require.NoError(t, NewMigratorWithDB(db).RunUp(context.Background()))
-	require.JSONEq(t, before, featureStorageSnapshot(t, db, "ontology_revision_records"))
+	require.JSONEq(t, before, featureStorageSnapshot(t, db, "topic_revision_records"))
 	require.ErrorContains(t, write(""), "incompatible writer")
 	require.NoError(t, write(FeatureStorageLayout))
 }
@@ -347,7 +348,7 @@ func TestFeatureStoragePostgresActiveBatchInterruption(t *testing.T) {
 			_, err = db.Exec(`DROP TRIGGER feature_storage_fixture_pause ON ontology_topic_revision_payloads; DROP FUNCTION feature_storage_fixture_pause()`)
 			require.NoError(t, err)
 			require.NoError(t, NewMigratorWithDB(db).RunUp(context.Background()))
-			require.JSONEq(t, before, featureStorageSnapshot(t, db, "ontology_revision_records"))
+			require.JSONEq(t, before, featureStorageSnapshot(t, db, "topic_revision_records"))
 		})
 	}
 }

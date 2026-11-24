@@ -275,11 +275,25 @@ func (p *Provider) call(ctx context.Context, batch batch, common []observability
 	}
 	diagnostics.FailurePhase = "admission"
 	admission := time.Now()
+	accounting := modelprovider.DecisionAccountingFromContext(ctx)
+	if accounting != nil {
+		ctx, err = accounting.BeforeDecisionExchange(ctx, receipt)
+		if err != nil {
+			return result, receipt, err
+		}
+	}
 	if err = modelprovider.NotifyAdmission(ctx); err != nil {
 		return result, receipt, err
 	}
 	admissionMS := time.Since(admission).Milliseconds()
 	diagnostics.AdmissionMS = &admissionMS
+	if accounting != nil {
+		defer func() {
+			if accountingErr := accounting.AfterDecisionExchange(ctx, receipt, err == nil); accountingErr != nil {
+				err = errors.Join(err, accountingErr)
+			}
+		}()
+	}
 	if err = ctx.Err(); err != nil {
 		return result, receipt, err
 	}

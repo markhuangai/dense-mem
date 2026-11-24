@@ -374,7 +374,7 @@ test("real Go coverage parts retain cross-package and testless execution and rej
   writeFixture(fixture, "internal/parallelonly/value.go", "package parallelonly\nfunc Value() int { return 23 }\n");
   writeFixture(fixture, "internal/semanticonly/value.go", "package semanticonly\nfunc Hierarchy() int { return 27 }\nfunc Publication() int { return 29 }\n");
   const targets = {
-    "internal/ontology/postgres": ["TestOntologyMaintenanceCohort", "TestOntologyCoverageFailureWitnesses", "TestOntologyMaintenanceParallelClaimsAndLimits", "TestOntologyMaintenanceParallelSchedulerExecution", "TestOntologyManagementTopicPublication", "TestOntologyManagementTopicDependencies", "TestOntologyManagementTopicRollbackAndPins", "TestOntologyManagementTopicRacesAndIsolation"],
+    "internal/topics/postgres": ["TestOntologyMaintenanceCohort", "TestOntologyCoverageFailureWitnesses", "TestOntologyMaintenanceParallelClaimsAndLimits", "TestOntologyMaintenanceParallelSchedulerExecution", "TestOntologyManagementTopicPublication", "TestOntologyManagementTopicDependencies", "TestOntologyManagementTopicRollbackAndPins", "TestOntologyManagementTopicRacesAndIsolation"],
     "internal/storage/postgres": ["TestEvidenceOnlyPostgresUpgrade"],
     "cmd/internal/migrationapp": ["TestEvidenceOnlyPostgresMigrationDiagnostics"],
     "internal/recall/postgres": ["TestEvidenceOnlyPostgresTopics", "TestRecallAccuracyCohort"],

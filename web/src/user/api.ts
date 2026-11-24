@@ -1,6 +1,6 @@
 import type { MemoryAccess } from "../credentialPermissions";
 import { ApiError, requestJson } from "../http";
-import type { OntologyCoverage, OntologyDraft, OntologyDraftCommand, OntologyDraftPage, OntologyKind, OntologyPreview, OntologyPublication, OntologyPublicationPage, OntologyRecord, OntologyRecordPage, OntologySourcePage, SaveOntologyDraft, SourceKind } from "./ontology-types";
+import type { TopicCoverage, TopicDraft, TopicDraftCommand, TopicDraftPage, TopicKind, TopicPreview, TopicPublication, TopicPublicationPage, TopicRecord, TopicRecordPage, TopicSourcePage, SaveTopicDraft, SourceKind } from "./topic-types";
 export { ApiError } from "../http";
 
 export type UserTeam = {
@@ -156,33 +156,33 @@ export class UserApi {
     this.authMode = authMode;
   }
 
-  async ontologyRecords(kind: OntologyKind | "" = "", cursor = ""): Promise<OntologyRecordPage> {
-    return (await this.request<Envelope<OntologyRecordPage>>(`/ui/api/ontology/records?${new URLSearchParams({ kind, cursor, limit: "50" })}`)).data;
+  async topicRecords(kind: TopicKind | "" = "", cursor = ""): Promise<TopicRecordPage> {
+    return (await this.request<Envelope<TopicRecordPage>>(`/ui/api/topics/records?${new URLSearchParams({ kind, cursor, limit: "50" })}`)).data;
   }
-  async ontologyRecord(id: string, version = 0): Promise<OntologyRecord> {
-    return (await this.request<Envelope<OntologyRecord>>(`/ui/api/ontology/records/${encodeURIComponent(id)}?version=${version}`)).data;
+  async topicRecord(id: string, version = 0): Promise<TopicRecord> {
+    return (await this.request<Envelope<TopicRecord>>(`/ui/api/topics/records/${encodeURIComponent(id)}?version=${version}`)).data;
   }
-  async ontologySources(kind: SourceKind = "evidence", cursor = "", query = ""): Promise<OntologySourcePage> {
-    return (await this.request<Envelope<OntologySourcePage>>(`/ui/api/ontology/sources?${new URLSearchParams({ kind, cursor, q: query, limit: "50" })}`)).data;
+  async topicSources(kind: SourceKind = "evidence", cursor = "", query = ""): Promise<TopicSourcePage> {
+    return (await this.request<Envelope<TopicSourcePage>>(`/ui/api/topics/sources?${new URLSearchParams({ kind, cursor, q: query, limit: "50" })}`)).data;
   }
-  async ontologyStatus(): Promise<OntologyCoverage> { return (await this.request<Envelope<OntologyCoverage>>("/ui/api/ontology/status")).data; }
-  async ontologyDrafts(cursor = ""): Promise<OntologyDraftPage> { return (await this.request<Envelope<OntologyDraftPage>>(`/ui/api/ontology/drafts?${new URLSearchParams({ cursor, limit: "50" })}`)).data; }
-  async ontologyDraft(id: string): Promise<OntologyDraft> { return (await this.request<Envelope<OntologyDraft>>(`/ui/api/ontology/drafts/${encodeURIComponent(id)}`)).data; }
-  async saveOntologyDraft(id: string, input: SaveOntologyDraft): Promise<OntologyDraft> {
-    return (await this.request<Envelope<OntologyDraft>>(`/ui/api/ontology/drafts${id ? `/${encodeURIComponent(id)}` : ""}`, { method: id ? "PUT" : "POST", body: input })).data;
+  async topicStatus(): Promise<TopicCoverage> { return (await this.request<Envelope<TopicCoverage>>("/ui/api/topics/status")).data; }
+  async topicDrafts(cursor = ""): Promise<TopicDraftPage> { return (await this.request<Envelope<TopicDraftPage>>(`/ui/api/topics/drafts?${new URLSearchParams({ cursor, limit: "50" })}`)).data; }
+  async topicDraft(id: string): Promise<TopicDraft> { return (await this.request<Envelope<TopicDraft>>(`/ui/api/topics/drafts/${encodeURIComponent(id)}`)).data; }
+  async saveTopicDraft(id: string, input: SaveTopicDraft): Promise<TopicDraft> {
+    return (await this.request<Envelope<TopicDraft>>(`/ui/api/topics/drafts${id ? `/${encodeURIComponent(id)}` : ""}`, { method: id ? "PUT" : "POST", body: input })).data;
   }
-  async previewOntologyDraft(id: string, version: number): Promise<OntologyPreview> {
-    return (await this.request<Envelope<OntologyPreview>>(`/ui/api/ontology/drafts/${encodeURIComponent(id)}/preview`, { method: "POST", body: { expected_version: version } })).data;
+  async previewTopicDraft(id: string, version: number): Promise<TopicPreview> {
+    return (await this.request<Envelope<TopicPreview>>(`/ui/api/topics/drafts/${encodeURIComponent(id)}/preview`, { method: "POST", body: { expected_version: version } })).data;
   }
-  async commandOntologyDraft(id: string, action: "publish" | "discard", input: OntologyDraftCommand): Promise<OntologyDraft> {
-    return (await this.request<Envelope<OntologyDraft>>(`/ui/api/ontology/drafts/${encodeURIComponent(id)}/${action}`, { method: "POST", body: input })).data;
+  async commandTopicDraft(id: string, action: "publish" | "discard", input: TopicDraftCommand): Promise<TopicDraft> {
+    return (await this.request<Envelope<TopicDraft>>(`/ui/api/topics/drafts/${encodeURIComponent(id)}/${action}`, { method: "POST", body: input })).data;
   }
-  async ontologyPublications(after = 0): Promise<OntologyPublicationPage> {
-    return (await this.request<Envelope<OntologyPublicationPage>>(`/ui/api/ontology/publications?after=${after}&limit=50`)).data;
+  async topicPublications(after = 0): Promise<TopicPublicationPage> {
+    return (await this.request<Envelope<TopicPublicationPage>>(`/ui/api/topics/publications?after=${after}&limit=50`)).data;
   }
-  async ontologyPublication(id: string): Promise<OntologyPublication> { return (await this.request<Envelope<OntologyPublication>>(`/ui/api/ontology/publications/${encodeURIComponent(id)}`)).data; }
-  async rollbackOntologyPublication(id: string, input: Omit<OntologyDraftCommand, "expected_version">): Promise<OntologyPublication> {
-    return (await this.request<Envelope<OntologyPublication>>(`/ui/api/ontology/publications/${encodeURIComponent(id)}/rollback`, { method: "POST", body: input })).data;
+  async topicPublication(id: string): Promise<TopicPublication> { return (await this.request<Envelope<TopicPublication>>(`/ui/api/topics/publications/${encodeURIComponent(id)}`)).data; }
+  async rollbackTopicPublication(id: string, input: Omit<TopicDraftCommand, "expected_version">): Promise<TopicPublication> {
+    return (await this.request<Envelope<TopicPublication>>(`/ui/api/topics/publications/${encodeURIComponent(id)}/rollback`, { method: "POST", body: input })).data;
   }
 
   async session(): Promise<UserSession> {

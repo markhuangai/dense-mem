@@ -10,7 +10,7 @@ export function semanticPublicationRecords(window) {
     if (offset < 0) return [];
     let record;
     try { record = JSON.parse(line.slice(offset)); } catch { return []; }
-    return /^ontology_semantic_(publication|manager_|draft_preview)/.test(String(record.msg)) ? [record] : [];
+    return /^topic_semantic_(publication|manager_|draft_preview)/.test(String(record.msg)) ? [record] : [];
   });
 }
 
@@ -35,11 +35,11 @@ function scopedSemanticRecords(window, expected) {
 
 export function verifySemanticPublication(window, expected) {
   const records = scopedSemanticRecords(window, expected);
-  const outcomes = records.filter((record) => record.msg !== "ontology_semantic_publication");
+  const outcomes = records.filter((record) => record.msg !== "topic_semantic_publication");
   assert.equal(outcomes.length, 1, "publication must have one final outcome");
-  const event = expected.outcomeEvent ?? "ontology_semantic_publication_rejected";
+  const event = expected.outcomeEvent ?? "topic_semantic_publication_rejected";
   const rejected = event.endsWith("_rejected");
-  const preview = event === "ontology_semantic_draft_preview";
+  const preview = event === "topic_semantic_draft_preview";
   assert.equal(outcomes[0].msg, event);
   assert.equal(outcomes[0].level, preview ? "DEBUG" : rejected ? "WARN" : "INFO");
   assert.equal(outcomes[0].reason, expected.reason);
@@ -49,7 +49,7 @@ export function verifySemanticPublication(window, expected) {
     for (const key of ["draft_id", "operation_key", "payload_chunk", "error"]) assert(!Object.hasOwn(records[0], key), "authorization rejection exposed untrusted detail");
     return { operation_id: records[0].operation_id, reason: expected.reason, records, bodies: {} };
   }
-  const manifests = records.filter((record) => record.msg === "ontology_semantic_publication" && !record.payload_chunk);
+  const manifests = records.filter((record) => record.msg === "topic_semantic_publication" && !record.payload_chunk);
   assert.equal(manifests.length, 1, "required publication manifest is missing");
   const manifest = manifests[0];
   assert.equal(manifest.capture_state, "captured", "required publication capture is incomplete");
@@ -102,7 +102,7 @@ export function collectSemanticPublicationProof({ project, composeFile, since, d
   const captures = operations.map((operation) => scopedSemanticRecords(result.stdout, operation));
   for (const records of captures) {
     writeFileSync(join(directory, `${records[0].operation_id}.private.jsonl`), records.map((record) => JSON.stringify(record)).join("\n") + "\n", { mode: 0o600 });
-    for (const record of records) console.log(`ontology_semantic_diagnostic_record ${JSON.stringify(record)}`);
+    for (const record of records) console.log(`topic_semantic_diagnostic_record ${JSON.stringify(record)}`);
   }
   const proofs = operations.map((operation) => verifySemanticPublication(result.stdout, operation));
   for (const proof of proofs) {

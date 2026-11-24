@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/markhuangai/dense-mem/internal/jsonstrict"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
 	gooselock "github.com/pressly/goose/v3/lock"
 )
 

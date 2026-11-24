@@ -12,9 +12,9 @@ import (
 
 	"github.com/google/uuid"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	evalharness "github.com/markhuangai/dense-mem/internal/testfixture/evaluation"
+	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )

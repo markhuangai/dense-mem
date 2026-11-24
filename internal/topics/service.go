@@ -1,0 +1,301 @@
+package topics
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"sort"
+	"strconv"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
+	"github.com/markhuangai/dense-mem/internal/topics/assessment"
+	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
+)
+
+type Service struct {
+	repository contract.OrganizationRepository
+	provider   *assessment.Provider
+	observer   assessment.Observer
+	policy     *domain.TopicMaintenanceConfig
+}
+
+func NewService(repository contract.OrganizationRepository, provider *assessment.Provider) *Service {
+	return &Service{repository: repository, provider: provider}
+}
+
+func (s *Service) WithDiagnostics(observer assessment.Observer) *Service {
+	s.observer = observer
+	if s.provider != nil {
+		s.provider.WithDiagnostics(observer)
+	}
+	return s
+}
+
+type OrganizationError struct {
+	Code  string
+	Cause error
+}
+
+func (e *OrganizationError) Error() string { return "ontology organization failed: " + e.Code }
+func (e *OrganizationError) Unwrap() error { return e.Cause }
+
+func (s *Service) AssessMaintenanceEquivalence(ctx context.Context, claim contract.MaintenanceClaim) (contract.OrganizationResult, error) {
+	if s == nil || s.repository == nil || s.provider == nil {
+		return contract.OrganizationResult{}, &OrganizationError{Code: "configuration_invalid"}
+	}
+	if _, ok := requestctx.ActorFromContext(ctx); ok {
+		return contract.OrganizationResult{}, contract.ErrUnauthorized
+	}
+	ctx = contract.WithMaintenanceClaim(ctx, claim)
+	neighborhoods, err := s.repository.ReadEquivalenceNeighborhoods(ctx, claim)
+	if err != nil {
+		return contract.OrganizationResult{}, err
+	}
+	assessor := *s
+	assessor.provider = s.provider.ForEquivalence()
+	for _, neighborhood := range neighborhoods {
+		input := contract.OrganizationInput{
+			OperationKey: "equivalence:" + claim.ID + ":" + neighborhood.Seed.ID,
+			Sources:      neighborhood.Sources, EquivalenceOnly: true,
+		}
+		result, err := assessor.Organize(ctx, claim.TeamID, input)
+		if err != nil {
+			return result, err
+		}
+		if !result.Current {
+			return result, contract.ErrSourceStale
+		}
+	}
+	return contract.OrganizationResult{Current: true}, nil
+}
+
+func (s *Service) Organize(ctx context.Context, teamID string, input contract.OrganizationInput) (result contract.OrganizationResult, returnedErr error) {
+	if _, ok := requestctx.ActorFromContext(ctx); ok {
+		return contract.OrganizationResult{}, contract.ErrUnauthorized
+	}
+	if s == nil || s.repository == nil || s.provider == nil {
+		return contract.OrganizationResult{}, &OrganizationError{Code: "configuration_invalid"}
+	}
+	if err := s.provider.ConfigurationError(); err != nil {
+		return contract.OrganizationResult{}, &OrganizationError{Code: "configuration_invalid", Cause: err}
+	}
+	input, err := contract.PrepareOrganizationInput(input)
+	if err != nil {
+		return contract.OrganizationResult{}, err
+	}
+	started := time.Now()
+	scope := observability.ExchangeScopeFromContext(ctx)
+	scope.TeamID, scope.OperationID = teamID, uuid.NewString()
+	ctx = observability.WithExchangeScope(ctx, scope)
+	observation := assessment.Diagnostic{TeamID: teamID, OperationKey: input.OperationKey, Input: &input, Policy: s.policy}
+	defer func() {
+		observation.Stage, observation.Result, observation.Error = "completed", &result, returnedErr
+		observation.Duration = time.Since(started)
+		s.provider.Observe(ctx, observation)
+	}()
+	readContext := s.repository.ReadOrganization
+	if input.EquivalenceOnly {
+		readContext = s.repository.ReadEquivalence
+	}
+	identity := s.provider.Identity()
+	if cached, found, err := s.repository.FindOrganization(ctx, teamID, input, identity); err != nil {
+		return cached, err
+	} else if found {
+		if s.observer != nil {
+			snapshot, snapshotErr := readContext(ctx, teamID, input.Sources)
+			observation.SourceContext, observation.SnapshotError = &snapshot, snapshotErr
+			if snapshotErr == nil {
+				diagnosticReceipt := contract.OrganizationReceipt{ID: cached.AssessmentID, Result: cached, EquivalenceOnly: input.EquivalenceOnly}
+				diagnosticReceipt.Result.Outcomes = append([]contract.OrganizationOutcome(nil), cached.Outcomes...)
+				request, _, requestErr := s.request(snapshot, &diagnosticReceipt)
+				observation.Request, observation.SnapshotError = &request, requestErr
+			}
+		}
+		return organizationResult(cached, nil)
+	}
+	sourceContext, contextErr := readContext(ctx, teamID, input.Sources)
+	observation.SourceContext, observation.SnapshotError = &sourceContext, contextErr
+	owners := map[string]bool{}
+	for _, source := range sourceContext.Sources {
+		if source.OwnerID != "" && !owners[source.OwnerID] {
+			scope.SourceOwnerIDs = append(scope.SourceOwnerIDs, source.OwnerID)
+			owners[source.OwnerID] = true
+		}
+	}
+	sort.Strings(scope.SourceOwnerIDs)
+	ctx = observability.WithExchangeScope(ctx, scope)
+	if contextErr != nil && !errors.Is(contextErr, contract.ErrContextBound) {
+		return contract.OrganizationResult{}, contextErr
+	}
+	inputHash, err := contract.OrganizationInputHash(input, identity)
+	if err != nil {
+		return contract.OrganizationResult{}, err
+	}
+	receipt := contract.OrganizationReceipt{ID: uuid.NewString(), OperationKey: input.OperationKey, InputHash: inputHash, ProviderIdentity: identity, EquivalenceOnly: input.EquivalenceOnly}
+	receipt.ContextHash, err = contract.OrganizationContextHash(sourceContext)
+	if err != nil {
+		return contract.OrganizationResult{}, err
+	}
+	if contextErr == nil {
+		state := contract.SnapshotOrganizationContext(sourceContext)
+		receipt.ContextState = &state
+	}
+	receipt.Result = contract.OrganizationResult{AssessmentID: receipt.ID, Outcomes: []contract.OrganizationOutcome{}, Attempts: []contract.AssessmentAttempt{}}
+	for _, source := range sourceContext.Sources {
+		fingerprint, err := contract.SourceFingerprint(source)
+		if err != nil {
+			return receipt.Result, err
+		}
+		receipt.Sources = append(receipt.Sources, contract.SourceDependency{SourceHandle: source.SourceHandle, Fingerprint: fingerprint})
+		receipt.Result.Outcomes = append(receipt.Result.Outcomes, contract.OrganizationOutcome{Source: source.SourceHandle, Status: "unchanged"})
+	}
+	receipt.BatchHash, err = contract.OrganizationBatchHash(receipt.Sources, identity)
+	if err != nil {
+		return receipt.Result, err
+	}
+	if contextErr != nil {
+		return s.finish(ctx, teamID, receipt, contract.Publication{}, contextErr)
+	}
+	request, binding, err := s.request(sourceContext, &receipt)
+	if err != nil {
+		return s.finish(ctx, teamID, receipt, contract.Publication{}, err)
+	}
+	receipt.Dependencies, err = contract.OrganizationDependencies(sourceContext)
+	if err != nil {
+		return s.finish(ctx, teamID, receipt, contract.Publication{}, err)
+	}
+	observation.Request, observation.SourceDependencies = &request, receipt.Sources
+	observation.Stage = "prepared"
+	s.provider.Observe(ctx, observation)
+	response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
+	if len(request.Items) > 0 {
+		response, receipt.Result.Attempts, err = s.provider.Assess(ctx, request)
+		if err != nil {
+			return s.finish(ctx, teamID, receipt, contract.Publication{}, err)
+		}
+	}
+	knownHeads := map[string]int64{}
+	for _, view := range append(append([]contract.RecordView(nil), sourceContext.Records...), sourceContext.Candidates...) {
+		knownHeads[view.ID] = view.Version
+	}
+	for _, definition := range response.Definitions {
+		heads, err := s.repository.ReadDefinitionHeads(ctx, teamID, proposedDefinition(teamID, definition))
+		if err != nil {
+			return s.finish(ctx, teamID, receipt, contract.Publication{}, err)
+		}
+		for _, head := range heads {
+			if version, known := knownHeads[head.ID]; known {
+				if version != head.Version {
+					return s.finish(ctx, teamID, receipt, contract.Publication{}, &contract.FreshnessError{Rejection: contract.FreshnessRejection{
+						Check: "dependency_version", RecordID: head.ID, Expected: strconv.FormatInt(version, 10), Observed: strconv.FormatInt(head.Version, 10),
+					}})
+				}
+				continue
+			}
+			if len(sourceContext.Records) == contract.MaxDependencyRecords {
+				return s.finish(ctx, teamID, receipt, contract.Publication{}, contract.ErrContextBound)
+			}
+			knownHeads[head.ID] = head.Version
+			sourceContext.Records = append(sourceContext.Records, head)
+		}
+	}
+	receipt.Dependencies, err = contract.OrganizationDependencies(sourceContext)
+	if err != nil {
+		return s.finish(ctx, teamID, receipt, contract.Publication{}, err)
+	}
+	publication, err := buildPublication(teamID, sourceContext, request, response, binding, &receipt)
+	return s.finish(ctx, teamID, receipt, publication, err)
+}
+
+func (s *Service) finish(ctx context.Context, teamID string, receipt contract.OrganizationReceipt, publication contract.Publication, cause error) (contract.OrganizationResult, error) {
+	if err := ctx.Err(); err != nil {
+		return s.recordCancellation(ctx, teamID, receipt, err)
+	}
+	if cause != nil {
+		markFailure(&receipt, cause)
+	}
+	result, err := s.repository.CommitOrganization(ctx, teamID, receipt, publication)
+	if err != nil {
+		if ctx.Err() != nil {
+			return s.recordCancellation(ctx, teamID, receipt, ctx.Err())
+		}
+		if cause != nil {
+			return receipt.Result, fmt.Errorf("record organization failure: %w", err)
+		}
+		markFailure(&receipt, err)
+		result, recordErr := s.repository.CommitOrganization(ctx, teamID, receipt, contract.Publication{})
+		if recordErr != nil {
+			return receipt.Result, fmt.Errorf("record rejected organization publication: %w", recordErr)
+		}
+		return organizationResult(result, err)
+	}
+	return organizationResult(result, cause)
+}
+
+func (s *Service) recordCancellation(ctx context.Context, teamID string, receipt contract.OrganizationReceipt, cause error) (contract.OrganizationResult, error) {
+	markFailure(&receipt, cause)
+	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	result, err := s.repository.CommitOrganization(recordCtx, teamID, receipt, contract.Publication{})
+	if err != nil {
+		return receipt.Result, fmt.Errorf("record cancelled organization: %w", errors.Join(cause, err))
+	}
+	return organizationResult(result, cause)
+}
+
+func organizationResult(result contract.OrganizationResult, cause error) (contract.OrganizationResult, error) {
+	if result.FailureCode != "" {
+		return result, &OrganizationError{Code: result.FailureCode, Cause: cause}
+	}
+	return result, nil
+}
+
+func markFailure(receipt *contract.OrganizationReceipt, cause error) {
+	code := "internal_failure"
+	maintenanceCode := contract.MaintenanceFailureCode(cause)
+	switch {
+	case maintenanceCode != "":
+		code = maintenanceCode
+	case errors.Is(cause, context.Canceled):
+		code = "request_cancelled"
+	case errors.Is(cause, context.DeadlineExceeded):
+		code = "request_timeout"
+	case errors.Is(cause, modelprovider.ErrVerifierMalformedResponse):
+		code = "provider_response_invalid"
+	case errors.Is(cause, modelprovider.ErrVerifierProvider), errors.Is(cause, modelprovider.ErrVerifierRateLimit), errors.Is(cause, modelprovider.ErrVerifierTimeout):
+		code = "provider_unavailable"
+	case errors.Is(cause, contract.ErrSourceStale):
+		code = "stale_input"
+	case errors.Is(cause, contract.ErrConflict):
+		code = "commit_conflict"
+	case errors.Is(cause, contract.ErrOverride):
+		code = "manager_override_conflict"
+	case errors.Is(cause, contract.ErrContextBound):
+		code = "organization_context_bound"
+	case errors.Is(cause, contract.ErrInvalid):
+		code = "invalid_publication"
+	}
+	receipt.Result.FailureCode = code
+	receipt.Result.FreshnessRejection = nil
+	var rejected *contract.FreshnessError
+	if code == "stale_input" && errors.As(cause, &rejected) {
+		receipt.Result.FreshnessRejection = &rejected.Rejection
+	}
+	receipt.Result.Publication = nil
+	receipt.Result.AmbiguousComparisons = nil
+	receipt.Result.Current = false
+	for i := range receipt.Result.Outcomes {
+		outcome := &receipt.Result.Outcomes[i]
+		preflightAmbiguity := outcome.Status == "ambiguous" && (outcome.Reason == "resubmit_complete_group" || outcome.Reason == "required_classification_unavailable")
+		if outcome.Status != "oversized" && outcome.Status != "unavailable" && !preflightAmbiguity {
+			outcome.Status = "failed"
+			outcome.Reason = code
+			outcome.RecordIDs = nil
+		}
+	}
+}

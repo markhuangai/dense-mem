@@ -18,7 +18,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/handler"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/ontology"
 	operations "github.com/markhuangai/dense-mem/internal/operations"
 	"github.com/markhuangai/dense-mem/internal/recall"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
@@ -29,6 +28,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/sse"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
+	ontology "github.com/markhuangai/dense-mem/internal/topics"
 )
 
 // transportCompositionInputs contains the already-built application and
@@ -51,28 +51,28 @@ type transportCompositionInputs struct {
 	rememberAttempts         rememberapp.RememberAttemptDiagnosticsReader
 	rememberInvocations      rememberapp.RememberInvocationDiagnosticsReader
 
-	credentialRepo      accessservice.CredentialStore
-	credentialVerifier  crypto.CredentialVerifier
-	activityWriter      *accessservice.CredentialActivityWriter
-	teamService         accessservice.TeamService
-	credentialService   accessservice.CredentialService
-	ssoService          *accessservice.SSOService
-	portalSession       accessservice.UserPortalSessionManager
-	directoryIdentity   *accessservice.DirectoryIdentityService
-	controlIdentity     *accessservice.ControlIdentityService
-	privateMemory       densehttp.PrivateMemoryServiceInterface
-	auditService        accessservice.AuditService
-	securityService     settings.SecurityService
-	appConfig           settings.AppConfigService
-	decisionConfig      settings.DecisionConfigService
-	operationLogs       operations.OperationLogReader
-	operationLogHealth  func(context.Context) error
-	usageMetrics        operations.UsageMetricsService
-	evidenceConflicts   conflictevidence.Reader
-	recallFeedback      recall.RecallFeedbackEventReader
-	ontologyMaintenance *ontology.MaintenanceService
-	ontologyManagement  *ontology.ManagementService
-	recall              recall.RecallService
+	credentialRepo     accessservice.CredentialStore
+	credentialVerifier crypto.CredentialVerifier
+	activityWriter     *accessservice.CredentialActivityWriter
+	teamService        accessservice.TeamService
+	credentialService  accessservice.CredentialService
+	ssoService         *accessservice.SSOService
+	portalSession      accessservice.UserPortalSessionManager
+	directoryIdentity  *accessservice.DirectoryIdentityService
+	controlIdentity    *accessservice.ControlIdentityService
+	privateMemory      densehttp.PrivateMemoryServiceInterface
+	auditService       accessservice.AuditService
+	securityService    settings.SecurityService
+	appConfig          settings.AppConfigService
+	decisionConfig     settings.DecisionConfigService
+	operationLogs      operations.OperationLogReader
+	operationLogHealth func(context.Context) error
+	usageMetrics       operations.UsageMetricsService
+	evidenceConflicts  conflictevidence.Reader
+	recallFeedback     recall.RecallFeedbackEventReader
+	topicMaintenance   *ontology.MaintenanceService
+	ontologyManagement *ontology.ManagementService
+	recall             recall.RecallService
 }
 
 type transportComposition struct {
@@ -375,6 +375,11 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 				AuditExport: deps.cfg.AuditExportEnabled, DiagnosticBundle: deps.cfg.DiagnosticBundleEnabled, Redis: deps.cfg.RedisAddr != "",
 			}, diagnosticChecks, deps.usageMetrics, deps.telemetry.Exports, deps.authority)
 		}
+		pool, err := deps.pgDB.GetDB().DB()
+		if err != nil {
+			return nil, fmt.Errorf("read PostgreSQL pool for control metrics: %w", err)
+		}
+		poolObservedSince := time.Now().UTC()
 		controlServer, err := densehttp.NewControlPortalServerWithCapabilityBindings(
 			&deps.cfg,
 			deps.teamService,
@@ -394,12 +399,16 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 				Decisions:           deps.decisionConfig,
 				Logs:                deps.operationLogs,
 				RecallFeedback:      deps.recallFeedback,
-				Ontology:            deps.ontologyMaintenance,
+				Ontology:            deps.topicMaintenance,
 				EvidenceConflicts:   deps.evidenceConflicts,
 				Convergence:         deps.convergence,
 				RememberAttempts:    deps.rememberAttempts,
 				RememberInvocations: deps.rememberInvocations,
 				PrivateMemory:       deps.privateMemory,
+				PostgresPool: func() densehttp.PostgresPoolMetrics {
+					stats := pool.Stats()
+					return densehttp.PostgresPoolMetrics{ProcessStartedAt: poolObservedSince, WaitCount: stats.WaitCount, WaitDurationNS: stats.WaitDuration.Nanoseconds()}
+				},
 			}},
 			healthConfig,
 			transportLogger(deps.logger),

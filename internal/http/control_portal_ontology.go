@@ -9,8 +9,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology"
 	"github.com/markhuangai/dense-mem/internal/settings"
+	ontology "github.com/markhuangai/dense-mem/internal/topics"
 )
 
 const ontologyConfigBodyKey = "ontologyConfig"
@@ -34,22 +34,22 @@ type controlOntologyPauseRequest struct {
 
 func registerOntologyMaintenanceRoutes(api *echo.Group, h *controlPortalHandler) {
 	if h.appConfig != nil {
-		api.GET("/config/ontology-maintenance", h.getOntologyMaintenanceConfig)
-		api.PATCH("/config/ontology-maintenance", h.updateOntologyMaintenanceConfig, middleware.BindAndValidateStrict[controlOntologyConfigRequest](ontologyConfigBodyKey))
+		api.GET("/config/topic-maintenance", h.getOntologyMaintenanceConfig)
+		api.PATCH("/config/topic-maintenance", h.updateOntologyMaintenanceConfig, middleware.BindAndValidateStrict[controlOntologyConfigRequest](ontologyConfigBodyKey))
 	}
 	if h.ontology == nil {
 		return
 	}
-	api.GET("/ontology/status", h.getOntologyMaintenanceStatus)
-	api.GET("/ontology/runs", h.listOntologyMaintenanceRuns)
-	api.POST("/ontology/runs", h.runOntologyMaintenance, middleware.BindAndValidateStrict[controlOntologyRunRequest](ontologyCommandBodyKey))
-	api.POST("/ontology/runs/:runId/retry", h.retryOntologyMaintenance, middleware.BindAndValidateStrict[controlOntologyRunRequest](ontologyCommandBodyKey))
-	api.POST("/ontology/pause", h.pauseOntologyMaintenance, middleware.BindAndValidateStrict[controlOntologyPauseRequest](ontologyPauseBodyKey))
-	api.POST("/ontology/resume", h.resumeOntologyMaintenance, middleware.BindAndValidateStrict[controlOntologyPauseRequest](ontologyPauseBodyKey))
+	api.GET("/topic-maintenance/status", h.getOntologyMaintenanceStatus)
+	api.GET("/topic-maintenance/runs", h.listOntologyMaintenanceRuns)
+	api.POST("/topic-maintenance/runs", h.runOntologyMaintenance, middleware.BindAndValidateStrict[controlOntologyRunRequest](ontologyCommandBodyKey))
+	api.POST("/topic-maintenance/runs/:runId/retry", h.retryOntologyMaintenance, middleware.BindAndValidateStrict[controlOntologyRunRequest](ontologyCommandBodyKey))
+	api.POST("/topic-maintenance/pause", h.pauseOntologyMaintenance, middleware.BindAndValidateStrict[controlOntologyPauseRequest](ontologyPauseBodyKey))
+	api.POST("/topic-maintenance/resume", h.resumeOntologyMaintenance, middleware.BindAndValidateStrict[controlOntologyPauseRequest](ontologyPauseBodyKey))
 }
 
 func (h *controlPortalHandler) getOntologyMaintenanceConfig(c *echo.Context) error {
-	value, err := h.appConfig.GetOntologyMaintenanceSettings(c.Request().Context())
+	value, err := h.appConfig.GetTopicMaintenanceSettings(c.Request().Context())
 	if err != nil {
 		return ontologyControlError(err)
 	}
@@ -65,7 +65,7 @@ func (h *controlPortalHandler) updateOntologyMaintenanceConfig(c *echo.Context) 
 		}
 		values[item.Key] = item.Value
 	}
-	value, err := h.appConfig.UpdateOntologyMaintenanceSettings(c.Request().Context(), values, "control", c.RealIP(), middleware.GetCorrelationID(c.Request().Context()))
+	value, err := h.appConfig.UpdateTopicMaintenanceSettings(c.Request().Context(), values, "control", c.RealIP(), middleware.GetCorrelationID(c.Request().Context()))
 	if err != nil {
 		return ontologyControlError(err)
 	}
@@ -113,7 +113,7 @@ func (h *controlPortalHandler) retryOntologyMaintenance(c *echo.Context) error {
 }
 func (h *controlPortalHandler) ontologyRunCommand(c *echo.Context, action, runID string) error {
 	body := middleware.MustGetValidatedBody[controlOntologyRunRequest](c.Request().Context(), ontologyCommandBodyKey)
-	return h.ontologyCommand(c, domain.OntologyMaintenanceCommand{OperationKey: body.OperationKey, Action: action, MaxBatches: body.MaxBatches, RetryRunID: runID})
+	return h.ontologyCommand(c, domain.TopicMaintenanceCommand{OperationKey: body.OperationKey, Action: action, MaxBatches: body.MaxBatches, RetryRunID: runID})
 }
 func (h *controlPortalHandler) pauseOntologyMaintenance(c *echo.Context) error {
 	return h.ontologyPauseCommand(c, "pause")
@@ -123,9 +123,9 @@ func (h *controlPortalHandler) resumeOntologyMaintenance(c *echo.Context) error 
 }
 func (h *controlPortalHandler) ontologyPauseCommand(c *echo.Context, action string) error {
 	body := middleware.MustGetValidatedBody[controlOntologyPauseRequest](c.Request().Context(), ontologyPauseBodyKey)
-	return h.ontologyCommand(c, domain.OntologyMaintenanceCommand{OperationKey: body.OperationKey, Action: action})
+	return h.ontologyCommand(c, domain.TopicMaintenanceCommand{OperationKey: body.OperationKey, Action: action})
 }
-func (h *controlPortalHandler) ontologyCommand(c *echo.Context, input domain.OntologyMaintenanceCommand) error {
+func (h *controlPortalHandler) ontologyCommand(c *echo.Context, input domain.TopicMaintenanceCommand) error {
 	value, err := h.ontology.Command(c.Request().Context(), input, c.RealIP(), middleware.GetCorrelationID(c.Request().Context()))
 	if err != nil {
 		return ontologyControlError(err)

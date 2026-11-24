@@ -16,6 +16,9 @@ const (
 	AIOperationSearchDocumentEmbedding = "search_document_embedding"
 
 	AIOperationOntologyOrganization = "ontology_organization"
+	AIOperationTopicAssignment      = "topic_assignment"
+	AIOperationCommunityPlacement   = "community_placement"
+	AIOperationEvidenceEquivalence  = "evidence_equivalence"
 
 	AIComponentVerifier  = "verifier"
 	AIComponentEmbedding = "embedding"

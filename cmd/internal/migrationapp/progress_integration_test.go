@@ -22,8 +22,8 @@ import (
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
+	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )

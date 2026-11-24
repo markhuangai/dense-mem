@@ -20,8 +20,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/evalharness"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
+	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -36,7 +36,7 @@ func TestRunnerCampaignConditionsAndCapture(t *testing.T) {
 	f := newRunnerServiceFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	require.NoError(t, f.native.Control(ctx, http.MethodPatch, "/config/ontology-maintenance", map[string]any{"items": []map[string]string{{"key": domain.AppConfigOntologyEnabled, "value": "false"}}}, nil))
+	require.NoError(t, f.native.Control(ctx, http.MethodPatch, "/config/topic-maintenance", map[string]any{"items": []map[string]string{{"key": domain.AppConfigTopicMaintenanceEnabled, "value": "false"}}}, nil))
 	manifest := f.manifest
 	manifest.RunID, manifest.Dataset = "native-runner", "synthetic"
 	manifest.SourceRevision = strings.Repeat("a", 40)
@@ -198,7 +198,7 @@ func TestRunnerCampaignNativeMappingsFreezeAndRecall(t *testing.T) {
 	_, err = f.native.VerifyMappings(ctx, corpus, corrupted)
 	require.ErrorContains(t, err, "partition receipt")
 	before := f.snapshot(t)
-	_, err = f.maintenance.Command(ctx, domain.OntologyMaintenanceCommand{Action: "resume", OperationKey: uuid.NewString()}, "", "")
+	_, err = f.maintenance.Command(ctx, domain.TopicMaintenanceCommand{Action: "resume", OperationKey: uuid.NewString()}, "", "")
 	require.NoError(t, err)
 	ready := false
 	for range 100 {
@@ -229,4 +229,48 @@ func TestRunnerCampaignNativeMappingsFreezeAndRecall(t *testing.T) {
 		require.Error(t, client.CallTool(ctx, name, map[string]any{}, &recalled))
 	}
 	require.Equal(t, before.CanonicalHash, f.snapshot(t).CanonicalHash)
+
+	// An unchanged assignment can finish a batch without writing an assignment
+	// outcome, even when the Evidence equivalence assessment used the provider.
+	batchID, assessmentID := uuid.NewString(), uuid.NewString()
+	key := "equivalence:" + batchID + ":" + mapping.Partitions["one"][0].EvidenceID
+	require.NoError(t, rls.WithSystemTx(ctx, f.admin, func(tx *gorm.DB) error {
+		var runID, windowID string
+		if err := tx.Raw(`SELECT run_id::text,window_id::text FROM topic_maintenance_runs
+			WHERE kind='scheduled' ORDER BY created_at DESC LIMIT 1`).Row().Scan(&runID, &windowID); err != nil {
+			return err
+		}
+		scope := f.native.Scope
+		if err := tx.Exec(`INSERT INTO topic_maintenance_batches(batch_id,run_id,window_id,team_id,shared_space_id,
+			space_generation,lease_token,lease_until,sources,revisions,status,created_at,completed_at)
+			VALUES(?::uuid,?::uuid,?::uuid,?::uuid,?::uuid,?,gen_random_uuid(),now(),'[]','{}','completed',now(),now())`,
+			batchID, runID, windowID, scope.TeamID, scope.SpaceID, scope.Generation).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`INSERT INTO topic_maintenance_attempts(batch_id,assessment_id,attempt,window_id,
+			reserved_input,reserved_output,estimated_input_tokens,max_output_tokens,admitted_at)
+			VALUES(?::uuid,?::uuid,1,?::uuid,0,0,100,100,now())`, batchID, assessmentID, windowID).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`UPDATE topic_maintenance_attempts
+			SET reported_input=50,reported_output=20,reported_total=70,reconciled_at=now()
+			WHERE batch_id=?::uuid AND assessment_id=?::uuid AND attempt=1`, batchID, assessmentID).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`INSERT INTO evidence_equivalence_outcomes(team_id,shared_space_id,space_generation,operation_key,assessment_id,
+			input_hash,batch_hash,body) VALUES(?::uuid,?::uuid,?,?,?::uuid,'sha256:'||repeat('0',64),'sha256:'||repeat('1',64),'{}')`,
+			scope.TeamID, scope.SpaceID, scope.Generation, key, assessmentID).Error
+	}))
+	withEquivalence := f.snapshot(t)
+	foundEquivalence := false
+	for _, attempt := range withEquivalence.ProviderAttempts {
+		if attempt.AssessmentID == assessmentID {
+			foundEquivalence = true
+			require.Equal(t, key, attempt.OperationKey)
+			require.True(t, attempt.Terminal)
+			require.EqualValues(t, 70, attempt.Total)
+		}
+	}
+	require.True(t, foundEquivalence)
+	require.NoError(t, evalharness.NativeReady(withEquivalence, true, true, f.manifest, f.native.Scope.TeamID))
 }

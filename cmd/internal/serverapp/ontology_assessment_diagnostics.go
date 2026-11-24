@@ -8,8 +8,8 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
-	contract "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	"github.com/markhuangai/dense-mem/internal/topics/assessment"
+	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
 )
 
 func ontologyAssessmentDiagnostics(logger *slog.Logger, protector observability.DiagnosticProtector) assessment.Observer {
@@ -57,20 +57,20 @@ func ontologyAssessmentDiagnostics(logger *slog.Logger, protector observability.
 					if chunk.State != "captured" {
 						captureState = "unavailable"
 					}
-					logger.LogAttrs(observability.WithSinkSuppressed(ctx), slog.LevelDebug, "ontology_semantic_assessment",
+					logger.LogAttrs(observability.WithSinkSuppressed(ctx), slog.LevelDebug, "topic_semantic_assessment",
 						append(append([]slog.Attr{}, attrs...), slog.Any("payload_chunk", chunk))...)
 				}
 			}
-			logger.LogAttrs(ctx, slog.LevelDebug, "ontology_semantic_assessment", append(append([]slog.Attr{}, attrs...),
+			logger.LogAttrs(ctx, slog.LevelDebug, "topic_semantic_assessment", append(append([]slog.Attr{}, attrs...),
 				slog.String("capture_state", captureState), slog.Int("chunk_count", chunkCount))...)
 			if captureState != "captured" {
-				logger.LogAttrs(ctx, slog.LevelWarn, "ontology_semantic_assessment_capture_incomplete",
+				logger.LogAttrs(ctx, slog.LevelWarn, "topic_semantic_assessment_capture_incomplete",
 					append(append([]slog.Attr{}, attrs...), slog.String("capture_state", captureState))...)
 			}
 		}
 		attrs = append(attrs, slog.String("capture_state", captureState))
 		if diagnostic.Stage == "rejected" {
-			logger.LogAttrs(ctx, slog.LevelWarn, "ontology_semantic_assessment_rejected", append(attrs,
+			logger.LogAttrs(ctx, slog.LevelWarn, "topic_semantic_assessment_rejected", append(attrs,
 				slog.String("reason", "response_invalid"), slog.Int("validation_error_count", len(diagnostic.Validation)),
 				slog.String("transaction_outcome", "not_committed"))...)
 		}
@@ -83,12 +83,12 @@ func ontologyAssessmentDiagnostics(logger *slog.Logger, protector observability.
 		}
 		if diagnostic.Error != nil || diagnostic.Result == nil || diagnostic.Result.FailureCode != "" {
 			if diagnostic.Result != nil && (diagnostic.Result.FreshnessRejection != nil || diagnostic.Result.FailureCode == "manager_override_conflict" || diagnostic.Result.FailureCode == "commit_conflict") {
-				logger.LogAttrs(ctx, slog.LevelWarn, "ontology_semantic_assessment_rejected", append(append([]slog.Attr{}, attrs...),
+				logger.LogAttrs(ctx, slog.LevelWarn, "topic_semantic_assessment_rejected", append(append([]slog.Attr{}, attrs...),
 					slog.String("reason", diagnostic.Result.FailureCode), slog.String("transaction_outcome", "not_committed"))...)
 			}
-			logger.LogAttrs(ctx, slog.LevelError, "ontology_semantic_assessment_failed", append(attrs, slog.String("transaction_outcome", "not_committed"))...)
+			logger.LogAttrs(ctx, slog.LevelError, "topic_semantic_assessment_failed", append(attrs, slog.String("transaction_outcome", "not_committed"))...)
 			return
 		}
-		logger.LogAttrs(ctx, slog.LevelInfo, "ontology_semantic_assessment_completed", append(attrs, slog.String("transaction_outcome", "committed"))...)
+		logger.LogAttrs(ctx, slog.LevelInfo, "topic_semantic_assessment_completed", append(attrs, slog.String("transaction_outcome", "committed"))...)
 	}
 }

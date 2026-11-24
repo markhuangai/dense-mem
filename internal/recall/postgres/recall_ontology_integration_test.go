@@ -12,9 +12,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	recallservice "github.com/markhuangai/dense-mem/internal/recall"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
+	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -115,13 +115,13 @@ func TestRecallOntologyDiscoveryAliasesAndTemporalFallback(t *testing.T) {
 			}
 		})
 	}
-	f.override(t, ontology.KeepSeparate, handles)
-	separated, err := f.search.RecallEvidence(f.actor(2, "member"), input)
+	f.rejectHistoricalOverride(t, ontology.KeepSeparate, handles)
+	retained, err := f.search.RecallEvidence(f.actor(2, "member"), input)
 	require.NoError(t, err)
-	require.Len(t, separated.Results, 2)
-	for _, hit := range separated.Results {
-		require.Empty(t, hit.EquivalentEvidenceIDs)
-	}
+	require.Len(t, retained.Results, 1)
+	hit := retained.Results[0]
+	require.ElementsMatch(t, []string{handles[0].ID, handles[1].ID}, append([]string{hit.EvidenceID}, hit.EquivalentEvidenceIDs...))
+
 }
 
 func TestRecallOntologyOptionalFailureAndRequiredFailureRemainDistinct(t *testing.T) {

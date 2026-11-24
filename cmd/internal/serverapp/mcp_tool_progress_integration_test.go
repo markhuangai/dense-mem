@@ -43,8 +43,8 @@ type toolProgressConfig struct{}
 func (toolProgressConfig) RecallFeedbackRuntimeConfig(context.Context) (domain.RecallFeedbackRuntimeConfig, error) {
 	return domain.RecallFeedbackRuntimeConfig{Enabled: true, RetentionDays: 30}, nil
 }
-func (toolProgressConfig) OntologyMaintenanceRuntimeConfig(context.Context) (domain.OntologyMaintenanceConfig, error) {
-	return domain.OntologyMaintenanceConfig{Enabled: true}, nil
+func (toolProgressConfig) TopicMaintenanceRuntimeConfig(context.Context) (domain.TopicMaintenanceConfig, error) {
+	return domain.TopicMaintenanceConfig{Enabled: true}, nil
 }
 
 type toolProgressTransport struct {

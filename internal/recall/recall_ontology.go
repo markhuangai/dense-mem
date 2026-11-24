@@ -11,8 +11,8 @@ import (
 	"sort"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
+	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
 )
 
 const maxEquivalentEvidenceIDs = 20
@@ -152,7 +152,7 @@ func (s *recallService) relatedTopics(ctx context.Context, req RecallRequest, re
 	if s.ontologyConfig == nil {
 		err = ErrTopicUnavailable
 	} else {
-		config, configErr := s.ontologyConfig.OntologyMaintenanceRuntimeConfig(ctx)
+		config, configErr := s.ontologyConfig.TopicMaintenanceRuntimeConfig(ctx)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

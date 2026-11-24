@@ -21,7 +21,18 @@ type completion struct {
 	ServerUsage        map[string]UsageTotals `json:"server_usage"`
 }
 
-func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions []Question, client *HTTPClient, transport modelprovider.StructuredTransport, native *Native) (report Report, runErr error) {
+type verifiedSeed struct {
+	metadata    SeedMetadata
+	mapping     KnowledgeMapping
+	canonical   map[string]CanonicalEvidence
+	observation NativeObservation
+}
+
+func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions []Question, client *HTTPClient, transport modelprovider.StructuredTransport, native *Native) (Report, error) {
+	return run(ctx, manifest, corpus, questions, client, transport, native, nil)
+}
+
+func run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions []Question, client *HTTPClient, transport modelprovider.StructuredTransport, native *Native, verified *verifiedSeed) (report Report, runErr error) {
 	started := time.Now()
 	report = NewReport(manifest, len(corpus), len(questions))
 	if client == nil || client.Capture == nil || native == nil {
@@ -70,10 +81,16 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 	work, stop := context.WithDeadline(ctx, manifest.ModelDeadline)
 	defer stop()
 	stage = "seed verification"
-	seed, mapping, canonical, initial, err := VerifySeed(work, manifest, corpus, client, native)
-	if err != nil {
-		return report, err
+	var err error
+	if verified == nil {
+		state := verifiedSeed{}
+		state.metadata, state.mapping, state.canonical, state.observation, err = VerifySeed(work, manifest, corpus, client, native)
+		if err != nil {
+			return report, err
+		}
+		verified = &state
 	}
+	seed, mapping, canonical, initial := verified.metadata, verified.mapping, verified.canonical, verified.observation
 	report.ImportedRows = len(mapping.BySourceDocID)
 	report.Identity.SeedImage = manifest.SeedImage
 	report.Identity.SeedRelease = seed.BaseRelease
@@ -87,6 +104,22 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 	}
 	report.Identity.CanonicalHash = initial.CanonicalHash
 	report.NativeMeasurements = append(report.NativeMeasurements, initial)
+	if manifest.PairArm != "" {
+		stage = "prepared topic scoring"
+		conditionStarted := time.Now()
+		report.Scores, err = runCondition(work, manifest, corpus, questions, mapping, canonical, client, transport, "on")
+		report.Timings["prepared_scoring"] = float64(time.Since(conditionStarted)) / float64(time.Millisecond)
+		if err != nil {
+			return report, err
+		}
+		stage = "prepared state verification"
+		_, _, _, final, verifyErr := VerifySeed(work, manifest, corpus, client, native)
+		if verifyErr != nil {
+			return report, verifyErr
+		}
+		report.NativeMeasurements = append(report.NativeMeasurements, final)
+		return report, nil
+	}
 	stage = "ontology off"
 	conditionStarted := time.Now()
 	scores, err := runCondition(work, manifest, corpus, questions, mapping, canonical, client, transport, "off")
@@ -188,6 +221,29 @@ func runCondition(ctx context.Context, manifest Manifest, corpus []CorpusItem, q
 		go func() {
 			defer wg.Done()
 			for question := range jobs {
+				restored, err := restoredQuestion(manifest, question.ID)
+				if err != nil {
+					mu.Lock()
+					if first == nil {
+						first = err
+					}
+					mu.Unlock()
+					continue
+				}
+				if len(restored) > 0 {
+					err = client.Capture.Emit("question_checkpoint_restored", map[string]any{"question_id": question.ID, "source_run": os.Getenv("EVAL_RESUME_RUN"), "fingerprint": checkpointFingerprint(manifest)})
+					if err == nil {
+						err = checkpointQuestion(manifest, question.ID, restored)
+					}
+					mu.Lock()
+					if err != nil && first == nil {
+						first = err
+					}
+					scores = append(scores, restored...)
+					progress.Completed += len(restored)
+					mu.Unlock()
+					continue
+				}
 				initial := memoryCall(ctx, client, "recall_memory", map[string]any{"query": question.Query, "limit": 10, "topic_limit": 3})
 				if err := validateInitial(initial); err != nil {
 					initial.Error = err.Error()
@@ -196,10 +252,13 @@ func runCondition(ctx context.Context, manifest Manifest, corpus []CorpusItem, q
 				for _, policy := range policies {
 					observation.Hosts = append(observation.Hosts, RunHost(ctx, client, transport, manifest, HostQuestion{ID: question.ID, Query: question.Query}, initial, policy, condition))
 				}
-				err := client.Capture.Emit("observation", observation)
+				err = client.Capture.Emit("observation", observation)
 				var measured []CaseScore
 				if err == nil {
 					measured, err = ScoreObservation(question, observation, bySource, mapping, canonical)
+					if err == nil {
+						err = checkpointQuestion(manifest, question.ID, measured)
+					}
 				}
 				mu.Lock()
 				scores = append(scores, measured...)

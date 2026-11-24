@@ -8,10 +8,10 @@ import (
 	"gorm.io/gorm"
 
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	ontologycontract "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
+	ontologycontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 )
 
 type (

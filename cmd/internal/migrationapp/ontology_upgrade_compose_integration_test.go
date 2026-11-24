@@ -4,13 +4,13 @@ package migrationapp
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"testing"
 
 	"github.com/google/uuid"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
-	ontologypostgres "github.com/markhuangai/dense-mem/internal/ontology/postgres"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
+	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -35,14 +35,32 @@ func TestOntologyUpgradeComposeSeed(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, pool.Close()) })
 	batch := seedOntologyUpgrade(t, db)
 	definition := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "upgrade-matching", Label: "Upgrade matching", Description: "of and the"}}
-	var team string
-	require.NoError(t, storage.NewRLS().WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
-		return tx.Raw(`SELECT team_id::text FROM ontology_maintenance_batches WHERE batch_id=?::uuid`, batch).Row().Scan(&team)
-	}))
-	_, err = ontologypostgres.NewStore(db, storage.NewRLS()).PublishAutomatic(context.Background(), team,
-		ontology.Publication{OperationKey: "upgrade-matching-definition", Reason: "Preserved matching vocabulary", Changes: []ontology.Change{{Record: definition}}})
+	definition.Version = 1
+	definition.Fingerprint, err = ontology.RecordFingerprintWithAcceptedSources(definition, nil)
 	require.NoError(t, err)
+	body, err := json.Marshal(definition)
+	require.NoError(t, err)
+	publication := uuid.NewString()
 	require.NoError(t, storage.NewRLS().WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
+		var team, shared string
+		var generation int64
+		if err := tx.Raw(`SELECT team_id::text,shared_space_id::text,space_generation FROM ontology_maintenance_batches WHERE batch_id=?::uuid`, batch).Row().Scan(&team, &shared, &generation); err != nil {
+			return err
+		}
+		if err := tx.Exec(`INSERT INTO ontology_catalog_heads(team_id,shared_space_id,space_generation,revision) VALUES(?,?,?,1)`, team, shared, generation).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`INSERT INTO ontology_publications(team_id,shared_space_id,space_generation,publication_id,revision,operation_key,request_hash,origin,reason,result)
+		     VALUES(?,?,?,?,1,'upgrade-matching-definition',?,'automatic','Preserved matching vocabulary','{}')`, team, shared, generation, publication, definition.Fingerprint).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`SELECT dense_mem_insert_ontology_revision(?,?,?,?,?::jsonb)`, team, shared, generation, publication, string(body)).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec(`INSERT INTO ontology_record_heads(team_id,shared_space_id,space_generation,record_id,version,kind,retired,names)
+		    VALUES(?,?,?,?,1,'topic',false,ARRAY['upgrade-matching','upgrade matching'])`, team, shared, generation, definition.ID).Error; err != nil {
+			return err
+		}
 		if err := tx.Exec(`DELETE FROM ontology_maintenance_markers WHERE team_id=?::uuid AND anchor_kind='ontology_record_heads' AND anchor_id=?`, team, definition.ID).Error; err != nil {
 			return err
 		}

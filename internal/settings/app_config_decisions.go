@@ -99,7 +99,7 @@ func (s *AppConfigServiceImpl) UpdateDecisionSettings(ctx context.Context, value
 }
 
 func decisionKeys() []string {
-	return []string{domain.AppConfigDecisionDeduplication, domain.AppConfigDecisionSecurity, domain.AppConfigDecisionConflict, domain.AppConfigDecisionReranking}
+	return []string{domain.AppConfigDecisionDeduplication, domain.AppConfigDecisionSecurity, domain.AppConfigDecisionConflict, domain.AppConfigDecisionReranking, domain.AppConfigDecisionTopicAssignment, domain.AppConfigDecisionCommunityPlacement}
 }
 
 func validateDecisionValues(values map[string]string) error {
@@ -108,7 +108,7 @@ func validateDecisionValues(values map[string]string) error {
 	}
 	for key, value := range values {
 		switch key {
-		case domain.AppConfigDecisionDeduplication, domain.AppConfigDecisionSecurity, domain.AppConfigDecisionConflict, domain.AppConfigDecisionReranking:
+		case domain.AppConfigDecisionDeduplication, domain.AppConfigDecisionSecurity, domain.AppConfigDecisionConflict, domain.AppConfigDecisionReranking, domain.AppConfigDecisionTopicAssignment, domain.AppConfigDecisionCommunityPlacement:
 		default:
 			return fmt.Errorf("%w: unknown decision preference %s", ErrInvalidAppConfig, key)
 		}
@@ -122,7 +122,7 @@ func validateDecisionValues(values map[string]string) error {
 func decisionSettingsFromEntries(entries map[string]domain.AppConfigEntry, provider domain.DecisionProviderStatus) (domain.DecisionConfigSettings, error) {
 	settings := domain.DecisionConfigSettings{UpdateTime: entries[domain.AppConfigUpdateTimeKey].Value, Items: []domain.DecisionConfigItem{}, Effective: domain.DecisionRuntimeConfig{Provider: provider, Revision: entries[domain.AppConfigUpdateTimeKey].Value}}
 	prefs, effective, overrides := &settings.Effective.Preferences, &settings.Effective.Effective, &settings.Effective.Overrides
-	targets := []struct{ preference, effective, override *bool }{{&prefs.Deduplication, &effective.Deduplication, &overrides.Deduplication}, {&prefs.SecurityReview, &effective.SecurityReview, &overrides.SecurityReview}, {&prefs.ConflictReview, &effective.ConflictReview, &overrides.ConflictReview}, {&prefs.RecallReranking, &effective.RecallReranking, &overrides.RecallReranking}}
+	targets := []struct{ preference, effective, override *bool }{{&prefs.Deduplication, &effective.Deduplication, &overrides.Deduplication}, {&prefs.SecurityReview, &effective.SecurityReview, &overrides.SecurityReview}, {&prefs.ConflictReview, &effective.ConflictReview, &overrides.ConflictReview}, {&prefs.RecallReranking, &effective.RecallReranking, &overrides.RecallReranking}, {&prefs.TopicAssignment, &effective.TopicAssignment, &overrides.TopicAssignment}, {&prefs.CommunityPlacement, &effective.CommunityPlacement, &overrides.CommunityPlacement}}
 	for i, key := range decisionKeys() {
 		entry, exists := entries[key]
 		preference, source := true, "default"

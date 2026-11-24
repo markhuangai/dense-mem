@@ -16,7 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 

@@ -13,9 +13,9 @@ import (
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
-	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
-	contract "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/markhuangai/dense-mem/internal/provider/structured"
+	"github.com/markhuangai/dense-mem/internal/topics/assessment"
+	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 

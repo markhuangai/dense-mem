@@ -1466,7 +1466,7 @@ test("diagnostics retain credential collisions, unknown settings and malformed p
       "AI_VERIFIER_DISABLE_TEMPERATURE=invalid-boolean-secret", "AI_API_EMBEDDING_DIMENSIONS=invalid-integer-secret",
       "AI_API_EMBEDDING_MAX_CONCURRENCY=999999999999999999999999",
       "AI_VERIFIER_MODEL=fixture-model", "AI_VERIFIER_API_KEY=fixture-model",
-      "ONTOLOGY_MAINTENANCE_MODEL=private?token=credential",
+      "TOPIC_MAINTENANCE_MODEL=private?token=credential",
     ].join("\n") + "\n");
     const input = "true 100 unknown-protected-value invalid-boolean-secret invalid-integer-secret 999999999999999999999999 extra-protected-pattern fixture-model private?token=credential";
     const { stdout } = await run("bash", ["-c", 'printf \'%s\\n\' "$1" | node "$2"', "credential-collisions", input, join(scripts, "e2e-redact-diagnostics.mjs")], {
@@ -1484,7 +1484,7 @@ test("diagnostics preserve protected assessment hashes and effective model ident
   try {
     const envFile = join(fixture, ".env");
     const models = { AI_VERIFIER_MODEL: "dense-mem-ontology-e2e", AI_REMEMBER_MODEL: "dense-mem-ontology-e2e",
-      AI_CONFLICT_REVIEW_MODEL: "dense-mem-ontology-e2e", ONTOLOGY_MAINTENANCE_MODEL: "dense-mem-ontology-e2e",
+      AI_CONFLICT_REVIEW_MODEL: "dense-mem-ontology-e2e", TOPIC_MAINTENANCE_MODEL: "dense-mem-ontology-e2e",
       AI_API_EMBEDDING_MODEL: "@cf/baai/bge-m3" };
     await writeFile(envFile, [...Object.entries(models).map(([key, value]) => `${key}=${value}`),
       "AI_API_KEY=dense-mem-ontology-e2e-key", "POSTGRES_PASSWORD=fixture-database-secret"].join("\n") + "\n");

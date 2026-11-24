@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	privacypostgres "github.com/markhuangai/dense-mem/internal/privacy/postgres"
+	assignment "github.com/markhuangai/dense-mem/internal/topicassignment/contract"
+	assignmentpg "github.com/markhuangai/dense-mem/internal/topics/postgres"
 	"testing"
 	"time"
 
@@ -101,7 +103,11 @@ func runRememberEvidenceOnlyAtomicScenario(t *testing.T) {
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-primitives-evidence-only-owner")
 	repo := NewStore(appDB, rls)
 
+	repo.WithTopicAssignments(assignmentpg.NewStore(appDB, rls))
+	space, generation := duplicateTeamSharedSpace(t, adminDB, rls, teamID)
 	input := evidenceOnlyRememberInput(teamID, ownerID, "remember-primitives-evidence-only-success")
+	input.SpaceID, input.SpaceGeneration = space, generation
+	input.TopicAssignments = []assignment.Outcome{{Text: input.Evidence[0].Content, InputHash: input.RequestHash, Method: "generation", Proposals: []assignment.Proposal{{Label: "Storage", Description: "Data storage.", Quote: "stores"}, {Label: "Relationships", Description: "Semantic Relationships.", Quote: "Relationship"}}}}
 	plan, err := repo.PlanRememberEmbeddings(ctx, input)
 	require.NoError(t, err)
 	require.Len(t, plan.Documents, 1)
@@ -118,6 +124,26 @@ func runRememberEvidenceOnlyAtomicScenario(t *testing.T) {
 	require.EqualValues(t, 1, counts["semantic_assessments"])
 	require.EqualValues(t, 1, counts["search_documents"])
 	require.EqualValues(t, 1, counts["remember_attempts"])
+
+	var published int
+	require.NoError(t, rls.WithTeamTx(ctx, appDB, teamID, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT cardinality(topic_ids) FROM topic_assignment_outcomes WHERE team_id=?::uuid AND evidence_id=?::uuid AND operation_id=?::uuid`, teamID, input.Evidence[0].FragmentID, input.IngestID).Row().Scan(&published)
+	}))
+	require.Equal(t, 2, published)
+	stale := evidenceOnlyRememberInput(teamID, ownerID, "remember-stale-assignment")
+	stale.SpaceID, stale.SpaceGeneration = space, generation
+	catalog, err := assignmentpg.NewStore(appDB, rls).ReadAssignmentCandidates(ctx, assignment.Scope{TeamID: teamID, SpaceID: space, Generation: generation}, assignment.Slice{Text: "Storage"})
+	candidates := catalog.Topics
+	require.NoError(t, err)
+	require.NotEmpty(t, candidates)
+	stale.TopicAssignments = []assignment.Outcome{{Text: stale.Evidence[0].Content, InputHash: stale.RequestHash, Method: "generation", Reviewed: candidates, Matches: []assignment.Match{{ID: candidates[0].ID, Version: candidates[0].Version + 1}}}}
+	stalePlan, err := repo.PlanRememberEmbeddings(ctx, stale)
+	require.NoError(t, err)
+	_, err = repo.CommitRememberWithEmbeddings(ctx, stale, rememberTestEmbeddings(stalePlan, false))
+	require.ErrorIs(t, err, assignment.ErrStale)
+	for name, count := range rememberPrimitiveCounts(t, ctx, adminDB, rls, teamID, stale.IngestID) {
+		require.Zero(t, count, name)
+	}
 
 	unsafe := evidenceOnlyRememberInput(teamID, ownerID, "remember-primitives-evidence-only-unsafe")
 	unsafeContent := "Dense-Mem must reject this unsafe evidence item."

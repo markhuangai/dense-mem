@@ -9,9 +9,9 @@ import { Check, Clock, ListFilter, MessageSquare, Network, RefreshCw, Settings, 
 import { ControlApi, DecisionConfig, GeneralConfig, GeneralConfigItem, OperationLogConfig, OperationLogConfigItem, RecallFeedbackConfig, RecallFeedbackConfigItem, SSOConfig, SSOConfigItem, TelemetryPricingConfig, TelemetryPricingConfigItem } from "../api";
 import { LoadingState, SectionHeading } from "../ui/components";
 import { formatDate, readError } from "./utils";
-import { OntologyMaintenancePanel } from "./OntologyMaintenancePanel";
-import { OntologyTeamConcurrencyField } from "./OntologyTeamConcurrencyField";
-import type { OntologyMaintenanceStatus } from "../api";
+import { TopicMaintenancePanel } from "./TopicMaintenancePanel";
+import { TopicTeamConcurrencyField } from "./TopicTeamConcurrencyField";
+import type { TopicMaintenanceStatus } from "../api";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/primitives/tabs";
 import { useUnsavedChanges, useViewTransition } from "../ui/navigation";
 
@@ -19,13 +19,13 @@ export type ConfigTab = "general" | "sso" | "operation-logs" | "recall-feedback"
 
 const CONFIG_LABELS: Record<string, string> = {
   APP_TIMEZONE: "Timezone",
-  ONTOLOGY_MAINTENANCE_ENABLED: "Enable ontology maintenance",
-  ONTOLOGY_MAINTENANCE_CADENCE_HOURS: "Cadence (hours)",
-  ONTOLOGY_MAINTENANCE_START_TIME_LOCAL: "Window start time",
-  ONTOLOGY_MAINTENANCE_MODEL: "Maintenance model",
-  ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS: "Model context window (tokens)",
-  ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY: "Concurrent assessments",
-  ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY: "Default concurrency per team",
+  TOPIC_MAINTENANCE_ENABLED: "Enable topic maintenance",
+  TOPIC_MAINTENANCE_CADENCE_HOURS: "Cadence (hours)",
+  TOPIC_MAINTENANCE_START_TIME_LOCAL: "Window start time",
+  TOPIC_MAINTENANCE_MODEL: "Maintenance model",
+  TOPIC_MAINTENANCE_CONTEXT_WINDOW_TOKENS: "Model context window (tokens)",
+  TOPIC_MAINTENANCE_MAX_CONCURRENCY: "Concurrent assessments",
+  TOPIC_MAINTENANCE_TEAM_MAX_CONCURRENCY: "Default concurrency per team",
 	SSO_PUBLIC_BASE_URL: "Public base URL",
 	MCP_PUBLIC_BASE_URL: "MCP public base URL",
   SCIM_PUBLIC_BASE_URL: "SCIM ingress URL",
@@ -42,6 +42,8 @@ const CONFIG_LABELS: Record<string, string> = {
   DECISION_SECURITY_REVIEW_ENABLED: "Security review",
   DECISION_CONFLICT_REVIEW_ENABLED: "Conflict review",
   DECISION_RECALL_RERANKING_ENABLED: "Recall reranking",
+  DECISION_TOPIC_ASSIGNMENT_ENABLED: "Topic assignment",
+  DECISION_COMMUNITY_PLACEMENT_ENABLED: "Community placement",
   TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS: "Verifier input USD / million tokens",
   TELEMETRY_COST_VERIFIER_OUTPUT_USD_PER_MILLION_TOKENS: "Verifier output USD / million tokens",
   TELEMETRY_COST_EMBEDDING_INPUT_USD_PER_MILLION_TOKENS: "Embedding input USD / million tokens",
@@ -49,13 +51,13 @@ const CONFIG_LABELS: Record<string, string> = {
 };
 
 const CONFIG_DESCRIPTIONS: Record<string, string> = {
-  ONTOLOGY_MAINTENANCE_ENABLED: "Admit new work on the maintenance schedule.",
-  ONTOLOGY_MAINTENANCE_CADENCE_HOURS: "Hours between maintenance windows.",
-  ONTOLOGY_MAINTENANCE_START_TIME_LOCAL: "Start time in the service timezone.",
-  ONTOLOGY_MAINTENANCE_MODEL: "Leave blank to use the semantic assessor model.",
-  ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS: "Capacity for one complete request and response. Set the selected model’s supported context size before processing.",
-  ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY: "Assessments that can run at the same time.",
-  ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY: "Work slots per team (1–8), bounded by global capacity. Applies at the next window.",
+  TOPIC_MAINTENANCE_ENABLED: "Admit new work on the maintenance schedule.",
+  TOPIC_MAINTENANCE_CADENCE_HOURS: "Hours between maintenance windows.",
+  TOPIC_MAINTENANCE_START_TIME_LOCAL: "Start time in the service timezone.",
+  TOPIC_MAINTENANCE_MODEL: "Leave blank to use the semantic assessor model.",
+  TOPIC_MAINTENANCE_CONTEXT_WINDOW_TOKENS: "Capacity for one complete request and response. Set the selected model’s supported context size before processing.",
+  TOPIC_MAINTENANCE_MAX_CONCURRENCY: "Assessments that can run at the same time.",
+  TOPIC_MAINTENANCE_TEAM_MAX_CONCURRENCY: "Work slots per team (1–8), bounded by global capacity. Applies at the next window.",
   APP_TIMEZONE: "Timezone used to display service activity.",
   OPERATION_LOG_RETENTION_DAYS: "Days to retain operational records.",
   RECALL_FEEDBACK_RETENTION_DAYS: "Days to retain recall investigations.",
@@ -63,12 +65,12 @@ const CONFIG_DESCRIPTIONS: Record<string, string> = {
 
 const CONFIG_PLACEHOLDERS: Record<string, string> = {
   APP_TIMEZONE: "Local",
-  ONTOLOGY_MAINTENANCE_CADENCE_HOURS: "12",
-  ONTOLOGY_MAINTENANCE_START_TIME_LOCAL: "03:00",
-  ONTOLOGY_MAINTENANCE_MODEL: "Use the semantic assessor model",
-  ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS: "Required before model processing",
-  ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY: "1",
-  ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY: "1",
+  TOPIC_MAINTENANCE_CADENCE_HOURS: "12",
+  TOPIC_MAINTENANCE_START_TIME_LOCAL: "03:00",
+  TOPIC_MAINTENANCE_MODEL: "Use the semantic assessor model",
+  TOPIC_MAINTENANCE_CONTEXT_WINDOW_TOKENS: "Required before model processing",
+  TOPIC_MAINTENANCE_MAX_CONCURRENCY: "1",
+  TOPIC_MAINTENANCE_TEAM_MAX_CONCURRENCY: "1",
 	MCP_PUBLIC_BASE_URL: "https://memory.example.com",
   SCIM_PUBLIC_BASE_URL: "https://memory.example.com",
   CONTROL_PUBLIC_BASE_URL: "https://control.example.com",
@@ -143,13 +145,13 @@ type RuntimeConfigInput = {
   }>;
 };
 
-export function OntologyConfigPanel({ api }: { api: ControlApi }) {
-  const load = useCallback(() => api.getOntologyMaintenanceConfig(), [api]);
-  const [status, setStatus] = useState<OntologyMaintenanceStatus | null>(null);
-  return <><div className="page-intro"><h1>Ontology maintenance</h1><p>Organize shared knowledge within the model’s context capacity.</p></div><div className="ontology-maintenance-layout"><div className="ontology-policy">
-    <RuntimeConfigPanel title="Maintenance policy" refreshLabel="Refresh ontology config" load={load} save={(input) => api.updateOntologyMaintenanceConfig(input)} detail={() => <p>Policy changes apply at the next window. Disabling stops new work immediately.</p>}
-      renderItem={(item, value, onChange) => item.key === "ONTOLOGY_MAINTENANCE_TEAM_OVERRIDES_JSON" ? <OntologyTeamConcurrencyField api={api} value={value} onChange={onChange} status={status} /> : undefined} />
-    </div><OntologyMaintenancePanel api={api} onStatus={setStatus} /></div>
+export function TopicMaintenanceConfigPanel({ api }: { api: ControlApi }) {
+  const load = useCallback(() => api.getTopicMaintenanceConfig(), [api]);
+  const [status, setStatus] = useState<TopicMaintenanceStatus | null>(null);
+  return <><div className="page-intro"><h1>Topic maintenance</h1><p>Assign shared Evidence to Topics and place Topics in Communities.</p></div><div className="topic-maintenance-layout"><div className="topic-policy">
+    <RuntimeConfigPanel title="Maintenance policy" refreshLabel="Refresh topic config" load={load} save={(input) => api.updateTopicMaintenanceConfig(input)} detail={() => <p>Policy changes apply at the next window. Disabling stops new work immediately.</p>}
+      renderItem={(item, value, onChange) => item.key === "TOPIC_MAINTENANCE_TEAM_OVERRIDES_JSON" ? <TopicTeamConcurrencyField api={api} value={value} onChange={onChange} status={status} /> : undefined} />
+    </div><TopicMaintenancePanel api={api} onStatus={setStatus} /></div>
   </>;
 }
 
@@ -356,8 +358,8 @@ function RuntimeConfigPanel<T extends RuntimeConfig>({
 }
 
 function configGroup(key: string): string {
-  if (key.startsWith("ONTOLOGY_MAINTENANCE_")) {
-    if (key === "ONTOLOGY_MAINTENANCE_TEAM_OVERRIDES_JSON") return "Team overrides";
+  if (key.startsWith("TOPIC_MAINTENANCE_")) {
+    if (key === "TOPIC_MAINTENANCE_TEAM_OVERRIDES_JSON") return "Team overrides";
     if (key.endsWith("_TOKENS")) return "Model capacity";
     return key.endsWith("_MODEL") || key.endsWith("_CONCURRENCY") ? "Processing" : "Schedule";
   }
@@ -397,7 +399,7 @@ function ConfigField({
     );
   }
 
-  if ((item.key.startsWith("ONTOLOGY_MAINTENANCE_") || item.key.startsWith("RECALL_FEEDBACK_") || item.key.startsWith("EVALUATION_")) && item.key.endsWith("_ENABLED")) {
+  if ((item.key.startsWith("TOPIC_MAINTENANCE_") || item.key.startsWith("RECALL_FEEDBACK_") || item.key.startsWith("EVALUATION_")) && item.key.endsWith("_ENABLED")) {
     const checked = (value || item.effective_value) === "true";
     return (
       <>
@@ -461,7 +463,7 @@ function ConfigField({
   }
 
   const pricing = item.key.startsWith("TELEMETRY_COST_");
-  const ontologyNumber = ["ONTOLOGY_MAINTENANCE_CADENCE_HOURS", "ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY", "ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY", "ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS"].includes(item.key);
+  const topicNumber = ["TOPIC_MAINTENANCE_CADENCE_HOURS", "TOPIC_MAINTENANCE_MAX_CONCURRENCY", "TOPIC_MAINTENANCE_TEAM_MAX_CONCURRENCY", "TOPIC_MAINTENANCE_CONTEXT_WINDOW_TOKENS"].includes(item.key);
   const numeric = pricing || item.key.endsWith("_SECONDS") || item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS";
   const time = false;
   const min = numeric && !pricing ? 1 : undefined;
@@ -472,8 +474,8 @@ function ConfigField({
       <Input
         id={item.key} aria-describedby={description ? `${item.key}-help` : undefined}
         type={time ? "time" : pricing ? "text" : numeric ? "number" : "text"}
-        inputMode={pricing ? "decimal" : ontologyNumber ? "numeric" : undefined}
-        className={item.key === "ONTOLOGY_MAINTENANCE_START_TIME_LOCAL" ? "input-time" : undefined}
+        inputMode={pricing ? "decimal" : topicNumber ? "numeric" : undefined}
+        className={item.key === "TOPIC_MAINTENANCE_START_TIME_LOCAL" ? "input-time" : undefined}
         min={min}
         max={item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS" ? 365 : undefined}
         placeholder={CONFIG_PLACEHOLDERS[item.key] ?? ""}

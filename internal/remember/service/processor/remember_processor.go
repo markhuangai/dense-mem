@@ -20,11 +20,13 @@ import (
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
+	"github.com/markhuangai/dense-mem/internal/topicassignment"
 )
 
 // rememberSynchronousProcessor owns the request-scoped Remember boundary:
 // assessment, one embedding batch, and one terminal repository transaction.
 type rememberSynchronousProcessor struct {
+	topicAssignment    *topicassignment.Service
 	ledger             rememberSynchronousLedger
 	provider           assessor.Provider
 	decisions          modelprovider.DecisionProvider
@@ -47,6 +49,7 @@ type rememberSynchronousLedger = remembercontract.Persistence
 // ProcessorDependencies contains only provider, policy, and persistence ports
 // needed for one request-owned Remember execution.
 type ProcessorDependencies struct {
+	TopicAssignment     *topicassignment.Service
 	Ledger              Persistence
 	Assessor            assessor.Provider
 	Decisions           modelprovider.DecisionProvider
@@ -74,7 +77,7 @@ func NewSynchronousProcessor(deps ProcessorDependencies) *rememberSynchronousPro
 		staleInput = rememberapp.IsRememberStaleInputError
 	}
 	return &rememberSynchronousProcessor{
-		ledger: deps.Ledger, provider: deps.Assessor, embeddingExecutor: deps.EmbeddingExecutor,
+		topicAssignment: deps.TopicAssignment, ledger: deps.Ledger, provider: deps.Assessor, embeddingExecutor: deps.EmbeddingExecutor,
 		limits: deps.Limits, metrics: deps.Metrics, logger: deps.Logger, protector: deps.DiagnosticProtector,
 		isStaleInput: staleInput, commitFailureStage: deps.CommitFailureStage,
 		decisions: deps.Decisions, decisionSettings: deps.DecisionSettings,

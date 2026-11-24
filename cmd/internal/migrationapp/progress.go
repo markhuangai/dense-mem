@@ -17,7 +17,11 @@ type progressSlot struct {
 
 func progressAttrs(s postgres.MigrationSnapshot) []any {
 	if s.MigrationVersion >= postgres.FeatureStoragePrepareVersion {
-		return []any{"migration_execution_id", s.ExecutionID, "migration_version", s.MigrationVersion, "executor_version", postgres.FeatureStorageLayout,
+		layout := postgres.FeatureStorageLayout
+		if s.MigrationVersion == postgres.TopicStorageDataVersion {
+			layout = postgres.TopicStorageLayout
+		}
+		return []any{"migration_execution_id", s.ExecutionID, "migration_version", s.MigrationVersion, "executor_version", layout,
 			"inventory_identity", s.InventoryFingerprint, "source_schema_fingerprint", s.SourceSchemaFingerprint,
 			"source_fingerprint", s.SourceFingerprint, "phase", s.Phase, "work_unit", s.WorkUnit, "state", s.State,
 			"phase_started_at", s.PhaseStartedAt, "phase_elapsed_ms", time.Since(s.PhaseStartedAt).Milliseconds(), "observed_at", s.ObservedAt,

@@ -14,10 +14,10 @@ import (
 	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 )
 
-const DefaultOntologyCadenceHours = 12
-const DefaultOntologyStartTime = "03:00"
+const DefaultTopicCadenceHours = 12
+const DefaultTopicStartTime = "03:00"
 
-func (s *AppConfigServiceImpl) GetOntologyMaintenanceSettings(ctx context.Context) (*domain.OntologyMaintenanceSettings, error) {
+func (s *AppConfigServiceImpl) GetTopicMaintenanceSettings(ctx context.Context) (*domain.TopicMaintenanceSettings, error) {
 	entries, err := s.repo.List(ctx)
 	if err != nil {
 		return nil, err
@@ -26,24 +26,24 @@ func (s *AppConfigServiceImpl) GetOntologyMaintenanceSettings(ctx context.Contex
 	if err != nil {
 		return nil, err
 	}
-	value, err := ontologyRuntimeConfigFromEntries(entries, general.Effective.Timezone)
+	value, err := topicMaintenanceConfigFromEntries(entries, general.Effective.Timezone)
 	return &value, err
 }
 
-func (s *AppConfigServiceImpl) OntologyMaintenanceRuntimeConfig(ctx context.Context) (domain.OntologyMaintenanceConfig, error) {
-	settings, err := s.GetOntologyMaintenanceSettings(ctx)
+func (s *AppConfigServiceImpl) TopicMaintenanceRuntimeConfig(ctx context.Context) (domain.TopicMaintenanceConfig, error) {
+	settings, err := s.GetTopicMaintenanceSettings(ctx)
 	if err != nil {
-		return domain.OntologyMaintenanceConfig{}, err
+		return domain.TopicMaintenanceConfig{}, err
 	}
 	return settings.Effective, nil
 }
 
-func (s *AppConfigServiceImpl) UpdateOntologyMaintenanceSettings(ctx context.Context, values map[string]string, actorRole, clientIP, correlationID string) (*domain.OntologyMaintenanceSettings, error) {
-	normalized, err := normalizeOntologyConfigValues(values)
+func (s *AppConfigServiceImpl) UpdateTopicMaintenanceSettings(ctx context.Context, values map[string]string, actorRole, clientIP, correlationID string) (*domain.TopicMaintenanceSettings, error) {
+	normalized, err := normalizeTopicMaintenanceConfigValues(values)
 	if err != nil {
 		return nil, err
 	}
-	before, err := s.GetOntologyMaintenanceSettings(ctx)
+	before, err := s.GetTopicMaintenanceSettings(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -53,23 +53,23 @@ func (s *AppConfigServiceImpl) UpdateOntologyMaintenanceSettings(ctx context.Con
 		return nil, err
 	}
 	s.invalidate()
-	updated, err := s.GetOntologyMaintenanceSettings(ctx)
+	updated, err := s.GetTopicMaintenanceSettings(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if changed {
-		s.appendAudit("APP_CONFIG_UPDATE", "app_config", "ontology_maintenance", actorRole, clientIP, correlationID, ontologySettingsPayload(before), ontologySettingsPayload(updated), map[string]any{"section": "ontology_maintenance"})
+		s.appendAudit("APP_CONFIG_UPDATE", "app_config", "topic_maintenance", actorRole, clientIP, correlationID, topicMaintenanceSettingsPayload(before), topicMaintenanceSettingsPayload(updated), map[string]any{"section": "topic_maintenance"})
 	}
 	return updated, nil
 }
 
-func editableOntologyConfigKeys() []string {
-	return []string{domain.AppConfigOntologyEnabled, domain.AppConfigOntologyCadenceHours, domain.AppConfigOntologyStartTime, domain.AppConfigOntologyModel, domain.AppConfigOntologyConcurrency, domain.AppConfigOntologyTeamConcurrency, domain.AppConfigOntologyTeamOverrides, domain.AppConfigOntologyContextWindow}
+func editableTopicMaintenanceConfigKeys() []string {
+	return []string{domain.AppConfigTopicMaintenanceEnabled, domain.AppConfigTopicMaintenanceCadenceHours, domain.AppConfigTopicMaintenanceStartTime, domain.AppConfigTopicMaintenanceModel, domain.AppConfigTopicMaintenanceConcurrency, domain.AppConfigTopicMaintenanceTeamConcurrency, domain.AppConfigTopicMaintenanceTeamOverrides, domain.AppConfigTopicMaintenanceContextWindow}
 }
 
-func normalizeOntologyConfigValues(values map[string]string) (map[string]string, error) {
+func normalizeTopicMaintenanceConfigValues(values map[string]string) (map[string]string, error) {
 	allowed := map[string]bool{}
-	for _, key := range editableOntologyConfigKeys() {
+	for _, key := range editableTopicMaintenanceConfigKeys() {
 		allowed[key] = true
 	}
 	result := map[string]string{}
@@ -79,8 +79,8 @@ func normalizeOntologyConfigValues(values map[string]string) (map[string]string,
 		}
 		value := strings.TrimSpace(raw)
 		switch key {
-		case domain.AppConfigOntologyTeamOverrides:
-			overrides, err := parseOntologyTeamOverrides(value)
+		case domain.AppConfigTopicMaintenanceTeamOverrides:
+			overrides, err := parseTopicTeamOverrides(value)
 			if err != nil {
 				return nil, err
 			}
@@ -89,7 +89,7 @@ func normalizeOntologyConfigValues(values map[string]string) (map[string]string,
 				return nil, err
 			}
 			value = string(encoded)
-		case domain.AppConfigOntologyEnabled:
+		case domain.AppConfigTopicMaintenanceEnabled:
 			if value == "" {
 				value = "false"
 			}
@@ -98,16 +98,16 @@ func normalizeOntologyConfigValues(values map[string]string) (map[string]string,
 				return nil, fmt.Errorf("%w: %s must be true or false", ErrInvalidAppConfig, key)
 			}
 			value = strconv.FormatBool(parsed)
-		case domain.AppConfigOntologyStartTime:
+		case domain.AppConfigTopicMaintenanceStartTime:
 			if value == "" {
-				value = DefaultOntologyStartTime
+				value = DefaultTopicStartTime
 			}
 			var err error
 			value, err = normalizeStrictHHMM(key, value)
 			if err != nil {
 				return nil, err
 			}
-		case domain.AppConfigOntologyContextWindow:
+		case domain.AppConfigTopicMaintenanceContextWindow:
 			if value != "" {
 				parsed, err := strconv.ParseInt(value, 10, 64)
 				if err != nil || parsed < 1 || parsed > 1000000000 {
@@ -115,23 +115,23 @@ func normalizeOntologyConfigValues(values map[string]string) (map[string]string,
 				}
 				value = strconv.FormatInt(parsed, 10)
 			}
-		case domain.AppConfigOntologyModel:
+		case domain.AppConfigTopicMaintenanceModel:
 			if len(value) > 128 || strings.ContainsAny(value, "\x00\r\n") {
 				return nil, fmt.Errorf("%w: invalid maintenance model", ErrInvalidAppConfig)
 			}
 		default:
 			fallback, maximum := int64(1), int64(8)
 			switch key {
-			case domain.AppConfigOntologyTeamConcurrency:
-				fallback = domain.DefaultOntologyTeamConcurrency
-			case domain.AppConfigOntologyCadenceHours:
-				fallback, maximum = DefaultOntologyCadenceHours, 24
+			case domain.AppConfigTopicMaintenanceTeamConcurrency:
+				fallback = domain.DefaultTopicTeamConcurrency
+			case domain.AppConfigTopicMaintenanceCadenceHours:
+				fallback, maximum = DefaultTopicCadenceHours, 24
 			}
 			if value == "" {
 				value = strconv.FormatInt(fallback, 10)
 			}
 			parsed, err := strconv.ParseInt(value, 10, 64)
-			if err != nil || parsed < 1 || parsed > maximum || (key == domain.AppConfigOntologyCadenceHours && parsed != 12 && parsed != 24) {
+			if err != nil || parsed < 1 || parsed > maximum || (key == domain.AppConfigTopicMaintenanceCadenceHours && parsed != 12 && parsed != 24) {
 				return nil, fmt.Errorf("%w: invalid maintenance limit %s", ErrInvalidAppConfig, key)
 			}
 			value = strconv.FormatInt(parsed, 10)
@@ -141,36 +141,36 @@ func normalizeOntologyConfigValues(values map[string]string) (map[string]string,
 	return result, nil
 }
 
-func ontologyRuntimeConfigFromEntries(entries map[string]domain.AppConfigEntry, timezone string) (domain.OntologyMaintenanceSettings, error) {
+func topicMaintenanceConfigFromEntries(entries map[string]domain.AppConfigEntry, timezone string) (domain.TopicMaintenanceSettings, error) {
 	values := map[string]string{}
-	for _, key := range editableOntologyConfigKeys() {
+	for _, key := range editableTopicMaintenanceConfigKeys() {
 		values[key] = entries[key].Value
 	}
-	values, err := normalizeOntologyConfigValues(values)
+	values, err := normalizeTopicMaintenanceConfigValues(values)
 	if err != nil {
-		return domain.OntologyMaintenanceSettings{}, err
+		return domain.TopicMaintenanceSettings{}, err
 	}
 	integer := func(key string) int { n, _ := strconv.Atoi(values[key]); return n }
-	enabled, _ := strconv.ParseBool(values[domain.AppConfigOntologyEnabled])
-	policy := domain.OntologyMaintenanceConfig{Enabled: enabled, CadenceHours: integer(domain.AppConfigOntologyCadenceHours), StartTimeLocal: values[domain.AppConfigOntologyStartTime], Timezone: timezone, Model: values[domain.AppConfigOntologyModel], MaxConcurrency: integer(domain.AppConfigOntologyConcurrency), ContextWindowTokens: int64(integer(domain.AppConfigOntologyContextWindow)), SettingsVersion: entries[domain.AppConfigUpdateTimeKey].Value}
-	policy.TeamMaxConcurrency = integer(domain.AppConfigOntologyTeamConcurrency)
-	policy.TeamConcurrencyOverrides, err = parseOntologyTeamOverrides(values[domain.AppConfigOntologyTeamOverrides])
+	enabled, _ := strconv.ParseBool(values[domain.AppConfigTopicMaintenanceEnabled])
+	policy := domain.TopicMaintenanceConfig{Enabled: enabled, CadenceHours: integer(domain.AppConfigTopicMaintenanceCadenceHours), StartTimeLocal: values[domain.AppConfigTopicMaintenanceStartTime], Timezone: timezone, Model: values[domain.AppConfigTopicMaintenanceModel], MaxConcurrency: integer(domain.AppConfigTopicMaintenanceConcurrency), ContextWindowTokens: int64(integer(domain.AppConfigTopicMaintenanceContextWindow)), SettingsVersion: entries[domain.AppConfigUpdateTimeKey].Value}
+	policy.TeamMaxConcurrency = integer(domain.AppConfigTopicMaintenanceTeamConcurrency)
+	policy.TeamConcurrencyOverrides, err = parseTopicTeamOverrides(values[domain.AppConfigTopicMaintenanceTeamOverrides])
 	if err != nil {
-		return domain.OntologyMaintenanceSettings{}, err
+		return domain.TopicMaintenanceSettings{}, err
 	}
-	items := []domain.OntologyMaintenanceConfigItem{}
-	for _, key := range editableOntologyConfigKeys() {
+	items := []domain.TopicMaintenanceConfigItem{}
+	for _, key := range editableTopicMaintenanceConfigKeys() {
 		entry := entries[key]
-		items = append(items, domain.OntologyMaintenanceConfigItem{Key: key, Value: strings.TrimSpace(entry.Value), EffectiveValue: values[key], UpdatedAt: entry.UpdatedAt})
+		items = append(items, domain.TopicMaintenanceConfigItem{Key: key, Value: strings.TrimSpace(entry.Value), EffectiveValue: values[key], UpdatedAt: entry.UpdatedAt})
 	}
-	return domain.OntologyMaintenanceSettings{UpdateTime: policy.SettingsVersion, Items: items, Effective: policy}, nil
+	return domain.TopicMaintenanceSettings{UpdateTime: policy.SettingsVersion, Items: items, Effective: policy}, nil
 }
 
-func parseOntologyTeamOverrides(raw string) ([]domain.OntologyTeamConcurrencyOverride, error) {
+func parseTopicTeamOverrides(raw string) ([]domain.TopicTeamConcurrencyOverride, error) {
 	if raw == "" {
-		return []domain.OntologyTeamConcurrencyOverride{}, nil
+		return []domain.TopicTeamConcurrencyOverride{}, nil
 	}
-	var overrides []domain.OntologyTeamConcurrencyOverride
+	var overrides []domain.TopicTeamConcurrencyOverride
 	if err := jsonstrict.Decode(strings.NewReader(raw), &overrides, 16384); err != nil || overrides == nil || len(overrides) > 128 {
 		return nil, fmt.Errorf("%w: team overrides require an array of at most 128 entries and 16384 bytes", ErrInvalidAppConfig)
 	}
@@ -186,7 +186,7 @@ func parseOntologyTeamOverrides(raw string) ([]domain.OntologyTeamConcurrencyOve
 	return overrides, nil
 }
 
-func ontologySettingsPayload(settings *domain.OntologyMaintenanceSettings) map[string]any {
+func topicMaintenanceSettingsPayload(settings *domain.TopicMaintenanceSettings) map[string]any {
 	items := []map[string]string{}
 	for _, item := range settings.Items {
 		items = append(items, map[string]string{"key": item.Key, "value": item.Value})

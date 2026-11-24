@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { navigate, openNavigation, confirmAction, expectPageContained, expectCompactNumberField } from "../tests-support/portal";
 import { expect, type Page, test } from "@playwright/test";
-import type { OntologyDraft } from "../src/user/ontology-types";
+import type { TopicDraft } from "../src/user/topic-types";
 
 const team = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -91,13 +91,13 @@ const evidences = [
 
 
 for (const width of [1440, 900, 390]) for (const theme of ["light", "dark"] as const) {
-  test(`redesign knowledge ${width}px ${theme}: Evidence search, ontology and connection`, async ({ page }, testInfo) => {
+  test(`redesign knowledge ${width}px ${theme}: Evidence search, topic and connection`, async ({ page }, testInfo) => {
     const pageErrors: string[] = [];
     page.on("pageerror", (error) => pageErrors.push(error.message));
     await page.setViewportSize({ width, height: 1000 });
     await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
     await mockUserApi(page, { key: managerKey, canManageTeam: true, credentials: [memberCredential] });
-    await page.route("**/ui/api/ontology/**", async (route) => {
+    await page.route("**/ui/api/topics/**", async (route) => {
       const url = new URL(route.request().url());
       const data = url.pathname.endsWith("/status") ? { observed_at: "2026-10-18T12:00:00Z", revision: 1, coverage_complete: true, discovery_complete: true, pending_markers: 0, counts: { eligible: 0, organized: 0, pending: 0, ambiguous: 0, failed: 0 } } : { records: [], sources: [], drafts: [], publications: [] };
       await route.fulfill({ json: { data } });
@@ -128,13 +128,13 @@ for (const width of [1440, 900, 390]) for (const theme of ["light", "dark"] as c
     expect(nameWidth).toBeGreaterThan(rateWidth);
     await expectPageContained(page);
     await page.screenshot({ path: testInfo.outputPath("knowledge-team.png"), fullPage: true });
-    await navigate(page, "Ontology");
-    const coverage = page.getByRole("region", { name: "Team ontology coverage" });
+    await navigate(page, "Topics");
+    const coverage = page.getByRole("region", { name: "Team topic coverage" });
     await expect(coverage).toContainText("no eligible shared records discovered");
     await expect(coverage.getByRole("progressbar")).toHaveCount(0);
     await page.getByRole("tab", { name: "Drafts", exact: true }).click();
     await expect(page.getByLabel("Audit reason")).toBeVisible();
-    await page.screenshot({ path: testInfo.outputPath("knowledge-ontology.png"), fullPage: true });
+    await page.screenshot({ path: testInfo.outputPath("knowledge-topic.png"), fullPage: true });
     await page.getByRole("button", { name: "Connect", exact: true }).click();
     await expect(page.getByRole("dialog")).toContainText(team.id);
     await expect(page.getByRole("dialog")).toContainText("Private: Read/write");
@@ -145,7 +145,7 @@ for (const width of [1440, 900, 390]) for (const theme of ["light", "dark"] as c
   });
 }
 for (const width of [1440, 768, 390]) for (const theme of ["light", "dark"] as const) {
-  test(`ontology topic controls and long draft/history labels ${width}px ${theme}`, async ({ page }, testInfo) => {
+  test(`Topic editor controls and long draft/history labels ${width}px ${theme}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 1000 });
     await page.emulateMedia({ colorScheme: theme });
     await mockUserApi(page, { key: managerKey, canManageTeam: true });
@@ -153,8 +153,8 @@ for (const width of [1440, 768, 390]) for (const theme of ["light", "dark"] as c
     const records = [{ id: "people", version: 1, kind: "topic", current: true, definition: { key: "people", label: "People", description: "People vocabulary" } }, { id: "researchers", version: 1, kind: "topic", current: true, definition: { key: "researchers", label: "Researchers", description: "Researcher vocabulary", parent_id: "people" } }];
     const publication = { id: "publication-long", revision: 1, origin: "manager", reason, records: [], record_views: records };
     const otherPublication = { ...publication, id: "publication-other", revision: 2, reason: "Another reviewed publication" };
-    let draft: OntologyDraft | null = null;
-    await page.route("**/ui/api/ontology/**", async (route) => {
+    let draft: TopicDraft | null = null;
+    await page.route("**/ui/api/topics/**", async (route) => {
       const request = route.request();
       const path = new URL(request.url()).pathname;
       if (request.method() === "POST" && path.endsWith("/drafts")) {
@@ -174,18 +174,17 @@ for (const width of [1440, 768, 390]) for (const theme of ["light", "dark"] as c
       await route.fulfill({ json: { data } });
     });
     await openUserPortal(page, "dm_manager");
-    await navigate(page, "Ontology");
+    await navigate(page, "Topics");
     await page.getByRole("tab", { name: "Drafts", exact: true }).click();
     await page.getByLabel("Definition key").fill("browser-long");
     await page.getByLabel("Definition label").fill("Vocabulary ".padEnd(256, "y"));
     await page.getByLabel("Definition description").fill("Review a saved correction on a narrow screen.");
-    await page.getByLabel("Definition type").selectOption("topic");
     await page.getByLabel("Definition parent").fill("people");
     await page.getByLabel("Audit reason").fill(reason);
-    await page.getByRole("button", { name: "Add correction to draft" }).click();
+    await page.getByRole("button", { name: "Add topic to draft" }).click();
     await page.getByRole("button", { name: "Save draft", exact: true }).click();
     await expect(page.getByRole("status")).toContainText("Draft saved");
-    await page.screenshot({ path: testInfo.outputPath("ontology-semantic-draft.png"), fullPage: true });
+    await page.screenshot({ path: testInfo.outputPath("topic-semantic-draft.png"), fullPage: true });
     await expectPageContained(page);
     await expect(page.getByRole("button", { name: `${reason} · open · revision 1`, exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Discard draft", exact: true }).click();
@@ -201,7 +200,7 @@ for (const width of [1440, 768, 390]) for (const theme of ["light", "dark"] as c
     await page.getByRole("button", { name: `Revision 1 · manager · ${reason}`, exact: true }).click();
     await expect(page.getByRole("heading", { name: "Publication revision 1", exact: true })).toBeVisible();
     await expect(page.locator('[aria-label="Publication detail"]')).toContainText("Parent: People (people)");
-    await page.screenshot({ path: testInfo.outputPath("ontology-semantic-history.png"), fullPage: true });
+    await page.screenshot({ path: testInfo.outputPath("topic-semantic-history.png"), fullPage: true });
     await page.getByLabel("Rollback reason", { exact: true }).fill("Keep this unsaved reason");
     const other = page.getByRole("button", { name: "Revision 2 · manager · Another reviewed publication", exact: true });
     await other.click();
@@ -271,7 +270,7 @@ test("SSO manager sees the same team management destinations and explicit memory
   await navigate(page, "Team");
   await expect(page.getByLabel("Name", { exact: true })).toHaveValue(team.name);
   await openNavigation(page);
-  await expect(page.getByRole("link", { name: "Ontology", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Topics", exact: true })).toBeVisible();
   if (await page.getByRole("dialog").isVisible()) await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await expect(page.getByRole("dialog")).toContainText("Private: Read/write");

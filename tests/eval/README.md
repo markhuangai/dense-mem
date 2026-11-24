@@ -4,6 +4,41 @@ Build public dataset seeds with local Docker. Evaluation campaigns and benchmark
 run on GitHub-hosted runners. Selective synthetic unit and policy checks use
 `bash scripts/test-evaluation.sh`.
 
+## Prepare a paired Topic evaluation
+
+Wait for all four checks on the open application PR and use its exact head. Pin
+`baseline_revision`, `baseline_image`, `candidate_image`, and `seeds` in a private
+JSON file. The applications are full GHCR digest references. The `seeds` object
+maps each of the five dataset IDs in `datasets.json` to its original bootable
+PostgreSQL seed digest.
+
+```bash
+node --env-file="$evaluation_env" tests/eval/scripts/local-seeds.mjs prepare-topics \
+  --pr "$pr_number" --lock "$source_lock"
+```
+
+Resume with `--resume <local-build-id>` and the same lock. The builder works on
+isolated copies and publishes each completed derivative under a distinct tag.
+The candidate gate checks assigned membership for every eligible saved Evidence
+item and a terminal placement for every Topic. An uncategorized item fails
+preparation visibly. Source corpus, mapping, and search fingerprints must
+match each original seed on a fresh restore. The lock under the private build
+directory contains the ten prepared image digests and their parents.
+
+```bash
+gh workflow run production-image-e2e.yml --ref "$application_branch" \
+  -f pr_number="$pr_number" -f evaluation=live \
+  -f paired_baseline_image="$baseline_image" -f paired_seed_lock="$(cat "$prepared_lock")"
+```
+
+The hosted gate verifies all ten manifests before scoring. Use
+`paired_resume_run` to resume a previous campaign on the same head and immutable
+image and seed locks. It reuses complete question checkpoints with verified
+diagnostic capture. The published comparison requires every dataset and both
+answer policies. It includes the candidate lexical Recall ablation, the
+CLIMATE-FEVER fresh Remember and counterevidence cohorts, and a locked HotpotQA
+sample of direct Topic matches.
+
 ## Build public dataset seeds
 
 Use the [seed-building skill](../../.agents/skills/dense-mem-build-seeds/SKILL.md)
@@ -48,7 +83,7 @@ removed need a fresh import. After resume, the preparation time in the seed
 receipt measures the successful invocation. Earlier import times remain in
 that build's logs.
 
-Each dataset restores the bootstrap, imports its complete corpus with ontology
+Each dataset restores the bootstrap, imports its complete corpus with Topic maintenance
 disabled and paused, verifies the source/partition mapping and search state, and
 exports a private PostgreSQL archive. The image build restores it once into a
 clean cluster and bakes the stopped data directory, including indexes, into a
@@ -84,9 +119,9 @@ records share the run identity and timestamp with progress: interval-averaged
 host CPU and I/O wait, available memory, disk
 free, sampled container CPU/memory, and PostgreSQL active connections/lock waits.
 Container CPU is a sampled per-core percentage and can exceed 100%. Missing
-measurements have explicit unavailable reasons. Application pool wait counters
-are measured by the authenticated sustained PostgreSQL regression; the production
-runtime does not expose them. Resource sampling does not print environment
+measurements have explicit unavailable reasons. The authenticated control metrics
+response exposes the current runtime's cumulative application PostgreSQL pool wait
+count and duration. Earlier releases can lack those counters. Resource sampling does not print environment
 variables, SQL text, provider URLs or credentials.
 
 The public registry package is `ghcr.io/markhuangai/dense-mem-eval-postgres`:

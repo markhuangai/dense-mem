@@ -15,8 +15,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/evalharness"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/markhuangai/dense-mem/internal/recall"
+	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 )
@@ -85,14 +85,14 @@ func measureOntologyPacing(t *testing.T, mode string, tick time.Duration) ontolo
 	batchCount := func() int {
 		var count int
 		require.NoError(t, f.native.DB.QueryRowContext(ctx,
-			`SELECT count(*) FROM ontology_maintenance_batches WHERE team_id=$1::uuid AND status='completed'`,
+			`SELECT count(*) FROM topic_maintenance_batches WHERE team_id=$1::uuid AND status='completed'`,
 			f.native.Scope.TeamID).Scan(&count))
 		return count
 	}
 
 	original, err := rememberPacingEvidence(ctx, client, "team_shared", originalPacingEvidence, "pacing-mineral", "first", "")
 	require.NoError(t, err)
-	_, err = f.maintenance.Command(ctx, domain.OntologyMaintenanceCommand{Action: "resume", OperationKey: uuid.NewString()}, "", "")
+	_, err = f.maintenance.Command(ctx, domain.TopicMaintenanceCommand{Action: "resume", OperationKey: uuid.NewString()}, "", "")
 	require.NoError(t, err)
 	drain()
 	initialBatches := batchCount()

@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 

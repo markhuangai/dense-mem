@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
+	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 

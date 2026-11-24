@@ -11,8 +11,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/ontology"
-	contract "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	ontology "github.com/markhuangai/dense-mem/internal/topics"
+	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
 )
 
 func ontologyPublicationDiagnostics(logger *slog.Logger, protector observability.DiagnosticProtector) contract.PublicationObserver {
@@ -28,9 +28,9 @@ func ontologyPublicationDiagnostics(logger *slog.Logger, protector observability
 				slog.String("shared_space_id", claim.SpaceID), slog.Int64("space_generation", claim.Generation))
 		}
 		if errors.Is(diagnostic.Failure, contract.ErrUnauthorized) || (diagnostic.Management && errors.Is(diagnostic.Failure, contract.ErrNotFound)) {
-			event, reason := "ontology_semantic_publication_rejected", "unauthorized"
+			event, reason := "topic_semantic_publication_rejected", "unauthorized"
 			if diagnostic.Management {
-				event = "ontology_semantic_manager_rejected"
+				event = "topic_semantic_manager_rejected"
 			}
 			if errors.Is(diagnostic.Failure, contract.ErrNotFound) {
 				reason = "unavailable"
@@ -73,11 +73,11 @@ func ontologyPublicationDiagnostics(logger *slog.Logger, protector observability
 			base = append(base, slog.String("provider_identity", diagnostic.ProviderIdentity))
 		}
 		reason := "accepted"
-		level, event := slog.LevelInfo, "ontology_semantic_publication_committed"
+		level, event := slog.LevelInfo, "topic_semantic_publication_committed"
 		if diagnostic.Failure != nil {
-			level, event, reason = slog.LevelError, "ontology_semantic_publication_failed", "storage_failure"
+			level, event, reason = slog.LevelError, "topic_semantic_publication_failed", "storage_failure"
 			if errors.Is(diagnostic.Failure, contract.ErrInvalid) || errors.Is(diagnostic.Failure, contract.ErrConflict) || errors.Is(diagnostic.Failure, contract.ErrSourceStale) || errors.Is(diagnostic.Failure, contract.ErrOverride) {
-				level, event, reason = slog.LevelWarn, "ontology_semantic_publication_rejected", "invalid_publication"
+				level, event, reason = slog.LevelWarn, "topic_semantic_publication_rejected", "invalid_publication"
 			}
 			if diagnostic.Rejection != nil {
 				reason = diagnostic.Rejection.Reason
@@ -85,12 +85,12 @@ func ontologyPublicationDiagnostics(logger *slog.Logger, protector observability
 		}
 		if diagnostic.Management {
 			if diagnostic.Failure == nil {
-				event = "ontology_semantic_manager_command"
+				event = "topic_semantic_manager_command"
 				if diagnostic.Preview != nil {
-					level, event = slog.LevelDebug, "ontology_semantic_draft_preview"
+					level, event = slog.LevelDebug, "topic_semantic_draft_preview"
 				}
 			} else if level == slog.LevelWarn {
-				event = "ontology_semantic_manager_rejected"
+				event = "topic_semantic_manager_rejected"
 			}
 		}
 		base = append(base, slog.String("reason", reason))
@@ -106,7 +106,7 @@ func ontologyPublicationDiagnostics(logger *slog.Logger, protector observability
 						captureState = "unavailable"
 					}
 					attrs := append(append([]slog.Attr{}, base...), slog.String("payload_kind", kind), slog.String("record_id", id), slog.Any("payload_chunk", chunk))
-					logger.LogAttrs(observability.WithSinkSuppressed(ctx), slog.LevelDebug, "ontology_semantic_publication", attrs...)
+					logger.LogAttrs(observability.WithSinkSuppressed(ctx), slog.LevelDebug, "topic_semantic_publication", attrs...)
 				}
 			}
 			if diagnostic.InputState == "captured" {
@@ -114,7 +114,7 @@ func ontologyPublicationDiagnostics(logger *slog.Logger, protector observability
 			} else {
 				captureState = "unavailable"
 				logger.LogAttrs(ctx, slog.LevelWarn, "diagnostic_body_unavailable", append(append([]slog.Attr{}, base...),
-					slog.String("capture_event", "ontology_semantic_publication"), slog.String("reason_code", diagnostic.InputReason),
+					slog.String("capture_event", "topic_semantic_publication"), slog.String("reason_code", diagnostic.InputReason),
 					slog.Int("original_bytes", diagnostic.InputBytes), slog.Int("limit", contract.MaxPublicationBytes), slog.String("limit_unit", "body_bytes"))...)
 			}
 			marshal := func(kind, id string, value any) {
@@ -149,11 +149,11 @@ func ontologyPublicationDiagnostics(logger *slog.Logger, protector observability
 			if diagnostic.DefinitionsState != "" {
 				captureState = diagnostic.DefinitionsState
 			}
-			logger.LogAttrs(ctx, slog.LevelDebug, "ontology_semantic_publication", append(append([]slog.Attr{}, base...),
+			logger.LogAttrs(ctx, slog.LevelDebug, "topic_semantic_publication", append(append([]slog.Attr{}, base...),
 				slog.String("capture_state", captureState), slog.Int("payload_count", payloads), slog.Int("chunk_count", chunks), slog.Int("definition_count", len(ids)))...)
 		}
 		if captureState != "captured" && captureState != "disabled" {
-			logger.LogAttrs(ctx, slog.LevelWarn, "ontology_semantic_publication_capture_incomplete", append(append([]slog.Attr{}, base...), slog.String("capture_state", captureState))...)
+			logger.LogAttrs(ctx, slog.LevelWarn, "topic_semantic_publication_capture_incomplete", append(append([]slog.Attr{}, base...), slog.String("capture_state", captureState))...)
 		}
 		base = append(base, slog.String("capture_state", captureState))
 		if diagnostic.Failure != nil {
@@ -186,7 +186,7 @@ func ontologyDiagnosticCapture(sink observability.LogSink, protector observabili
 				return err
 			}
 			captureID := uuid.NewString()
-			base := map[string]any{"reference_type": "ontology_run", "reference_id": claim.RunID, "run_id": claim.RunID, "batch_id": claim.ID, "assessment_id": result.AssessmentID, "attempt_id": captureID}
+			base := map[string]any{"reference_type": "topic_run", "reference_id": claim.RunID, "run_id": claim.RunID, "batch_id": claim.ID, "assessment_id": result.AssessmentID, "attempt_id": captureID}
 			write := func(event string, attrs map[string]any, chunk *observability.DiagnosticBodyChunk) error {
 				if chunk != nil {
 					metadata := *chunk
@@ -232,7 +232,7 @@ func ontologyDiagnosticCapture(sink observability.LogSink, protector observabili
 					for _, chunk := range observability.ChunkProtectedDiagnosticBody(body, modelprovider.MaxProviderDiagnosticBodyBytes) {
 						attrs := map[string]any{"exchange": index, "direction": direction, "component": exchange.Component, "model": exchange.Model,
 							"status_code": exchange.StatusCode, "outcome": exchange.Outcome, "capture_state": exchange.CaptureState, "capture_reason": exchange.CaptureReason}
-						if err := write("ontology_failure_payload", attrs, &chunk); err != nil {
+						if err := write("topic_failure_payload", attrs, &chunk); err != nil {
 							return err
 						}
 						records++
@@ -250,11 +250,11 @@ func ontologyDiagnosticCapture(sink observability.LogSink, protector observabili
 				}
 				chunks := observability.CaptureDiagnosticBody(ctx, protector, body, contract.MaxPublicationBytes)
 				for _, chunk := range chunks {
-					if err := write("ontology_freshness_payload", map[string]any{"check": result.FreshnessRejection.Check}, &chunk); err != nil {
+					if err := write("topic_freshness_payload", map[string]any{"check": result.FreshnessRejection.Check}, &chunk); err != nil {
 						return err
 					}
 					if logger != nil {
-						logger.LogAttrs(observability.WithSinkSuppressed(ctx), slog.LevelDebug, "ontology_freshness_payload",
+						logger.LogAttrs(observability.WithSinkSuppressed(ctx), slog.LevelDebug, "topic_freshness_payload",
 							slog.String("team_id", claim.TeamID), slog.String("run_id", claim.RunID), slog.String("batch_id", claim.ID),
 							slog.String("assessment_id", result.AssessmentID), slog.Any("payload_chunk", chunk))
 					}
@@ -263,7 +263,7 @@ func ontologyDiagnosticCapture(sink observability.LogSink, protector observabili
 				summary.ExpectedContext, summary.ObservedContext, summary.Dependencies = nil, nil, nil
 				manifest["freshness_rejection"], manifest["freshness_record_count"] = summary, len(chunks)
 			}
-			return write("ontology_failure_capture", manifest, nil)
+			return write("topic_failure_capture", manifest, nil)
 		},
 	}
 }

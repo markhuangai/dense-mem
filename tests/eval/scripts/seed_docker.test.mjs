@@ -62,8 +62,8 @@ test("production seed exporter preserves data, excludes payloads and protects re
     CREATE FUNCTION dense_mem_team_shared_space(team uuid) RETURNS uuid LANGUAGE plpgsql STABLE SET search_path = public AS $$
       DECLARE result uuid; BEGIN SELECT id INTO result FROM memory_spaces WHERE team_id=team AND kind='team_shared';
       IF result IS NULL THEN RAISE EXCEPTION 'team shared memory space is not initialized'; END IF; RETURN result; END $$;
-    CREATE TABLE ontology_maintenance_markers (team_id uuid NOT NULL, space_id uuid NOT NULL, CHECK(space_id=dense_mem_team_shared_space(team_id)));
-    INSERT INTO ontology_maintenance_markers VALUES ('${team}', '${space}');
+    CREATE TABLE topic_maintenance_markers (team_id uuid NOT NULL, space_id uuid NOT NULL, CHECK(space_id=dense_mem_team_shared_space(team_id)));
+    INSERT INTO topic_maintenance_markers VALUES ('${team}', '${space}');
     ${excludedSeedData.map((table) => `CREATE TABLE ${table} (payload text); INSERT INTO ${table} VALUES ('${canary}');`).join("\n")}`);
   fs.writeFileSync(path.join(seedDir, "mapping.json"), "{}\n");
   fs.writeFileSync(path.join(seedDir, "NOTICE.md"), "# Synthetic PostgreSQL seed\n");
@@ -81,7 +81,7 @@ test("production seed exporter preserves data, excludes payloads and protects re
   resetDatabase();
   restoreSeed(docker, container, seedDir);
   assert.equal(sql("SELECT content FROM retained_evidence WHERE id=1;"), "exact public Evidence");
-  assert.equal(sql("SELECT count(*) FROM ontology_maintenance_markers;"), "1");
+  assert.equal(sql("SELECT count(*) FROM topic_maintenance_markers;"), "1");
   assert.equal(sql("SELECT count(*) FROM memory_spaces;"), "1");
   for (const table of excludedSeedData) assert.equal(sql(`SELECT count(*) FROM ${table};`), "0", `${table} retains its schema without payload rows`);
   await verifySeedCredentialExclusions(docker, container, seedDir, [canary]);
@@ -108,7 +108,7 @@ test("production seed exporter preserves data, excludes payloads and protects re
   const bootSQL = (statement) => docker(["exec", "--interactive", boot, "sh", "-ec", 'export PGPASSWORD="$POSTGRES_PASSWORD"; exec psql -XAt -v ON_ERROR_STOP=1 -h 127.0.0.1 -U densemem -d densemem'], { input: statement });
   assert.equal(bootSQL("SELECT content FROM retained_evidence WHERE id=1 AND embedding='[1,2,3]'::vector"), "exact public Evidence");
   assert.equal(bootSQL("SELECT count(*) FROM pg_indexes WHERE indexname='retained_evidence_vector'"), "1");
-  assert.equal(bootSQL("SELECT count(*) FROM ontology_maintenance_markers"), "1");
+  assert.equal(bootSQL("SELECT count(*) FROM topic_maintenance_markers"), "1");
   for (const table of excludedSeedData) assert.equal(bootSQL(`SELECT count(*) FROM ${table}`), "0");
   const wrongPassword = spawnSync("docker", ["exec", boot, "sh", "-ec", 'PGPASSWORD=wrong psql -XAt -h 127.0.0.1 -U densemem -d densemem -c "select 1"'], { encoding: "utf8", timeout: 5000 });
   assert.equal(wrongPassword.status, 2);

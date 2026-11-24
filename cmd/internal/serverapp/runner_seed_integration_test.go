@@ -25,13 +25,13 @@ import (
 	"github.com/markhuangai/dense-mem/internal/evalharness"
 	knowledgepg "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	organization "github.com/markhuangai/dense-mem/internal/ontology"
-	ontologypg "github.com/markhuangai/dense-mem/internal/ontology/postgres"
 	searchapp "github.com/markhuangai/dense-mem/internal/search"
 	searchpg "github.com/markhuangai/dense-mem/internal/search/postgres"
 	"github.com/markhuangai/dense-mem/internal/settings"
 	settingspg "github.com/markhuangai/dense-mem/internal/settings/postgres"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
+	organization "github.com/markhuangai/dense-mem/internal/topics"
+	ontologypg "github.com/markhuangai/dense-mem/internal/topics/postgres"
 	containerapi "github.com/moby/moby/api/types/container"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -46,7 +46,7 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	f := newRunnerServiceFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
-	require.NoError(t, f.native.Control(ctx, http.MethodPatch, "/config/ontology-maintenance", map[string]any{"items": []map[string]string{{"key": domain.AppConfigOntologyEnabled, "value": "false"}}}, nil))
+	require.NoError(t, f.native.Control(ctx, http.MethodPatch, "/config/topic-maintenance", map[string]any{"items": []map[string]string{{"key": domain.AppConfigTopicMaintenanceEnabled, "value": "false"}}}, nil))
 	key := "dm_seed_fixed_credential_identity_canary_782"
 	hash, err := crypto.HashKey(key)
 	require.NoError(t, err)
@@ -220,7 +220,7 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	require.False(t, crypto.VerifyKey("wrong-seed-key", loaded.KeyHash))
 	rls := storagepostgres.NewRLS()
 	restoredSettings := settings.NewAppConfigService(settingspg.NewAppConfigRepository(restored, rls), nil)
-	restoredMaintenance := buildOntologyMaintenance(ontologypg.NewStore(restored, rls), restoredSettings, nil,
+	restoredMaintenance := buildTopicMaintenance(ontologypg.NewStore(restored, rls), restoredSettings, nil,
 		assessor.DefaultSemanticAssessmentLimits(), manifest.Model, 0, nil, nil, organization.MaintenanceDiagnosticCapture{})
 	restoredControl := runnerControlServer(t, restoredMaintenance, restoredSettings, searchapp.NewSearchConvergenceService(
 		searchpg.NewStore(restored, rls), knowledgepg.NewStore(restored, rls),
@@ -235,7 +235,7 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	require.Equal(t, seed.Scope, native.Scope)
 	setRestoredOntology := func(value string) {
 		t.Helper()
-		_, err := restoredSettings.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyEnabled: value}, "control", "", "")
+		_, err := restoredSettings.UpdateTopicMaintenanceSettings(ctx, map[string]string{domain.AppConfigTopicMaintenanceEnabled: value}, "control", "", "")
 		require.NoError(t, err)
 	}
 	setRestoredOntology("true")

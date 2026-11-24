@@ -13,9 +13,9 @@ import (
 	"github.com/labstack/echo/v5"
 	mw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/ontology"
-	contract "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	ontology "github.com/markhuangai/dense-mem/internal/topics"
+	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 

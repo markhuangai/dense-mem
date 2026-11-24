@@ -9,8 +9,8 @@ import (
 
 	"github.com/labstack/echo/v5"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/markhuangai/dense-mem/internal/settings"
+	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -36,11 +36,11 @@ func TestControlOntologyMaintenanceErrorResponses(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			router := echo.New()
 			router.HTTPErrorHandler = httperr.ErrorHandler
-			router.GET("/control/api/ontology/status", func(*echo.Context) error {
+			router.GET("/control/api/topic-maintenance/status", func(*echo.Context) error {
 				return ontologyControlError(fmt.Errorf("internal diagnostic details: %w", testCase.cause))
 			})
 			response := httptest.NewRecorder()
-			router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/control/api/ontology/status", nil))
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/control/api/topic-maintenance/status", nil))
 			require.Equal(t, testCase.status, response.Code)
 			require.NotContains(t, response.Body.String(), "internal diagnostic details")
 			require.NotContains(t, response.Body.String(), "unknown internal failure")

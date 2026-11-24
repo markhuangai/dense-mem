@@ -17,13 +17,13 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
-	organization "github.com/markhuangai/dense-mem/internal/ontology"
-	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
-	ontologypostgres "github.com/markhuangai/dense-mem/internal/ontology/postgres"
 	"github.com/markhuangai/dense-mem/internal/provider/structured"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
+	organization "github.com/markhuangai/dense-mem/internal/topics"
+	"github.com/markhuangai/dense-mem/internal/topics/assessment"
+	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topicspostgres "github.com/markhuangai/dense-mem/internal/topics/postgres"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -37,7 +37,7 @@ type recallOntologyFixture struct {
 	credentials []*domain.Credential
 	search      *searchFixtureStore
 	knowledge   *knowledgepostgres.Store
-	ontology    *ontologypostgres.Store
+	ontology    *topicspostgres.Store
 }
 
 func newRecallOntologyFixture(t testing.TB) *recallOntologyFixture {
@@ -59,7 +59,7 @@ func newRecallOntologyFixture(t testing.TB) *recallOntologyFixture {
 	insertSearchTestContract(t, admin, rls, "ontology recall", 3, "exact", "")
 	f.search = newSearchFixtureStore(app, rls)
 	f.knowledge = knowledgepostgres.NewStore(app, rls)
-	f.ontology = ontologypostgres.NewStore(app, rls)
+	f.ontology = topicspostgres.NewStore(app, rls)
 	f.search.recall.WithOntology(func() OntologyReader { return f.ontology.NewRecallReader() }).WithTopics(f.ontology.NewTopicReader())
 	return f
 }
@@ -104,7 +104,7 @@ func (f *recallOntologyFixture) publication(t testing.TB, records ...ontology.Re
 	return result
 }
 
-func (f *recallOntologyFixture) override(t testing.TB, action ontology.OverrideAction, handles []ontology.SourceHandle) {
+func (f *recallOntologyFixture) rejectHistoricalOverride(t testing.TB, action ontology.OverrideAction, handles []ontology.SourceHandle) {
 	t.Helper()
 	snapshots, err := f.ontology.ReadSources(context.Background(), f.team, handles)
 	require.NoError(t, err)
@@ -114,7 +114,10 @@ func (f *recallOntologyFixture) override(t testing.TB, action ontology.OverrideA
 		require.NoError(t, err)
 		record.Sources = append(record.Sources, ontology.SourceDependency{SourceHandle: snapshot.SourceHandle, Fingerprint: fingerprint})
 	}
-	f.publication(t, record)
+	page, err := f.ontology.ListRecords(context.Background(), f.team, "", "", 1)
+	require.NoError(t, err)
+	_, err = f.ontology.PublishManager(f.actor(0, "manager"), f.team, ontology.Publication{OperationKey: uuid.NewString(), ExpectedRevision: page.Revision, Reason: "Retired override", Changes: []ontology.Change{{Record: record}}})
+	require.ErrorIs(t, err, ontology.ErrOverride)
 }
 
 func (f *recallOntologyFixture) organizer(t testing.TB, meanings map[string]string) (*organization.Service, *atomic.Int32) {

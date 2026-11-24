@@ -27,6 +27,8 @@ export type DecisionTasks = {
   security_review: boolean;
   conflict_review: boolean;
   recall_reranking: boolean;
+  topic_assignment?: boolean;
+  community_placement?: boolean;
 };
 
 export type DecisionConfig = {

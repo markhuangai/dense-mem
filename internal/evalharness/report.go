@@ -9,6 +9,7 @@ import (
 )
 
 type CaseScore struct {
+	InitialRecallMS     float64 `json:"initial_recall_ms"`
 	QuestionID          string  `json:"question_id"`
 	Condition           string  `json:"condition"`
 	Policy              string  `json:"policy"`
@@ -59,6 +60,9 @@ type AxisSummary struct {
 }
 
 type Reproducibility struct {
+	PairArm                string `json:"pair_arm,omitempty"`
+	PairShard              int    `json:"pair_shard,omitempty"`
+	ParentSeedImage        string `json:"parent_seed_image,omitempty"`
 	Version                int    `json:"version"`
 	RunID                  string `json:"run_id"`
 	WorkflowRunID          string `json:"workflow_run_id"`
@@ -164,24 +168,7 @@ func ScoreObservation(question Question, observation Observation, corpus map[str
 	if len(gold) == 0 {
 		return nil, errors.New("question has no gold sources")
 	}
-	recall := func(k int) float64 {
-		if observation.Initial.Error != "" {
-			return 0
-		}
-		found := map[string]bool{}
-		rows, _ := observation.Initial.Result["results"].([]any)
-		for index, raw := range rows {
-			if index >= k {
-				break
-			}
-			row, _ := raw.(map[string]any)
-			evidence := canonical[stringValue(row["evidence_id"])]
-			if gold[evidence.SourceID] {
-				found[evidence.SourceID] = true
-			}
-		}
-		return float64(len(found)) / float64(len(gold))
-	}
+	recall := func(k int) float64 { return initialSourceRecall(observation.Initial, canonical, gold, k) }
 	coverage := func(calls []MemoryCall) float64 {
 		delivered := map[string][]string{}
 		for _, call := range calls {
@@ -226,7 +213,7 @@ func ScoreObservation(question Question, observation Observation, corpus map[str
 		if string(initial) != string(shared) {
 			return nil, errors.New("host initial Recall packet changed")
 		}
-		score := CaseScore{QuestionID: question.ID, Condition: observation.Condition, Policy: host.Policy, Completed: host.Error == "", Recall1: recall(1), Recall5: recall(5), Recall10: recall(10), InitialTextCoverage: coverage([]MemoryCall{observation.Initial}), FinalTextCoverage: coverage(host.Calls), MemoryCalls: len(host.Calls), ProviderCalls: len(host.Attempts), ElapsedMS: host.ElapsedMS}
+		score := CaseScore{InitialRecallMS: observation.Initial.ElapsedMS, QuestionID: question.ID, Condition: observation.Condition, Policy: host.Policy, Completed: host.Error == "", Recall1: recall(1), Recall5: recall(5), Recall10: recall(10), InitialTextCoverage: coverage([]MemoryCall{observation.Initial}), FinalTextCoverage: coverage(host.Calls), MemoryCalls: len(host.Calls), ProviderCalls: len(host.Attempts), ElapsedMS: host.ElapsedMS}
 		score.AllSupport = score.Recall10 == 1
 		if score.Completed {
 			score.EM, score.F1 = AnswerScore(host.Answer, question.Answers)
@@ -244,7 +231,7 @@ func ScoreObservation(question Question, observation Observation, corpus map[str
 			for _, text := range texts[citation.EvidenceID] {
 				valid = valid || citation.Quote != "" && strings.Contains(text, citation.Quote)
 			}
-			if _, ok := canonical[citation.EvidenceID]; !ok {
+			if evidence, ok := canonical[citation.EvidenceID]; !ok || !strings.Contains(evidence.Content, citation.Quote) {
 				valid = false
 			}
 			if !valid {
@@ -253,7 +240,8 @@ func ScoreObservation(question Question, observation Observation, corpus map[str
 			score.ValidCitations++
 			for source := range gold {
 				for _, part := range mapping.Partitions[source] {
-					if part.EvidenceID == citation.EvidenceID && strings.Contains(corpus[source].Content, citation.Quote) {
+					runes := []rune(corpus[source].Content)
+					if part.EvidenceID == citation.EvidenceID && part.SpanStart >= 0 && part.SpanEnd <= len(runes) && part.SpanStart < part.SpanEnd && strings.Contains(string(runes[part.SpanStart:part.SpanEnd]), citation.Quote) {
 						cited[source] = true
 					}
 				}
@@ -283,11 +271,19 @@ func ScoreObservation(question Question, observation Observation, corpus map[str
 }
 
 func NewReport(manifest Manifest, corpusCount, questionCount int) Report {
-	return Report{Identity: Reproducibility{Version: 1, RunID: manifest.RunID, WorkflowRunID: manifest.WorkflowRunID, SourceRevision: manifest.SourceRevision, Image: manifest.Image, RegistryHash: manifest.RegistryHash, Dataset: manifest.Dataset, Model: manifest.Model, EmbeddingModel: manifest.EmbeddingModel, EmbeddingDimensions: manifest.EmbeddingDimensions, ContextWindowTokens: manifest.ContextWindowTokens, SeedImage: manifest.SeedImage, ScoringPolicy: "public-rag-em-f1-canonical-sources-v1"}, ExpectedAnswers: questionCount * 4, CorpusRows: corpusCount, Scores: []CaseScore{}, NativeMeasurements: []NativeObservation{}, Limitations: []string{"Complete published curated packs; original upstream datasets are larger.", "Pinned dataset README supplies no clear common license; upstream attribution and licensing remain dataset-specific.", "Reported token totals include only available measurements; unavailable and partial measurements remain explicit.", "Actual gateway billing is unavailable; no monetary cost is inferred.", "Current-run provider usage excludes historical seed preparation.", "Retrieval uses original canonical source IDs at the first 1/5/10 Evidence slots; partitions and equivalent IDs add no extra source credit."}}
+	axes := 4
+	if manifest.PairArm != "" {
+		axes = 2
+	}
+	return Report{Identity: Reproducibility{PairArm: manifest.PairArm, PairShard: manifest.PairShard, ParentSeedImage: manifest.ParentSeedImage, Version: 1, RunID: manifest.RunID, WorkflowRunID: manifest.WorkflowRunID, SourceRevision: manifest.SourceRevision, Image: manifest.Image, RegistryHash: manifest.RegistryHash, Dataset: manifest.Dataset, Model: manifest.Model, EmbeddingModel: manifest.EmbeddingModel, EmbeddingDimensions: manifest.EmbeddingDimensions, ContextWindowTokens: manifest.ContextWindowTokens, SeedImage: manifest.SeedImage, ScoringPolicy: "public-rag-em-f1-canonical-sources-v1"}, ExpectedAnswers: questionCount * axes, CorpusRows: corpusCount, Scores: []CaseScore{}, NativeMeasurements: []NativeObservation{}, Limitations: []string{"Complete published curated packs; original upstream datasets are larger.", "Pinned dataset README supplies no clear common license; upstream attribution and licensing remain dataset-specific.", "Reported token totals include only available measurements; unavailable and partial measurements remain explicit.", "Actual gateway billing is unavailable; no monetary cost is inferred.", "Current-run provider usage excludes historical seed preparation.", "Retrieval uses original canonical source IDs at the first 1/5/10 Evidence slots; partitions and equivalent IDs add no extra source credit."}}
 }
 
 func FinalizeReport(report *Report) error {
-	questions := report.ExpectedAnswers / 4
+	conditions := []string{"off", "on"}
+	if report.Identity.PairArm != "" {
+		conditions = []string{"on"}
+	}
+	questions := report.ExpectedAnswers / (2 * len(conditions))
 	if questions <= 0 {
 		return errors.New("invalid expected denominator")
 	}
@@ -305,7 +301,7 @@ func FinalizeReport(report *Report) error {
 		a, b := report.Scores[i], report.Scores[j]
 		return a.Condition+":"+a.Policy+":"+a.QuestionID < b.Condition+":"+b.Policy+":"+b.QuestionID
 	})
-	for _, condition := range []string{"off", "on"} {
+	for _, condition := range conditions {
 		for _, policy := range []string{"single", "multi_turn"} {
 			axis := AxisSummary{Condition: condition, Policy: policy, Expected: questions}
 			for _, score := range report.Scores {
@@ -370,6 +366,9 @@ func FinalizeReport(report *Report) error {
 	}
 	report.OntologyDelta = map[string]map[string]float64{}
 	for _, policy := range []string{"single", "multi_turn"} {
+		if len(conditions) == 1 {
+			break
+		}
 		var off, on AxisSummary
 		for _, axis := range report.Matrix {
 			if axis.Policy == policy {
@@ -384,4 +383,23 @@ func FinalizeReport(report *Report) error {
 	}
 	report.Complete = report.Failure == "" && report.CaptureComplete && report.CompletedAnswers == report.ExpectedAnswers && report.ImportedRows == report.CorpusRows
 	return nil
+}
+
+func initialSourceRecall(initial MemoryCall, canonical map[string]CanonicalEvidence, gold map[string]bool, k int) float64 {
+	if initial.Error != "" {
+		return 0
+	}
+	found := map[string]bool{}
+	rows, _ := initial.Result["results"].([]any)
+	for index, raw := range rows {
+		if index >= k {
+			break
+		}
+		row, _ := raw.(map[string]any)
+		evidence := canonical[stringValue(row["evidence_id"])]
+		if gold[evidence.SourceID] {
+			found[evidence.SourceID] = true
+		}
+	}
+	return float64(len(found)) / float64(len(gold))
 }

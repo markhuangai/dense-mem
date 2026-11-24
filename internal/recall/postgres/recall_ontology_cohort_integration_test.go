@@ -11,9 +11,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	evalharness "github.com/markhuangai/dense-mem/internal/testfixture/evaluation"
+	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,7 +49,7 @@ func TestRecallOntologyFrozenCohort(t *testing.T) {
 				meanings[source.Text], goldIDs[handle.ID] = source.EquivalenceKey, source.ID
 			}
 			if testCase.Override != "" {
-				f.override(t, ontology.OverrideAction(testCase.Override), handles)
+				f.rejectHistoricalOverride(t, ontology.OverrideAction(testCase.Override), handles)
 			}
 			provider, calls := f.organizer(t, meanings)
 			_, err := provider.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
@@ -61,6 +61,15 @@ func TestRecallOntologyFrozenCohort(t *testing.T) {
 			input.OrganizationEnabled = true
 			after, err := f.search.RecallEvidence(f.actor(2, "member"), input)
 			require.NoError(t, err)
+			if testCase.Override != "" {
+				require.Len(t, before.Results, 2)
+				require.Len(t, after.Results, 1)
+				hit := after.Results[0]
+				require.ElementsMatch(t, []string{handles[0].ID, handles[1].ID}, append([]string{hit.EvidenceID}, hit.EquivalentEvidenceIDs...))
+				require.Equal(t, priorCalls, calls.Load())
+				totalSources += len(handles)
+				return
+			}
 			scoreResult := func(result *recallcontract.RecallEvidenceResult) evalharness.OrganizationScore {
 				items := []evalharness.OrganizationItem{}
 				for _, hit := range result.Results {
@@ -79,11 +88,8 @@ func TestRecallOntologyFrozenCohort(t *testing.T) {
 				return score
 			}
 			beforeScore, afterScore := scoreResult(before), scoreResult(after)
-			if testCase.ID == "exact_duplicates" || testCase.ID == "paraphrases" || testCase.ID == "manager_grouping" {
+			if testCase.ID == "exact_duplicates" || testCase.ID == "paraphrases" {
 				require.Less(t, afterScore.RepeatedSlots, beforeScore.RepeatedSlots)
-			}
-			if testCase.ID == "manager_separation" {
-				require.Len(t, after.Results, len(handles))
 			}
 			require.Equal(t, priorCalls, calls.Load(), "Recall added a provider call")
 			totalSources += len(handles)

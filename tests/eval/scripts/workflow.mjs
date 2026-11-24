@@ -82,7 +82,9 @@ export function location(env) {
   if (!/^[a-z0-9_]+$/.test(dataset || "")) throw new Error("Invalid dataset job identity");
   const seedBuildID = env.EVAL_LOCAL_SEED_ID;
   if (seedBuildID && (env.GITHUB_ACTIONS === "true" || !/^local-[a-f0-9]{32}$/.test(seedBuildID) || !path.isAbsolute(env.EVAL_LOCAL_SEED_ROOT || ""))) throw new Error("Invalid local seed runtime identity");
-  const runID = `${seedBuildID || env.GITHUB_RUN_ID}-${dataset}`;
+  const phase = env.EVAL_PAIR_PHASE || "";
+  if (phase && (!/^(verify|score|counterevidence|lexical)$/.test(phase) || !/^(baseline|candidate)$/.test(env.EVAL_PAIR_ARM) || !/^[0-9]{1,2}$/.test(env.EVAL_PAIR_SHARD || "0"))) throw new Error("Invalid paired runtime identity");
+  const runID = `${seedBuildID || env.GITHUB_RUN_ID}-${dataset}${phase ? `-${env.EVAL_PAIR_ARM}-${phase}-${env.EVAL_PAIR_SHARD || "0"}` : ""}`;
   const directory = path.join(seedBuildID ? env.EVAL_LOCAL_SEED_ROOT : env.RUNNER_TEMP, `dense-mem-eval-${runID}`);
   return { dataset, runID, directory, seedBuildID, stateFile: path.join(directory, "runtime.json"), manifestFile: path.join(directory, "manifest.json"),
     checkpointFile: path.join(directory, "import-checkpoint.json") };
@@ -154,17 +156,18 @@ export async function setup(env, options = {}) {
   const preparing = operation === "prepare" || operation === "bootstrap";
   const { signal, intakeProof = false, skipAISecurityReview = false, resumable = false } = options;
   const seedImage = options.seedImage ?? env.EVAL_SEED_IMAGE ?? "";
+  const preparingTopics = operation === "prepare-topics";
   const bootable = !preparing && !intakeProof;
   const seedOptions = { intakeProof: intakeProof && !preparing, bootable, allowLocal: fixture || operation === "verify-seed" };
   signal?.throwIfAborted();
-  if (paths.seedBuildID && (env.EVAL_MODE !== "live" || (!preparing && operation !== "verify-seed"))) throw new Error("Local runtime permits only public seed preparation and restore verification");
+  if (paths.seedBuildID && (env.EVAL_MODE !== "live" || (!preparing && !preparingTopics && operation !== "verify-seed"))) throw new Error("Local runtime permits only public seed preparation and restore verification");
   if (!paths.seedBuildID) {
     requireRunner(env);
     if (operation !== "run" && !(fixture && operation === "prepare")) throw new Error("Hosted runtime permits only scoring and synthetic fixture preparation");
   }
   if (intakeProof && (!paths.seedBuildID || !options.dataDirectory || (operation !== "prepare" && operation !== "verify-seed"))) throw new Error("Intake proof requires a local seed runtime and frozen public inputs");
   if (skipAISecurityReview && (!paths.seedBuildID || operation !== "prepare" || !seedImage)) throw new Error("AI security review can only be skipped during local preparation from a public bootstrap");
-  if (resumable && (!paths.seedBuildID || operation !== "prepare" || intakeProof || !seedImage)) throw new Error("Only local public seed preparation supports checkpoints");
+  if (resumable && (!paths.seedBuildID || (!preparingTopics && operation !== "prepare") || intakeProof || !seedImage)) throw new Error("Only local public seed preparation supports checkpoints");
   if (bootable && !seedImage) throw new Error("Evaluation requires a bootable PostgreSQL seed image");
   const checkpoint = resumable && fs.existsSync(paths.checkpointFile) ? read(paths.checkpointFile) : null;
   const configured = fixture ? { model: "fixture", context: 300_000, verifier: "", embedding: "" } : configuration(env, { allowHTTPVerifier: Boolean(paths.seedBuildID) });
@@ -188,6 +191,9 @@ export async function setup(env, options = {}) {
   const deadline = new Date(Number(env.EVAL_MODEL_DEADLINE_EPOCH) * 1000);
   if (!Number.isFinite(deadline.getTime()) || deadline <= new Date() || deadline > Date.now() + 330 * 60_000) throw new Error("Runner model deadline is invalid");
   const manifest = { version: 1, run_id: paths.runID, workflow_run_id: paths.seedBuildID ? "" : env.GITHUB_RUN_ID, seed_build_id: paths.seedBuildID, source_revision: env.EVAL_SOURCE_REVISION, image: env.EVAL_IMAGE, registry_sha256: sha256(registryBytes), dataset: paths.dataset, mode: env.EVAL_MODE, operation, model: configured.model, embedding_model: "text-embedding-3-small", embedding_dimensions: 1536, context_window_tokens: configured.context, import_workers: configured.importWorkers, base_release: env.EVAL_BASE_RELEASE || (fixture ? "v0.0.0" : ""), seed_image: seedImage, seed_dir: seedDir, model_deadline: deadline.toISOString(), data_dir: dataDir, output_dir: outputDir, timings_ms: {}, intake_proof: intakeProof, skip_ai_security_review: skipAISecurityReview };
+  if (env.EVAL_PAIR_ARM) {
+    Object.assign(manifest, { pair_arm: env.EVAL_PAIR_ARM, parent_seed_image: preparingTopics ? seedImage : env.EVAL_PARENT_SEED_IMAGE, pair_phase: env.EVAL_PAIR_PHASE || "", pair_shard: Number(env.EVAL_PAIR_SHARD || 0), pair_shards: Number(env.EVAL_PAIR_SHARDS || 0) });
+  }
   if (checkpoint) manifest.resume_scope = checkpoint.scope;
   save(paths.manifestFile, manifest);
   const prefix = `densemem-eval-${paths.runID}`;
@@ -229,10 +235,13 @@ export async function setup(env, options = {}) {
   const pgEnv = path.join(paths.directory, "postgres.env");
   fs.writeFileSync(pgEnv, `POSTGRES_USER=densemem\nPOSTGRES_DB=densemem\nPOSTGRES_PASSWORD=${password}\n`, { mode: 0o600 });
   const pgStarted = Date.now();
-  docker(["run", "--detach", "--name", `${prefix}-postgres`, "--label", `${label}=${paths.runID}`, "--network", state.network, "--network-alias", "postgres", "--publish", "127.0.0.1::5432", "--env-file", pgEnv, "--mount", `type=volume,source=${state.volume},target=/var/lib/postgresql`, bootable ? seedImage : postgresImage, "postgres", "-c", `max_connections=${databaseCapacity(configured.importWorkers).postgres}`]);
+  docker(["run", "--detach", "--name", `${prefix}-postgres`, "--label", `${label}=${paths.runID}`, "--network", state.network, "--network-alias", "postgres", "--publish", "127.0.0.1::5432", "--env-file", pgEnv, "--mount", `type=volume,source=${state.volume},target=/var/lib/postgresql`, bootable ? seedImage : postgresImage, "postgres", "-c", `max_connections=${databaseCapacity(configured.importWorkers).postgres}`, ...(preparingTopics ? ["-c","shared_preload_libraries=pg_stat_statements"] : [])]);
   const pgDeadline = Date.now() + 120_000;
   while (spawnSync("docker", ["exec", `${prefix}-postgres`, "pg_isready", "--host=127.0.0.1", "-U", "densemem"], { stdio: "ignore", timeout: 5000 }).status !== 0) { if (Date.now() >= pgDeadline) throw new Error("Runner PostgreSQL readiness timed out"); await delay(1000, undefined, { signal }); }
   manifest.timings_ms.postgres_startup = Date.now() - pgStarted;
+  if (preparingTopics) {
+    docker(["exec", `${prefix}-postgres`, "psql", "-v", "ON_ERROR_STOP=1", "-U", "densemem", "-d", "postgres", "-c", "CREATE EXTENSION IF NOT EXISTS pg_stat_statements"]);
+  }
   if (seed && !bootable && !checkpoint) {
     const started = Date.now(); restoreSeed(docker, `${prefix}-postgres`, inputSeedDir); manifest.timings_ms.restore = Date.now() - started;
     await verifySeedCredentialExclusions(docker, `${prefix}-postgres`, inputSeedDir, [password, controlToken, apiKey, state.environment.DENSE_MEM_EVAL_API_KEY, state.environment.DENSE_MEM_EVAL_EMBED_API_KEY]);
@@ -245,6 +254,10 @@ export async function setup(env, options = {}) {
     configured.verifier = configured.embedding = `http://127.0.0.1:${port(`${prefix}-provider`, 8787)}/v1`;
   }
   const serverEnv = serverEnvironment({ ...configured, verifier: serverVerifier, embedding: serverEmbedding }, state.environment);
+  if (env.EVAL_PAIR_ARM === "candidate") {
+    serverEnv.RECALL_EXPANSION_ENABLED = "true";
+    serverEnv.RECALL_DISABLE_QUERY_EMBEDDING = env.EVAL_PAIR_PHASE === "lexical" ? "true" : "false";
+  }
   const admissionMount = [];
   if (skipAISecurityReview) {
     serverEnv.DANGEROUSLY_SKIP_AI_SECURITY_CHECK = "true";
@@ -276,9 +289,10 @@ export async function setup(env, options = {}) {
     }
   }
   if (operation === "bootstrap" || (preparing && !seed)) {
-    const values = { ONTOLOGY_MAINTENANCE_ENABLED: "false", ONTOLOGY_MAINTENANCE_MODEL: configured.model, ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY: "4", ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY: "4", ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS: String(configured.context) };
-    await control(state, "PATCH", "/config/ontology-maintenance", { items: Object.entries(values).map(([key, value]) => ({ key, value })) });
-    await control(state, "POST", "/ontology/pause", { operation_key: `pause-${paths.runID}` });
+    const values = { TOPIC_MAINTENANCE_ENABLED: "false", TOPIC_MAINTENANCE_MODEL: configured.model, TOPIC_MAINTENANCE_MAX_CONCURRENCY: "4", TOPIC_MAINTENANCE_TEAM_MAX_CONCURRENCY: "4", TOPIC_MAINTENANCE_CONTEXT_WINDOW_TOKENS: String(configured.context) };
+    const legacy = docker(["exec", `${prefix}-postgres`, "psql", "-U", "densemem", "-d", "densemem", "-Atc", "SELECT to_regclass('public.topic_record_heads') IS NULL"]).trim() === "t";
+    await control(state, "PATCH", legacy ? "/config/ontology-maintenance" : "/config/topic-maintenance", { items: Object.entries(values).map(([key, value]) => ({ key: legacy ? key.replace(/^TOPIC_/, "ONTOLOGY_") : key, value })) });
+    await control(state, "POST", legacy ? "/ontology/pause" : "/topic-maintenance/pause", { operation_key: `pause-${paths.runID}` });
   }
   save(paths.stateFile, state); save(paths.manifestFile, manifest);
   if (resumable && !checkpoint) save(paths.checkpointFile, checkpointIdentity);

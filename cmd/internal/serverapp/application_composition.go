@@ -17,33 +17,37 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
 	settings "github.com/markhuangai/dense-mem/internal/settings"
+	"github.com/markhuangai/dense-mem/internal/topicassignment"
 	traceapp "github.com/markhuangai/dense-mem/internal/trace"
 )
 
 type applicationCompositionDependencies struct {
-	PublicSeedAdmission    *rememberapp.PublicSeedAdmission
-	Knowledge              *knowledgepostgres.Store
-	RememberPersistence    remembercontract.Persistence
-	TraceStore             traceapp.SemanticTraceStore
-	Search                 searchcontract.SearchRepository
-	RecallSearch           recallcontract.SearchRepository
-	RecallFeedbackEvents   recallcontract.FeedbackEventRepository
-	Assessor               assessor.Provider
-	Decisions              modelprovider.DecisionProvider
-	DecisionSettings       modelprovider.DecisionSettings
-	SessionAssessor        assessor.Provider
-	SessionEnabled         bool
-	RememberModel          string
-	GeneratorTransport     modelprovider.StructuredTransport
-	EmbeddingProvider      embeddingcontract.EmbeddingProviderInterface
-	RetryEmbeddingProvider embeddingcontract.EmbeddingProviderInterface
-	AssessmentLimits       assessor.SemanticAssessmentLimits
-	Metrics                observability.DiscoverabilityMetrics
-	Logger                 observability.LogProvider
-	DiagnosticProtector    observability.DiagnosticProtector
-	Audit                  securityRejectionAuditAppender
-	AppConfig              settings.AppConfigService
-	TelemetryPrometheus    *operations.PrometheusTelemetryService
+	TopicAssignment             *topicassignment.Service
+	PublicSeedAdmission         *rememberapp.PublicSeedAdmission
+	Knowledge                   *knowledgepostgres.Store
+	RememberPersistence         remembercontract.Persistence
+	TraceStore                  traceapp.SemanticTraceStore
+	Search                      searchcontract.SearchRepository
+	RecallSearch                recallcontract.SearchRepository
+	RecallFeedbackEvents        recallcontract.FeedbackEventRepository
+	Assessor                    assessor.Provider
+	Decisions                   modelprovider.DecisionProvider
+	DecisionSettings            modelprovider.DecisionSettings
+	SessionAssessor             assessor.Provider
+	SessionEnabled              bool
+	RecallExpansionEnabled      bool
+	RecallDisableQueryEmbedding bool
+	RememberModel               string
+	GeneratorTransport          modelprovider.StructuredTransport
+	EmbeddingProvider           embeddingcontract.EmbeddingProviderInterface
+	RetryEmbeddingProvider      embeddingcontract.EmbeddingProviderInterface
+	AssessmentLimits            assessor.SemanticAssessmentLimits
+	Metrics                     observability.DiscoverabilityMetrics
+	Logger                      observability.LogProvider
+	DiagnosticProtector         observability.DiagnosticProtector
+	Audit                       securityRejectionAuditAppender
+	AppConfig                   settings.AppConfigService
+	TelemetryPrometheus         *operations.PrometheusTelemetryService
 }
 
 type applicationBundle struct {
@@ -60,6 +64,7 @@ func buildApplicationBundle(deps applicationCompositionDependencies) application
 	embeddingExecutor := semanticwrite.NewProviderExecutor(deps.EmbeddingProvider)
 	rememberService := buildRememberApplication(rememberApplicationDependencies{
 		PublicSeedAdmission: deps.PublicSeedAdmission,
+		TopicAssignment:     deps.TopicAssignment,
 		Persistence:         deps.RememberPersistence,
 		Assessor:            deps.Assessor,
 		Decisions:           deps.Decisions,
@@ -78,12 +83,14 @@ func buildApplicationBundle(deps applicationCompositionDependencies) application
 		Logger: deps.Logger, DiagnosticProtector: deps.DiagnosticProtector, Audit: deps.Audit,
 	}, deps.Knowledge, deps.GeneratorTransport, deps.RememberModel, deps.SessionEnabled)
 	recallService := buildRecallApplication(recallApplicationDependencies{
-		DiagnosticProtector: deps.DiagnosticProtector,
-		Search:              deps.RecallSearch,
-		Provider:            deps.RetryEmbeddingProvider,
-		OntologyConfig:      deps.AppConfig,
-		Metrics:             deps.Metrics,
-		Decisions:           deps.Decisions, DecisionSettings: deps.DecisionSettings, Logger: deps.Logger,
+		DiagnosticProtector:   deps.DiagnosticProtector,
+		Search:                deps.RecallSearch,
+		ExpansionEnabled:      deps.RecallExpansionEnabled,
+		DisableQueryEmbedding: deps.RecallDisableQueryEmbedding,
+		Provider:              deps.RetryEmbeddingProvider,
+		OntologyConfig:        deps.AppConfig,
+		Metrics:               deps.Metrics,
+		Decisions:             deps.Decisions, DecisionSettings: deps.DecisionSettings, Logger: deps.Logger,
 	})
 	lifecycleService := buildLifecycleApplication(lifecycleApplicationDependencies{
 		Port: deps.Knowledge,

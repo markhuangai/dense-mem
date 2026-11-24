@@ -42,7 +42,7 @@ func verifyRuntime(ctx context.Context, manifest evalharness.Manifest) error {
 }
 
 func validateRuntime(manifest evalharness.Manifest, setting func(string) string, server, postgres runtimeContainer) error {
-	if manifest.RunID != manifest.ExecutionID()+"-"+manifest.Dataset || setting("EVAL_SERVER_CONTAINER") != "densemem-eval-"+manifest.RunID+"-server" {
+	if manifest.RunID != manifest.ExpectedRunID() || setting("EVAL_SERVER_CONTAINER") != "densemem-eval-"+manifest.RunID+"-server" {
 		return errors.New("runtime does not belong to this dataset job")
 	}
 	for _, container := range []runtimeContainer{server, postgres} {

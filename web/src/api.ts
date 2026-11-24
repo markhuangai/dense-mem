@@ -2,8 +2,8 @@ import type { DecisionConfig, GeneralConfig, GeneralConfigInput, GeneralConfigIt
 import type { MemoryAccess } from "./credentialPermissions";
 export type { MemoryAccess, MemoryPermission } from "./credentialPermissions";
 export type { DecisionConfig, DecisionTasks, GeneralConfig, GeneralConfigInput, GeneralConfigItem, SSOConfigInput } from "./configuration-api-types";
-import type { OntologyMaintenanceConfig, OntologyMaintenanceRun, OntologyMaintenanceStatus, OntologyMaintenanceRunPage } from "./ontology-maintenance-api-types";
-export type { OntologyMaintenanceConfig, OntologyMaintenanceRun, OntologyMaintenanceStatus, OntologyMaintenanceRunPage } from "./ontology-maintenance-api-types";
+import type { TopicMaintenanceConfig, TopicMaintenanceRun, TopicMaintenanceStatus, TopicMaintenanceRunPage } from "./topic-maintenance-api-types";
+export type { TopicMaintenanceConfig, TopicMaintenanceRun, TopicMaintenanceStatus, TopicMaintenanceRunPage } from "./topic-maintenance-api-types";
 import type { ControlTelemetryQuery, TelemetrySnapshot } from "./telemetry/types";
 import type { OAuthProtectedResourceConfig } from "./oauth-protected-resource-types";
 import type { SearchConvergence } from "./search-convergence-types";
@@ -705,20 +705,20 @@ export class ControlApi {
     return this.requestEnvelope<GeneralConfig>("/config/general");
   }
 
-  getOntologyMaintenanceConfig(): Promise<OntologyMaintenanceConfig> { return this.requestEnvelope<OntologyMaintenanceConfig>("/config/ontology-maintenance"); }
+  getTopicMaintenanceConfig(): Promise<TopicMaintenanceConfig> { return this.requestEnvelope<TopicMaintenanceConfig>("/config/topic-maintenance"); }
 
-  updateOntologyMaintenanceConfig(input: GeneralConfigInput): Promise<OntologyMaintenanceConfig> { return this.requestEnvelope<OntologyMaintenanceConfig>("/config/ontology-maintenance", { method: "PATCH", body: input }); }
+  updateTopicMaintenanceConfig(input: GeneralConfigInput): Promise<TopicMaintenanceConfig> { return this.requestEnvelope<TopicMaintenanceConfig>("/config/topic-maintenance", { method: "PATCH", body: input }); }
 
-  getOntologyMaintenanceStatus(): Promise<OntologyMaintenanceStatus> { return this.requestEnvelope<OntologyMaintenanceStatus>("/ontology/status"); }
+  getTopicMaintenanceStatus(): Promise<TopicMaintenanceStatus> { return this.requestEnvelope<TopicMaintenanceStatus>("/topic-maintenance/status"); }
 
-  listOntologyMaintenanceRuns(cursor = ""): Promise<OntologyMaintenanceRunPage> { return this.requestEnvelope<OntologyMaintenanceRunPage>(`/ontology/runs?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`); }
+  listTopicMaintenanceRuns(cursor = ""): Promise<TopicMaintenanceRunPage> { return this.requestEnvelope<TopicMaintenanceRunPage>(`/topic-maintenance/runs?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`); }
 
-  runOntologyMaintenance(operationKey: string, maxBatches: number, retryRunId?: string): Promise<OntologyMaintenanceRun> {
-    const path = retryRunId ? `/ontology/runs/${encodeURIComponent(retryRunId)}/retry` : "/ontology/runs";
-    return this.requestEnvelope<OntologyMaintenanceRun>(path, { method: "POST", body: { operation_key: operationKey, max_batches: maxBatches } });
+  runTopicMaintenance(operationKey: string, maxBatches: number, retryRunId?: string): Promise<TopicMaintenanceRun> {
+    const path = retryRunId ? `/topic-maintenance/runs/${encodeURIComponent(retryRunId)}/retry` : "/topic-maintenance/runs";
+    return this.requestEnvelope<TopicMaintenanceRun>(path, { method: "POST", body: { operation_key: operationKey, max_batches: maxBatches } });
   }
 
-  pauseOntologyMaintenance(operationKey: string, paused: boolean): Promise<OntologyMaintenanceRun> { return this.requestEnvelope<OntologyMaintenanceRun>(`/ontology/${paused ? "pause" : "resume"}`, { method: "POST", body: { operation_key: operationKey } }); }
+  pauseTopicMaintenance(operationKey: string, paused: boolean): Promise<TopicMaintenanceRun> { return this.requestEnvelope<TopicMaintenanceRun>(`/topic-maintenance/${paused ? "pause" : "resume"}`, { method: "POST", body: { operation_key: operationKey } }); }
 
 
 

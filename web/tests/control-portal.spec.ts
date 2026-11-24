@@ -2,7 +2,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { navigate, openNavigation, confirmAction, expectPageContained } from "../tests-support/portal";
 import { checkControlLayout } from "../tests-support/control-layout";
 import { expect, type Locator, type Page, test } from "@playwright/test";
-import type { OntologyMaintenanceConfig, OntologyMaintenanceStatus } from "../src/api";
+import type { TopicMaintenanceConfig, TopicMaintenanceStatus } from "../src/api";
 
 const team = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -717,17 +717,17 @@ async function mockApi(page: Page, state: { teams: TestProfile[]; keys: TestKey[
   let teams = [...state.teams];
   let keys = [...state.keys];
   let bans = [...(state.bans ?? [])];
-  const ontologyPolicy = { enabled: true, cadence_hours: 12 as const, start_time_local: "03:00", timezone: "UTC", model: "maintenance-model", max_concurrency: 1, context_window_tokens: 300000, settings_version: "1" };
-  let ontologyConfig: OntologyMaintenanceConfig = {
-    update_time: "2026-10-18T12:00:00Z", effective: ontologyPolicy,
-    items: Object.entries({ ONTOLOGY_MAINTENANCE_ENABLED: "true", ONTOLOGY_MAINTENANCE_CADENCE_HOURS: "12", ONTOLOGY_MAINTENANCE_START_TIME_LOCAL: "03:00", ONTOLOGY_MAINTENANCE_MODEL: "maintenance-model", ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY: "1", ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS: "300000" }).map(([key, value]) => ({ key, value, effective_value: value, updated_at: "2026-10-18T12:00:00Z" })),
+  const topicPolicy = { enabled: true, cadence_hours: 12 as const, start_time_local: "03:00", timezone: "UTC", model: "maintenance-model", max_concurrency: 1, context_window_tokens: 300000, settings_version: "1" };
+  let topicConfig: TopicMaintenanceConfig = {
+    update_time: "2026-10-18T12:00:00Z", effective: topicPolicy,
+    items: Object.entries({ TOPIC_MAINTENANCE_ENABLED: "true", TOPIC_MAINTENANCE_CADENCE_HOURS: "12", TOPIC_MAINTENANCE_START_TIME_LOCAL: "03:00", TOPIC_MAINTENANCE_MODEL: "maintenance-model", TOPIC_MAINTENANCE_MAX_CONCURRENCY: "1", TOPIC_MAINTENANCE_CONTEXT_WINDOW_TOKENS: "300000" }).map(([key, value]) => ({ key, value, effective_value: value, updated_at: "2026-10-18T12:00:00Z" })),
   };
-  const ontologyUsage = { attempts: 10, unreconciled_attempts: 1, unavailable_usage_attempts: 1, partial_usage_attempts: 0, reported_input_tokens: 144000, reported_output_tokens: 34000, reported_total_tokens: 178000 };
-  const ontologyStatus: OntologyMaintenanceStatus = {
-    active_work: 1, usage: ontologyUsage, historical_usage: ontologyUsage,
+  const topicUsage = { attempts: 10, unreconciled_attempts: 1, unavailable_usage_attempts: 1, partial_usage_attempts: 0, reported_input_tokens: 144000, reported_output_tokens: 34000, reported_total_tokens: 178000 };
+  const topicStatus: TopicMaintenanceStatus = {
+    active_work: 1, usage: topicUsage, historical_usage: topicUsage,
     observed_at: "2026-10-18T12:00:00Z", enabled: true, paused: false, discovery_complete: false, coverage_complete: false,
-    counts: { eligible: 1024, organized: 842, pending: 112, failed: 8, ambiguous: 18 }, pending_policy: ontologyPolicy,
-    window: { id: "window-a", starts_at: "2026-10-18T03:00:00Z", ends_at: "2026-10-18T15:00:00Z", policy: ontologyPolicy, usage: ontologyUsage },
+    counts: { eligible: 1024, organized: 842, pending: 112, failed: 8, ambiguous: 18 }, pending_policy: topicPolicy,
+    window: { id: "window-a", starts_at: "2026-10-18T03:00:00Z", ends_at: "2026-10-18T15:00:00Z", policy: topicPolicy, usage: topicUsage },
   };
   let recallFeedbackConfig = {
     update_time: "2026-06-16T12:00:00Z",
@@ -744,15 +744,15 @@ async function mockApi(page: Page, state: { teams: TestProfile[]; keys: TestKey[
     if (url.includes("/evidence-conflicts?")) return route.fulfill({ json: { data: { items: [1, 2, 3].map((index) => ({ team_id: team.id, conflict_id: `${index}1111111-1111-4111-8111-111111111111`, space_id: "shared-space", space_generation: 1, kind: "evidence_conflict", status: "open", version: 1, created_at: "2026-10-18T12:00:00Z", updated_at: "2026-10-18T12:00:00Z", positions: [{ position_id: `position-${index}`, evidence_id: `evidence-${index}`, occurrence_id: `occurrence-${index}`, quote: "A bounded cited position", span_start: 0, span_end: 23, authority: "primary", submitted: true, created_at: "2026-10-18T12:00:00Z" }] })), next_cursor: null } } });
     if (url.includes("/conflicts/queue")) return route.fulfill({ json: { data: { items: [], next_cursor: null, summary: { open_count: 0, overdue_count: 0, active_lease_count: 0, expired_lease_count: 0, failed_assessment_count_24h: 0, lww_resolution_count_24h: 0, pending_derived_task_count: 0, failed_derived_task_count: 0, oldest_open_age_seconds: 0, oldest_overdue_age_seconds: 0, collected_at: "2026-10-18T12:00:00Z" } } } });
 
-    if (url.includes("/config/ontology-maintenance")) {
+    if (url.includes("/config/topic-maintenance")) {
       if (method === "PATCH") {
         const values = route.request().postDataJSON().items as Array<{ key: string; value: string }>;
-        ontologyConfig = { ...ontologyConfig, items: ontologyConfig.items.map((item) => ({ ...item, value: values.find((value) => value.key === item.key)!.value })) };
+        topicConfig = { ...topicConfig, items: topicConfig.items.map((item) => ({ ...item, value: values.find((value) => value.key === item.key)!.value })) };
       }
-      return route.fulfill({ json: { data: ontologyConfig } });
+      return route.fulfill({ json: { data: topicConfig } });
     }
-    if (url.endsWith("/ontology/status")) return route.fulfill({ json: { data: ontologyStatus } });
-    if (url.includes("/ontology/runs?")) return route.fulfill({ json: { data: { runs: [] } } });
+    if (url.endsWith("/topic-maintenance/status")) return route.fulfill({ json: { data: topicStatus } });
+    if (url.includes("/topic-maintenance/runs?")) return route.fulfill({ json: { data: { runs: [] } } });
 
     if (url.endsWith("/session")) {
       const authorization = route.request().headers().authorization ?? "";

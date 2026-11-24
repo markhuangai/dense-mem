@@ -19,10 +19,10 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	recall "github.com/markhuangai/dense-mem/internal/recall"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -138,8 +138,8 @@ func TestEvidenceOnlyPostgresTopicsRejectUnavailableAndReauthorizeCurrentMembers
 
 type evidenceOnlyTopicConfig bool
 
-func (c evidenceOnlyTopicConfig) OntologyMaintenanceRuntimeConfig(context.Context) (domain.OntologyMaintenanceConfig, error) {
-	return domain.OntologyMaintenanceConfig{Enabled: bool(c)}, nil
+func (c evidenceOnlyTopicConfig) TopicMaintenanceRuntimeConfig(context.Context) (domain.TopicMaintenanceConfig, error) {
+	return domain.TopicMaintenanceConfig{Enabled: bool(c)}, nil
 }
 
 func TestEvidenceOnlyPostgresTopicLogDiagnosis(t *testing.T) {

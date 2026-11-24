@@ -25,14 +25,14 @@ import (
 	knowledgepg "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
-	contract "github.com/markhuangai/dense-mem/internal/ontology/contract"
-	ontologypg "github.com/markhuangai/dense-mem/internal/ontology/postgres"
 	operations "github.com/markhuangai/dense-mem/internal/operations"
 	operationspg "github.com/markhuangai/dense-mem/internal/operations/postgres"
 	"github.com/markhuangai/dense-mem/internal/provider/structured"
 	"github.com/markhuangai/dense-mem/internal/settings"
 	settingspg "github.com/markhuangai/dense-mem/internal/settings/postgres"
+	"github.com/markhuangai/dense-mem/internal/topics/assessment"
+	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
+	ontologypg "github.com/markhuangai/dense-mem/internal/topics/postgres"
 	"github.com/stretchr/testify/require"
 )
 
@@ -59,7 +59,7 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 				Evidence: []knowledge.EvidenceInput{{FragmentID: evidenceID, Content: content, ForceInsert: true}}})
 			require.NoError(t, err)
 			configuration := settings.NewAppConfigService(settingspg.NewAppConfigRepository(app, rls), nil)
-			_, err = configuration.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyEnabled: "true", domain.AppConfigOntologyModel: "fixture-model", domain.AppConfigOntologyContextWindow: "300000"}, "control", "", "")
+			_, err = configuration.UpdateTopicMaintenanceSettings(ctx, map[string]string{domain.AppConfigTopicMaintenanceEnabled: "true", domain.AppConfigTopicMaintenanceModel: "fixture-model", domain.AppConfigTopicMaintenanceContextWindow: "300000"}, "control", "", "")
 			require.NoError(t, err)
 			const secret = "known-provider-secret"
 			var calls atomic.Int32
@@ -147,14 +147,14 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 			require.NoError(t, logger.AttachSink(logs))
 			client := observability.DiagnosticHTTPClient(upstream.Client(), rootDiagnosticLogger(logger), protector)
 			provider := structured.NewOpenAI(&config.Config{AIVerifierAPIURL: upstream.URL, AIVerifierAPIKey: secret, AIVerifierModel: "fixture-model"}, client)
-			maintenance := buildOntologyMaintenance(ontologypg.NewStore(app, rls), configuration, provider, assessor.DefaultSemanticAssessmentLimits(), "fixture-model", time.Minute, nil, rootSlogLogger(logger), ontologyDiagnosticCapture(logs, protector, rootDiagnosticLogger(logger)))
+			maintenance := buildTopicMaintenance(ontologypg.NewStore(app, rls), configuration, provider, assessor.DefaultSemanticAssessmentLimits(), "fixture-model", time.Minute, nil, rootSlogLogger(logger), ontologyDiagnosticCapture(logs, protector, rootDiagnosticLogger(logger)))
 			var failure *domain.OperationLog
 			for range 12 {
 				_, runErr := maintenance.RunTurn(ctx)
 				if mode == "success" || mode == "repair_success" {
 					require.NoError(t, runErr)
 				}
-				page, err := logs.ListOperationLogs(context.Background(), domain.OperationLogFilter{Event: "ontology_failure_capture", TeamID: &teamID})
+				page, err := logs.ListOperationLogs(context.Background(), domain.OperationLogFilter{Event: "topic_failure_capture", TeamID: &teamID})
 				require.NoError(t, err)
 				if len(page.Items) > 0 {
 					failure = &page.Items[0]
@@ -172,13 +172,13 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 			require.NotNil(t, failure, "native maintenance must retain the failed provider exchanges")
 			if mode == "stale_source" {
 				require.Equal(t, "stale_input", failure.Attrs["failure_code"])
-				warnings, err := logs.ListOperationLogs(context.Background(), domain.OperationLogFilter{Event: "ontology_freshness_rejected", TeamID: &teamID})
+				warnings, err := logs.ListOperationLogs(context.Background(), domain.OperationLogFilter{Event: "topic_freshness_rejected", TeamID: &teamID})
 				require.NoError(t, err)
 				require.Len(t, warnings.Items, 1)
 				require.Equal(t, "WARN", warnings.Items[0].Severity)
 				require.Equal(t, "source_fingerprint", warnings.Items[0].Attrs["check"])
-				comparisonFilter := domain.OperationLogFilter{Event: "ontology_freshness_payload", TeamID: &teamID,
-					ReferenceType: "ontology_run", ReferenceID: failure.Attrs["reference_id"].(string), AttemptID: failure.Attrs["attempt_id"].(string), Limit: 500}
+				comparisonFilter := domain.OperationLogFilter{Event: "topic_freshness_payload", TeamID: &teamID,
+					ReferenceType: "topic_run", ReferenceID: failure.Attrs["reference_id"].(string), AttemptID: failure.Attrs["attempt_id"].(string), Limit: 500}
 				comparison, err := logs.ListOperationLogs(context.Background(), comparisonFilter)
 				require.NoError(t, err)
 				require.EqualValues(t, failure.Attrs["freshness_record_count"], comparison.Total)
@@ -205,7 +205,7 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 			}
 			if mode == "invalid_response" || mode == "repair_exhausted" || mode == "unused_exhausted" {
 				require.Equal(t, "provider_response_invalid", failure.Attrs["failure_code"])
-				attempts, err := logs.ListOperationLogs(context.Background(), domain.OperationLogFilter{Event: "ontology maintenance assessment attempt", TeamID: &teamID})
+				attempts, err := logs.ListOperationLogs(context.Background(), domain.OperationLogFilter{Event: "topic maintenance assessment attempt", TeamID: &teamID})
 				require.NoError(t, err)
 				require.Len(t, attempts.Items, 3)
 				for _, attempt := range attempts.Items {
@@ -229,7 +229,7 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 			} else {
 				require.NotEmpty(t, failure.Attrs["failure_code"])
 			}
-			filter := domain.OperationLogFilter{Event: "ontology_failure_payload", TeamID: &teamID, ReferenceType: "ontology_run", ReferenceID: failure.Attrs["reference_id"].(string), AttemptID: failure.Attrs["attempt_id"].(string), Limit: 500}
+			filter := domain.OperationLogFilter{Event: "topic_failure_payload", TeamID: &teamID, ReferenceType: "topic_run", ReferenceID: failure.Attrs["reference_id"].(string), AttemptID: failure.Attrs["attempt_id"].(string), Limit: 500}
 			page, err := logs.ListOperationLogs(context.Background(), filter)
 			require.NoError(t, err)
 			require.EqualValues(t, failure.Attrs["record_count"], page.Total)

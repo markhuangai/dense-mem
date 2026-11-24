@@ -8,12 +8,13 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	repository "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	assignment "github.com/markhuangai/dense-mem/internal/topicassignment/contract"
 )
 
 var errSubmissionAssessmentStaleInput = errors.New("submission assessment exact input is stale")
 
 func isRememberStaleInputError(err error) bool {
-	return errors.Is(err, errSubmissionAssessmentStaleInput) ||
+	return errors.Is(err, assignment.ErrStale) || errors.Is(err, errSubmissionAssessmentStaleInput) ||
 		errors.Is(err, repository.ErrSourceRevisionConflict) ||
 		errors.Is(err, repository.ErrEvidenceLifecycleConflict) ||
 		errors.Is(err, repository.ErrEvidenceConflictStaleInput) ||

@@ -12,6 +12,7 @@ import (
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
+	"log/slog"
 	"math"
 	"strings"
 	"time"
@@ -29,28 +30,32 @@ var ErrTopicUnavailable = recallcontract.ErrTopicUnavailable
 type RecallService = recallcontract.Service
 type RecallSearchRepository = recallcontract.SearchRepository
 type RecallOntologyConfigProvider interface {
-	OntologyMaintenanceRuntimeConfig(context.Context) (domain.OntologyMaintenanceConfig, error)
+	TopicMaintenanceRuntimeConfig(context.Context) (domain.TopicMaintenanceConfig, error)
 }
 type RecallDependencies struct {
-	Decisions           modelprovider.DecisionProvider
-	DecisionSettings    modelprovider.DecisionSettings
-	Logger              observability.LogProvider
-	DiagnosticProtector observability.DiagnosticProtector
-	Search              RecallSearchRepository
-	Provider            embeddingcontract.EmbeddingProviderInterface
-	OntologyConfig      RecallOntologyConfigProvider
-	Metrics             observability.DiscoverabilityMetrics
+	ExpansionEnabled      bool
+	DisableQueryEmbedding bool
+	Decisions             modelprovider.DecisionProvider
+	DecisionSettings      modelprovider.DecisionSettings
+	Logger                observability.LogProvider
+	DiagnosticProtector   observability.DiagnosticProtector
+	Search                RecallSearchRepository
+	Provider              embeddingcontract.EmbeddingProviderInterface
+	OntologyConfig        RecallOntologyConfigProvider
+	Metrics               observability.DiscoverabilityMetrics
 }
 type recallService struct {
-	decisions           modelprovider.DecisionProvider
-	decisionSettings    modelprovider.DecisionSettings
-	logger              observability.LogProvider
-	diagnosticProtector observability.DiagnosticProtector
-	search              RecallSearchRepository
-	retrieval           *Retrieval
-	provider            embeddingcontract.EmbeddingProviderInterface
-	ontologyConfig      RecallOntologyConfigProvider
-	metrics             observability.DiscoverabilityMetrics
+	expansionEnabled      bool
+	disableQueryEmbedding bool
+	decisions             modelprovider.DecisionProvider
+	decisionSettings      modelprovider.DecisionSettings
+	logger                observability.LogProvider
+	diagnosticProtector   observability.DiagnosticProtector
+	search                RecallSearchRepository
+	retrieval             *Retrieval
+	provider              embeddingcontract.EmbeddingProviderInterface
+	ontologyConfig        RecallOntologyConfigProvider
+	metrics               observability.DiscoverabilityMetrics
 }
 
 func NewRecallService(deps RecallDependencies) RecallService {
@@ -58,8 +63,8 @@ func NewRecallService(deps RecallDependencies) RecallService {
 	if metrics == nil {
 		metrics = observability.NoopDiscoverabilityMetrics()
 	}
-	return &recallService{decisions: deps.Decisions, decisionSettings: deps.DecisionSettings, logger: deps.Logger, diagnosticProtector: deps.DiagnosticProtector, search: deps.Search,
-		retrieval: &Retrieval{repository: deps.Search, decisions: deps.Decisions, logger: deps.Logger}, provider: deps.Provider, ontologyConfig: deps.OntologyConfig, metrics: metrics}
+	return &recallService{expansionEnabled: deps.ExpansionEnabled, disableQueryEmbedding: deps.DisableQueryEmbedding, decisions: deps.Decisions, decisionSettings: deps.DecisionSettings, logger: deps.Logger, diagnosticProtector: deps.DiagnosticProtector, search: deps.Search,
+		retrieval: &Retrieval{repository: deps.Search, decisions: deps.Decisions, logger: deps.Logger, protector: deps.DiagnosticProtector}, provider: deps.Provider, ontologyConfig: deps.OntologyConfig, metrics: metrics}
 }
 
 type RecallRequest = recallcontract.Request
@@ -111,6 +116,12 @@ func (s *recallService) Recall(ctx context.Context, req RecallRequest) (*RecallR
 			return nil, err
 		}
 		reconcileDecisionSelections(ctx, s.logger, result)
+		if s.expansionEnabled && req.Query != "" {
+			s.logTopics(ctx, slog.LevelDebug, "recall_expansion_selected", []observability.LogAttr{
+				observability.String("recall_id", result.RecallID), observability.String("method", result.RankingMethod),
+				{Key: "evidence_ids", Value: recallResultEvidenceIDs(result.Results)},
+			})
+		}
 		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "preparing_result"})
 	}
 	return result, err
@@ -127,7 +138,7 @@ func (s *recallService) recallWithExecution(ctx context.Context, req recallExecu
 	if !req.organizationReady {
 		req.organizationReady = true
 		if s.ontologyConfig != nil {
-			config, configErr := s.ontologyConfig.OntologyMaintenanceRuntimeConfig(ctx)
+			config, configErr := s.ontologyConfig.TopicMaintenanceRuntimeConfig(ctx)
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
@@ -176,7 +187,7 @@ func (s *recallService) recallWithExecution(ctx context.Context, req recallExecu
 		if req.recallEmbeddingDegradation != nil {
 			degradations = append(degradations, *req.recallEmbeddingDegradation)
 		}
-	} else if req.Query != "" {
+	} else if req.Query != "" && !s.disableQueryEmbedding {
 		embedCtx := observability.WithAIOperation(ctx, observability.AIOperationRecallEmbedding, 1)
 		vector, vectorDegradation := s.queryEmbedding(embedCtx, contract, req.Query)
 		queryEmbedding = vector
@@ -186,6 +197,7 @@ func (s *recallService) recallWithExecution(ctx context.Context, req recallExecu
 	}
 	recalled, err := s.retrieval.RecallEvidence(ctx, recallcontract.RecallEvidenceInput{
 		OrganizationEnabled: req.organizationEnabled && teamSharedBranch,
+		ExpansionEnabled:    s.expansionEnabled && req.Query != "",
 		TopicIDs:            req.TopicIDs,
 		TeamID:              actor.TeamID.String(),
 		Query:               req.Query,
@@ -204,6 +216,7 @@ func (s *recallService) recallWithExecution(ctx context.Context, req recallExecu
 		return nil, err
 	}
 	result = recallResultFromRepository(recalled, degradations)
+	result.RankingMethod = recallRankingMethod(req.Query, len(queryEmbedding) != 0, s.expansionEnabled)
 	appendEvidenceVectorFailureDegradation(result, recalled.SearchState)
 	if len(result.Degradations) > 0 {
 		result.Degradation = &result.Degradations[0]

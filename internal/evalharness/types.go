@@ -49,6 +49,12 @@ type HostQuestion struct {
 }
 
 type Manifest struct {
+	PairShard       int    `json:"pair_shard,omitempty"`
+	PairShards      int    `json:"pair_shards,omitempty"`
+	PairArm         string `json:"pair_arm,omitempty"`
+	ParentSeedImage string `json:"parent_seed_image,omitempty"`
+	PairPhase       string `json:"pair_phase,omitempty"`
+
 	Version              int                `json:"version"`
 	RunID                string             `json:"run_id"`
 	WorkflowRunID        string             `json:"workflow_run_id"`

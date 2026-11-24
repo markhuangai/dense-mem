@@ -10,8 +10,8 @@ import (
 	mw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/http/response"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/ontology"
 	access "github.com/markhuangai/dense-mem/internal/service/access"
+	ontology "github.com/markhuangai/dense-mem/internal/topics"
 )
 
 const ontologySaveBodyKey = "ontologyDraftSave"
@@ -31,7 +31,7 @@ type ontologyManagementHandler struct{ service *ontology.ManagementService }
 
 func registerOntologyManagementRoutes(api *echo.Group, service *ontology.ManagementService) {
 	h := &ontologyManagementHandler{service: service}
-	group := api.Group("/ontology", func(next echo.HandlerFunc) echo.HandlerFunc {
+	group := api.Group("/topics", func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c *echo.Context) error {
 			err := next(c)
 			var publicError *httperr.APIError

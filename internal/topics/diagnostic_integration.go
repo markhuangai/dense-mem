@@ -1,0 +1,25 @@
+//go:build integration
+
+package topics
+
+import (
+	"context"
+
+	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/topics/assessment"
+	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
+)
+
+// AssessDiagnostic runs the native assessment path without publishing.
+func (s *Service) AssessDiagnostic(ctx context.Context, sourceContext contract.OrganizationContext) (assessment.Request, assessment.Response, []contract.AssessmentAttempt, error) {
+	receipt := contract.OrganizationReceipt{ID: uuid.NewString()}
+	for _, source := range sourceContext.Sources {
+		receipt.Result.Outcomes = append(receipt.Result.Outcomes, contract.OrganizationOutcome{Source: source.SourceHandle, Status: "unchanged"})
+	}
+	request, _, err := s.request(sourceContext, &receipt)
+	if err != nil {
+		return request, assessment.Response{}, nil, err
+	}
+	response, attempts, err := s.provider.Assess(ctx, request)
+	return request, response, attempts, err
+}

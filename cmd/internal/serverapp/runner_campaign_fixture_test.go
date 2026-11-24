@@ -28,10 +28,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	knowledgepg "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
-	organization "github.com/markhuangai/dense-mem/internal/ontology"
-	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
-	ontologypg "github.com/markhuangai/dense-mem/internal/ontology/postgres"
 	"github.com/markhuangai/dense-mem/internal/provider/structured"
 	"github.com/markhuangai/dense-mem/internal/recall"
 	recallpg "github.com/markhuangai/dense-mem/internal/recall/postgres"
@@ -44,6 +40,10 @@ import (
 	"github.com/markhuangai/dense-mem/internal/settings"
 	settingspg "github.com/markhuangai/dense-mem/internal/settings/postgres"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
+	organization "github.com/markhuangai/dense-mem/internal/topics"
+	"github.com/markhuangai/dense-mem/internal/topics/assessment"
+	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	ontologypg "github.com/markhuangai/dense-mem/internal/topics/postgres"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -80,12 +80,12 @@ func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
 	search := searchpg.NewStore(app, rls)
 	audit := auditapp.New(auditpg.NewStore(app, rls))
 	configuration := settings.NewAppConfigService(settingspg.NewAppConfigRepository(app, rls), nil)
-	_, err := configuration.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyEnabled: "true", domain.AppConfigOntologyModel: "runner-ontology", domain.AppConfigOntologyContextWindow: "300000", domain.AppConfigOntologyConcurrency: "4", domain.AppConfigOntologyTeamConcurrency: "4"}, "control", "", "")
+	_, err := configuration.UpdateTopicMaintenanceSettings(ctx, map[string]string{domain.AppConfigTopicMaintenanceEnabled: "true", domain.AppConfigTopicMaintenanceModel: "runner-ontology", domain.AppConfigTopicMaintenanceContextWindow: "300000", domain.AppConfigTopicMaintenanceConcurrency: "4", domain.AppConfigTopicMaintenanceTeamConcurrency: "4"}, "control", "", "")
 	require.NoError(t, err)
-	ontologyStore := ontologypg.NewStore(app, rls)
-	policy, err := configuration.OntologyMaintenanceRuntimeConfig(ctx)
+	topicStore := ontologypg.NewStore(app, rls)
+	policy, err := configuration.TopicMaintenanceRuntimeConfig(ctx)
 	require.NoError(t, err)
-	_, err = ontologyStore.EnsureMaintenanceWindow(ctx, policy, time.Now())
+	_, err = topicStore.EnsureMaintenanceWindow(ctx, policy, time.Now())
 	require.NoError(t, err)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var envelope struct {
@@ -109,14 +109,14 @@ func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
 	}))
 	t.Cleanup(upstream.Close)
 	transport := structured.NewOpenAI(&config.Config{AIVerifierAPIURL: upstream.URL, AIVerifierAPIKey: "synthetic", AIVerifierModel: "runner-ontology"}, upstream.Client())
-	maintenance := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: ontologyStore, Config: configuration, Audit: audit, DefaultModel: "runner-ontology", Organizer: func(model string, tokens int64, accounting assessment.AttemptAccounting) *organization.Service {
-		return organization.NewService(ontologyStore, assessment.NewProviderWithAccounting(transport, model, assessor.DefaultSemanticAssessmentLimits(), accounting, int(tokens)))
+	maintenance := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: topicStore, Config: configuration, Audit: audit, DefaultModel: "runner-ontology", Organizer: func(model string, tokens int64, accounting assessment.AttemptAccounting) *organization.Service {
+		return organization.NewService(topicStore, assessment.NewProviderWithAccounting(transport, model, assessor.DefaultSemanticAssessmentLimits(), accounting, int(tokens)))
 	}})
-	_, err = maintenance.Command(ctx, domain.OntologyMaintenanceCommand{Action: "pause", OperationKey: uuid.NewString()}, "", "")
+	_, err = maintenance.Command(ctx, domain.TopicMaintenanceCommand{Action: "pause", OperationKey: uuid.NewString()}, "", "")
 	require.NoError(t, err)
 	recallStore := recallpg.NewStore(app, rls, search, recallpg.LoadRecallEvidenceConflictRecords).
-		WithOntology(func() recallpg.OntologyReader { return ontologyStore.NewRecallReader() }).
-		WithTopics(ontologyStore.NewTopicReader())
+		WithOntology(func() recallpg.OntologyReader { return topicStore.NewRecallReader() }).
+		WithTopics(topicStore.NewTopicReader())
 	reader := recall.NewRecallService(recall.RecallDependencies{Search: recallStore, Provider: embedder, OntologyConfig: configuration})
 	reg, err := registry.BuildActive(registry.Dependencies{RememberBindings: registry.RememberBindings{Service: writer}, RecallBindings: registry.RecallBindings{Service: reader}})
 	require.NoError(t, err)
@@ -137,7 +137,7 @@ func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
 	require.NoError(t, native.ResolveScope(ctx))
 	manifest := evalharness.Manifest{ImportWorkers: 10, Model: "runner-ontology", ContextWindowTokens: 300000, EmbeddingModel: model, EmbeddingDimensions: dimensions}
 	return &runnerServiceFixture{admin: admin, native: native, manifest: manifest, mcp: mcp, control: control, maintenance: maintenance,
-		ontology: ontologyStore, provider: provider, reconciliation: searchapp.NewSearchReconciliationService(searchapp.SearchReconciliationDependencies{Repository: search, Projection: store, Executor: semanticwrite.NewProviderExecutor(embedder)})}
+		ontology: topicStore, provider: provider, reconciliation: searchapp.NewSearchReconciliationService(searchapp.SearchReconciliationDependencies{Repository: search, Projection: store, Executor: semanticwrite.NewProviderExecutor(embedder)})}
 }
 
 func runnerControlServer(t *testing.T, maintenance *organization.MaintenanceService, configuration settings.AppConfigService, convergence searchapp.SearchConvergenceReader) *httptest.Server {

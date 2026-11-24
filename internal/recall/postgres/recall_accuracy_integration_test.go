@@ -12,10 +12,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	evalharness "github.com/markhuangai/dense-mem/internal/testfixture/evaluation"
+	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -133,6 +133,7 @@ func (f *recallAccuracyFixture) groupAccuracySources(t *testing.T, sources []eva
 }
 
 func TestRecallAccuracyIsolation(t *testing.T) {
+	t.Run("bounded_one_hop", testScopedEvidenceExpansion)
 	accuracyFrozenLock(t)
 	f := newRecallOntologyFixture(t)
 	source := evalharness.RecallAccuracyCohort()[0].Sources[0]
@@ -160,7 +161,7 @@ func TestRecallAccuracyIsolation(t *testing.T) {
 		require.NoError(t, err)
 	}
 	for owner, credential := range f.credentials {
-		result, err := f.search.RecallEvidence(privateContexts[owner], RecallEvidenceInput{TeamID: f.team, SpaceID: credential.MemorySpaceID.String(), SpaceKind: "private", Query: "Atlas PostgreSQL", Limit: 10, OrganizationEnabled: true})
+		result, err := f.search.RecallEvidence(privateContexts[owner], RecallEvidenceInput{TeamID: f.team, SpaceID: credential.MemorySpaceID.String(), SpaceKind: "private", Query: "Atlas PostgreSQL", Limit: 10, OrganizationEnabled: true, ExpansionEnabled: true})
 		require.NoError(t, err)
 		require.Len(t, result.Results, 1)
 		require.Equal(t, privateIDs[owner], result.Results[0].EvidenceID)
@@ -178,7 +179,7 @@ func TestRecallAccuracyIsolation(t *testing.T) {
 	for owner := range f.owners {
 		for _, known := range append(privateIDs, foreignID) {
 			result, err := f.search.RecallEvidence(f.actor(owner, "member"), RecallEvidenceInput{TeamID: f.team, SpaceID: f.space,
-				Query: "accuracy isolation", QueryEmbedding: []float32{1, 0, 0}, Limit: 10, OrganizationEnabled: true, KnownEvidenceIDs: []string{known}})
+				Query: "accuracy isolation", QueryEmbedding: []float32{1, 0, 0}, Limit: 10, OrganizationEnabled: true, ExpansionEnabled: true, KnownEvidenceIDs: []string{known}})
 			require.NoError(t, err)
 			require.Len(t, result.Results, 1)
 			require.Equal(t, shared.ID, result.Results[0].EvidenceID)

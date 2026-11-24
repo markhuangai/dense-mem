@@ -1,0 +1,235 @@
+{
+  "version": 1,
+  "dataset": "hotpotqa",
+  "corpus_sha256": "9333647b922382776cd2cb02893b390d77984df85a91bfa8be411284978aca7d",
+  "rubric": "Purposive challenge cohort labeled from the locked document text before observing either arm. Two original documents match when they share at least one listed subject at the specified granularity. Near-name distractors remain distinct subjects. A prediction shares at least one active direct Topic across their verified Evidence partitions. This measures pairwise grouping on this cohort; broad alternative taxonomies can disagree.",
+  "sources": [
+    {
+      "source_id": "hotpotqa:0",
+      "title": "Vaada Poda Nanbargal",
+      "labels": [
+        "indian-feature-films",
+        "tamil-feature-films"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:4",
+      "title": "Tere Mere Phere",
+      "labels": [
+        "indian-feature-films"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:5",
+      "title": "Easan",
+      "labels": [
+        "indian-feature-films",
+        "tamil-feature-films"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:6",
+      "title": "Nan Love Track",
+      "labels": [
+        "indian-feature-films"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:10",
+      "title": "Mickey Spillane's Mike Hammer",
+      "labels": [
+        "fictional-private-detectives",
+        "private-detective-television-series"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:11",
+      "title": "Hazell (TV series)",
+      "labels": [
+        "fictional-private-detectives",
+        "private-detective-television-series"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:12",
+      "title": "Michael Shayne",
+      "labels": [
+        "fictional-private-detectives"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:13",
+      "title": "The Adventure of the Seven Clocks",
+      "labels": [
+        "sherlock-holmes-fiction"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:14",
+      "title": "Tam Sventon",
+      "labels": [
+        "fictional-private-detectives"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:15",
+      "title": "Nick Carter, Master Detective",
+      "labels": [
+        "fictional-private-detectives"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:16",
+      "title": "Dan Turner, Hollywood Detective",
+      "labels": [
+        "fictional-private-detectives"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:17",
+      "title": "Pepe Carvalho",
+      "labels": [
+        "fictional-private-detectives"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:18",
+      "title": "Sherlock Holmes",
+      "labels": [
+        "fictional-private-detectives",
+        "sherlock-holmes-fiction"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:19",
+      "title": "Wilsberg",
+      "labels": [
+        "fictional-private-detectives",
+        "private-detective-television-series"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:21",
+      "title": "Honours (Prevention of Abuses) Act 1925",
+      "labels": [
+        "uk-parliamentary-acts"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:25",
+      "title": "Distribution of Industry Act 1950",
+      "labels": [
+        "uk-parliamentary-acts",
+        "british-industrial-policy"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:29",
+      "title": "Industry Act 1975",
+      "labels": [
+        "uk-parliamentary-acts",
+        "british-industrial-policy"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:32",
+      "title": "Adam Gordon of Auchindoun",
+      "labels": [
+        "scottish-marian-conflict"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:36",
+      "title": "Battle of Craibstone",
+      "labels": [
+        "scottish-marian-conflict",
+        "gordon-forbes-battles"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:37",
+      "title": "Battle of Langside",
+      "labels": [
+        "scottish-marian-conflict"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:38",
+      "title": "Battle of Tillieangus",
+      "labels": [
+        "scottish-marian-conflict",
+        "gordon-forbes-battles"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:39",
+      "title": "Marian civil war",
+      "labels": [
+        "scottish-marian-conflict"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:40",
+      "title": "Raymond (community), Wisconsin",
+      "labels": [
+        "raymond-racine-county"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:41",
+      "title": "Raymond, Wisconsin",
+      "labels": [
+        "raymond-racine-county"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:42",
+      "title": "Raymond High School (Mississippi)",
+      "labels": [
+        "raymond-mississippi-high-school"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:43",
+      "title": "Raymond, Washington",
+      "labels": [
+        "raymond-pacific-county"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:44",
+      "title": "Raymond Center, Wisconsin",
+      "labels": [
+        "raymond-racine-county"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:45",
+      "title": "Raymond, Maine",
+      "labels": [
+        "raymond-cumberland-county"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:46",
+      "title": "Raymond Robertsen",
+      "labels": [
+        "norwegian-politician-raymond-robertsen"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:47",
+      "title": "Raymond, Alberta",
+      "labels": [
+        "raymond-alberta"
+      ]
+    },
+    {
+      "source_id": "hotpotqa:48",
+      "title": "P.P. Raymond House",
+      "labels": [
+        "p-p-raymond-house"
+      ]
+    }
+  ]
+}

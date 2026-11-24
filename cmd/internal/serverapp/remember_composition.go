@@ -12,9 +12,11 @@ import (
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	rememberprocessor "github.com/markhuangai/dense-mem/internal/remember/service/processor"
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
+	"github.com/markhuangai/dense-mem/internal/topicassignment"
 )
 
 type rememberApplicationDependencies struct {
+	TopicAssignment     *topicassignment.Service
 	PublicSeedAdmission *rememberapp.PublicSeedAdmission
 	Persistence         remembercontract.Persistence
 	Assessor            assessor.Provider
@@ -30,7 +32,7 @@ type rememberApplicationDependencies struct {
 
 func buildRememberApplication(deps rememberApplicationDependencies) rememberapp.Service {
 	processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
-		Ledger: deps.Persistence, Assessor: deps.Assessor,
+		TopicAssignment: deps.TopicAssignment, Ledger: deps.Persistence, Assessor: deps.Assessor,
 		Decisions: deps.Decisions, DecisionSettings: deps.DecisionSettings,
 		EmbeddingExecutor: deps.EmbeddingExecutor, Limits: deps.Limits, Metrics: deps.Metrics,
 		Logger: deps.Logger, DiagnosticProtector: deps.DiagnosticProtector, IsStaleInput: rememberapp.IsRememberStaleInputError,

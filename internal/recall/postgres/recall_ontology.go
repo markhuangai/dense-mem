@@ -13,8 +13,8 @@ import (
 	"sort"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
+	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 )
 

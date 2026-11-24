@@ -15,6 +15,14 @@ on:
       mode:
         required: true
         type: string
+      paired_baseline_image:
+        type: string
+      paired_base_revision:
+        type: string
+      paired_seed_lock:
+        type: string
+      paired_resume_run:
+        type: string
       seed_version:
         type: string
         default: latest
@@ -40,6 +48,8 @@ on:
         required: false
       eval-embedding-api-key:
         required: false
+      eval-decision-api-key:
+        required: false
       eval-team-api-key:
         required: false
       eval-database-password:
@@ -54,7 +64,28 @@ env:
   EVAL_DATASET_SELECTION: ${{ inputs.dataset_selection }}
 
 jobs:
+  paired:
+    if: inputs.paired_baseline_image != '' || inputs.paired_seed_lock != '' || inputs.paired_resume_run != ''
+    uses: ./.github/workflows/paired-evaluation.yml
+    with:
+      image: ${{ inputs.image }}
+      revision: ${{ inputs.source_revision }}
+      baseline: ${{ inputs.paired_baseline_image }}
+      base_revision: ${{ inputs.paired_base_revision }}
+      seed_lock: ${{ inputs.paired_seed_lock }}
+      resume: ${{ inputs.paired_resume_run }}
+      mode: ${{ inputs.mode }}
+      dataset_selection: ${{ inputs.dataset_selection }}
+    secrets:
+      eval-verifier-url: ${{ secrets.eval-verifier-url }}
+      eval-api-key: ${{ secrets.eval-api-key }}
+      eval-embedding-api-key: ${{ secrets.eval-embedding-api-key }}
+      eval-decision-api-key: ${{ secrets.eval-decision-api-key }}
+      eval-team-api-key: ${{ secrets.eval-team-api-key }}
+      eval-database-password: ${{ secrets.eval-database-password }}
+
   registry:
+    if: inputs.paired_baseline_image == '' && inputs.paired_seed_lock == '' && inputs.paired_resume_run == ''
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:

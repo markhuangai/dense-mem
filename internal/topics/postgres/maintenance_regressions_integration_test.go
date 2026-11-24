@@ -1,0 +1,466 @@
+//go:build integration
+
+package postgres
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"testing/fstest"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	organization "github.com/markhuangai/dense-mem/internal/topics"
+	"github.com/markhuangai/dense-mem/internal/topics/assessment"
+	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	"github.com/pressly/goose/v3"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+)
+
+func TestOntologyMaintenanceIndexMigrationRestoresLockTimeout(t *testing.T) {
+	f := newHistoricalOntologyFixture(t)
+	ctx := context.Background()
+	db, err := f.admin.DB()
+	require.NoError(t, err)
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	name := "20261006010002_ontology_maintenance_indexes.sql"
+	source, err := os.ReadFile(filepath.Join("..", "..", "..", "migrations", "postgres", "v2_6", name))
+	require.NoError(t, err)
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, fstest.MapFS{name: &fstest.MapFile{Data: source}},
+		goose.WithTableName("ontology_maintenance_timeout_probe"), goose.WithDisableGlobalRegistry(true))
+	require.NoError(t, err)
+	for _, direction := range []string{"up", "down"} {
+		t.Run(direction, func(t *testing.T) {
+			_, err := db.ExecContext(ctx, "RESET lock_timeout")
+			require.NoError(t, err)
+			if direction == "up" {
+				_, err = provider.Up(ctx)
+			} else {
+				_, err = provider.Down(ctx)
+			}
+			require.NoError(t, err)
+			var timeout string
+			require.NoError(t, db.QueryRowContext(ctx, "SHOW lock_timeout").Scan(&timeout))
+			require.Equal(t, "0", timeout, "migration must not leave its timeout on a pooled application connection")
+		})
+	}
+}
+
+func TestOntologyMaintenanceRunCompletionUsesActiveScope(t *testing.T) {
+	for _, failedStatus := range []string{"failed", "ambiguous"} {
+		t.Run(failedStatus, func(t *testing.T) {
+			f := newOrganizationFixture(t)
+			f.organizationEvidence(t, 0, "Historical generation evidence.", nil)
+			config := maintenanceSettings(t, f)
+			window := maintenanceWindow(t, f, config)
+			ctx := context.Background()
+			turn, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now().UTC(), time.Minute)
+			require.NoError(t, err)
+			require.NotNil(t, turn)
+			for range 6 {
+				require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, ontology.MaintenancePageSize))
+			}
+			require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
+				if err := tx.Exec(`UPDATE topic_maintenance_sources SET status=?,last_run_id=?::uuid WHERE team_id=?::uuid`, failedStatus, turn.RunID, f.team).Error; err != nil {
+					return err
+				}
+				return tx.Exec(`UPDATE memory_spaces SET generation=generation+1 WHERE team_id=?::uuid AND id=?::uuid`, f.team, f.space).Error
+			}))
+			require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn))
+			service, calls := maintenanceServiceFixture(t, f, config, nil)
+			drainMaintenance(t, service)
+			status, err := service.Status(ctx)
+			require.NoError(t, err)
+			require.True(t, status.CoverageComplete)
+			require.Zero(t, status.Counts.Eligible)
+			require.Zero(t, calls())
+			var runStatus string
+			require.NoError(t, f.admin.Raw(`SELECT status FROM topic_maintenance_runs WHERE run_id=?::uuid`, turn.RunID).Row().Scan(&runStatus))
+			require.Equal(t, "completed", runStatus)
+			_, err = f.store.MaintenanceCommand(ctx, domain.TopicMaintenanceCommand{Action: "retry", OperationKey: "historical-retry", RetryRunID: turn.RunID}, time.Now().UTC(), nil)
+			require.ErrorIs(t, err, ontology.ErrInvalid)
+		})
+	}
+}
+
+func TestOntologyMaintenanceQueuedMarkerCoalescingAndConsumption(t *testing.T) {
+	f := newOrganizationFixture(t)
+	ctx := context.Background()
+	source := maintenanceEvidence(t, f, "Queued marker source")
+	config := maintenanceSettings(t, f)
+	window := maintenanceWindow(t, f, config)
+	turn, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now().UTC(), time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, turn)
+	defer func() { require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn)) }()
+	for range 8 {
+		require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, ontology.MaintenancePageSize))
+	}
+	mutate := func(ctx context.Context, revision int) error {
+		return f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
+			return tx.Exec(`SELECT dense_mem_enqueue_topic_marker(?::uuid,?::uuid,?,'evidence_fragments',?,'evidence',?)`, f.team, f.space, f.generation, source.ID, source.ID).Error
+		})
+	}
+	marker := func() (int64, string) {
+		t.Helper()
+		var sequence int64
+		var cursor string
+		require.NoError(t, f.admin.Raw(`SELECT marker_sequence,cursor FROM topic_maintenance_markers WHERE team_id=?::uuid AND anchor_kind='evidence_fragments' AND anchor_id=?`, f.team, source.ID).Row().Scan(&sequence, &cursor))
+		return sequence, cursor
+	}
+	require.NoError(t, mutate(ctx, 1))
+	sequence, cursor := marker()
+	require.Empty(t, cursor)
+	var allocatedSequence int64
+	require.NoError(t, f.admin.Raw(`SELECT last_value FROM topic_maintenance_marker_seq`).Row().Scan(&allocatedSequence))
+	require.NoError(t, mutate(ctx, 2))
+	coalesced, _ := marker()
+	require.Equal(t, sequence, coalesced, "already queued work retains its position")
+	var coalescedSequence int64
+	require.NoError(t, f.admin.Raw(`SELECT last_value FROM topic_maintenance_marker_seq`).Row().Scan(&coalescedSequence))
+	require.Equal(t, allocatedSequence, coalescedSequence, "coalesced writes avoid allocating a global queue sequence")
+	require.NoError(t, f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
+		return tx.Exec(`UPDATE topic_maintenance_markers SET cursor=? WHERE team_id=?::uuid AND anchor_kind='evidence_fragments' AND anchor_id=?`, ontology.SourceKey(source), f.team, source.ID).Error
+	}))
+	require.NoError(t, mutate(ctx, 3))
+	reset, cursor := marker()
+	require.Greater(t, reset, sequence)
+	require.Empty(t, cursor, "a change restarts partially expanded work")
+	writerCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	started, finished := make(chan struct{}), make(chan error, 1)
+	require.NoError(t, f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
+		var current maintenanceMarker
+		if err := tx.Raw(`SELECT anchor_kind,anchor_id,target_kind,target_id,marker_sequence,cursor FROM topic_maintenance_markers WHERE team_id=?::uuid AND anchor_kind='evidence_fragments' AND anchor_id=? FOR UPDATE`, f.team, source.ID).Row().Scan(&current.AnchorKind, &current.AnchorID, &current.TargetKind, &current.TargetID, &current.Sequence, &current.Cursor); err != nil {
+			return err
+		}
+		go func() { close(started); finished <- mutate(writerCtx, 4) }()
+		<-started
+		require.Eventually(t, func() bool {
+			var blocked bool
+			err := f.admin.Raw(`SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%dense_mem_enqueue_topic_marker%' AND pid<>pg_backend_pid())`).Row().Scan(&blocked)
+			return err == nil && blocked
+		}, 3*time.Second, 10*time.Millisecond)
+		fence := scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation}
+		if err := refreshMaintenanceSource(tx, fence, source, false); err != nil {
+			return err
+		}
+		return deleteMaintenanceMarker(tx, fence, current)
+	}))
+	require.NoError(t, <-finished)
+	requeued, cursor := marker()
+	require.Greater(t, requeued, reset)
+	require.Empty(t, cursor)
+	require.NoError(t, f.store.discoverMaintenanceError(ctx, *turn, ontology.MaintenancePageSize))
+	var version int64
+	require.NoError(t, f.admin.Raw(`SELECT source_version FROM topic_maintenance_sources WHERE team_id=?::uuid AND source_kind='evidence' AND source_id=?`, f.team, source.ID).Row().Scan(&version))
+	require.EqualValues(t, 1, version, "Evidence retains its immutable source version after rediscovery")
+}
+
+func TestOntologyMaintenanceDefinitionMarkersTargetReceiptsAndVocabulary(t *testing.T) {
+	f := newOrganizationFixture(t)
+	ctx := context.Background()
+	support := f.organizationEvidence(t, 0, "Evidence supporting the taxonomy.", nil)
+	dependent := f.organizationEvidence(t, 1, "Atlas uses PostgreSQL.", nil)
+	unrelated := f.organizationEvidence(t, 0, "Vega writes Swift.", nil)
+	root := testTopic("systems")
+	root.Sources = []ontology.SourceDependency{f.source(t, support)}
+	_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("marker-root", 0, ontology.Change{Record: root}))
+	require.NoError(t, err)
+	child := testTopic("postgresql")
+	child.Definition.ParentID = root.ID
+	child.Dependencies = []ontology.RevisionRef{{ID: root.ID, Version: 1}}
+	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("marker-child", 1, ontology.Change{Record: child}))
+	require.NoError(t, err)
+	config := maintenanceSettings(t, f)
+	service, _ := maintenanceServiceFixture(t, f, config, func(_ assessment.Request, response *assessment.Response) { response.Items = nil })
+	for range 30 {
+		progress, _ := service.RunTurn(ctx)
+		if !progress {
+			break
+		}
+	}
+	status, err := service.Status(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 3, status.Counts.Failed)
+	selectSources := func(marker maintenanceMarker) []ontology.SourceHandle {
+		t.Helper()
+		var handles []ontology.SourceHandle
+		require.NoError(t, f.store.withScope(ctx, f.team, true, func(tx *gorm.DB, fence scope) error {
+			var err error
+			handles, err = maintenanceMarkerSources(tx, fence, marker, ontology.MaintenancePageSize)
+			return err
+		}))
+		return handles
+	}
+	handles := selectSources(maintenanceMarker{AnchorKind: "source_dependency", AnchorID: ontology.SourceKey(support), TargetKind: "definition", TargetID: support.ID})
+	require.ElementsMatch(t, []ontology.SourceHandle{support, dependent}, handles, "a parent support change must reach failed receipts without scanning unrelated sources")
+	page, err := f.store.ListRecords(ctx, f.team, "", "", 1)
+	require.NoError(t, err)
+	topic := testTopic("swift")
+	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("new-vocabulary", page.Revision, ontology.Change{Record: topic}))
+	require.NoError(t, err)
+	handles = selectSources(maintenanceMarker{AnchorKind: "topic_record_heads", AnchorID: topic.ID, TargetKind: "definition", TargetID: topic.ID})
+	require.Equal(t, []ontology.SourceHandle{unrelated}, handles, "new vocabulary must reach a failed source with no previous dependency on the new record")
+}
+
+func TestOntologyMaintenanceTransitiveInvalidation(t *testing.T) {
+	f := newOrganizationFixture(t)
+	a := f.organizationEvidence(t, 0, "Evidence supporting database vocabulary.", nil)
+	b := f.organizationEvidence(t, 1, "Atlas uses PostgreSQL.", nil)
+	topic := testTopic("postgresql")
+	topic.Sources = []ontology.SourceDependency{f.source(t, a)}
+	_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("supported-topic", 0, ontology.Change{Record: topic}))
+	require.NoError(t, err)
+	config := maintenanceSettings(t, f)
+	service, _ := maintenanceServiceFixture(t, f, config, nil)
+	drainMaintenance(t, service)
+	viewPage, err := f.store.ListRecords(context.Background(), f.team, ontology.AssignmentKind, "", 20)
+	require.NoError(t, err)
+	var dependent string
+	for _, record := range viewPage.Records {
+		if record.Assignment.Source.ID == b.ID {
+			dependent = record.ID
+			require.True(t, record.Current)
+		}
+	}
+	require.NotEmpty(t, dependent)
+	_, err = f.knowledge.RetractEvidence(f.actor(0, "member"), knowledge.RetractEvidenceInput{TeamID: f.team, OwnerProfileID: f.owners[0], EvidenceIDs: []string{a.ID}, Reason: "withdraw definition support", IdempotencyKey: "withdraw-definition", RequestHash: testHash("withdraw-definition")})
+	require.NoError(t, err)
+	window := maintenanceWindow(t, f, config)
+	turn, err := f.store.ClaimMaintenanceTurn(context.Background(), window.ID, time.Now().UTC(), time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, turn)
+	for range 10 {
+		require.NoError(t, f.store.discoverMaintenanceError(context.Background(), *turn, ontology.MaintenancePageSize))
+	}
+	status, err := service.Status(context.Background())
+	require.NoError(t, err)
+	require.Greater(t, status.Counts.Pending, int64(0))
+	require.False(t, status.CoverageComplete)
+	var state string
+	require.NoError(t, f.admin.Raw(`SELECT status FROM topic_maintenance_sources WHERE team_id=?::uuid AND source_kind='evidence' AND source_id=?`, f.team, b.ID).Row().Scan(&state))
+	require.Equal(t, "pending", state)
+	view, err := f.store.GetRecord(context.Background(), f.team, dependent, 0)
+	require.NoError(t, err)
+	require.False(t, view.Current)
+	require.NoError(t, f.store.ReleaseMaintenanceTurn(context.Background(), *turn))
+}
+
+func TestOntologyMaintenanceControlInterruptionResumesSameWindow(t *testing.T) {
+	for _, action := range []string{"pause", "disable"} {
+		t.Run(action, func(t *testing.T) {
+			f := newOrganizationFixture(t)
+			f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
+			config := maintenanceSettings(t, f)
+			window := maintenanceWindow(t, f, config)
+			turn, claim := maintenanceClaim(t, f, window)
+			ctx := context.Background()
+			failure := "maintenance_paused"
+			if action == "pause" {
+				_, err := f.store.MaintenanceCommand(ctx, domain.TopicMaintenanceCommand{Action: "pause", OperationKey: "before-admission"}, time.Now().UTC(), nil)
+				require.NoError(t, err)
+			} else {
+				_, err := config.UpdateTopicMaintenanceSettings(ctx, map[string]string{domain.AppConfigTopicMaintenanceEnabled: "false"}, "control", "", "")
+				require.NoError(t, err)
+				failure = "maintenance_disabled"
+			}
+			err := f.store.AdmitMaintenanceAttempt(ctx, *claim, uuid.NewString(), 1, 100, 100, time.Now().UTC())
+			require.Error(t, err)
+			require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, ontology.OrganizationResult{}, failure, time.Now().UTC()))
+			require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn))
+			status, err := f.store.MaintenanceStatus(ctx, time.Now().UTC())
+			require.NoError(t, err)
+			require.EqualValues(t, 1, status.Counts.Pending)
+			require.Zero(t, status.Usage.ReportedInputTokens)
+			if action == "pause" {
+				_, err = f.store.MaintenanceCommand(ctx, domain.TopicMaintenanceCommand{Action: "resume", OperationKey: "resume-same-window"}, time.Now().UTC(), nil)
+			} else {
+				_, err = config.UpdateTopicMaintenanceSettings(ctx, map[string]string{domain.AppConfigTopicMaintenanceEnabled: "true"}, "control", "", "")
+			}
+			require.NoError(t, err)
+			service, calls := maintenanceServiceFixture(t, f, config, nil)
+			drainMaintenance(t, service)
+			status, err = service.Status(ctx)
+			require.NoError(t, err)
+			require.Equal(t, window.ID, status.Window.ID)
+			require.EqualValues(t, 1, status.Counts.Organized)
+			require.EqualValues(t, 1, calls())
+		})
+	}
+}
+
+func TestOntologyMaintenanceRetryDoesNotReleaseUnselectedFailures(t *testing.T) {
+	f := newOrganizationFixture(t)
+	for _, text := range []string{"alpha", "bravo", "charlie"} {
+		f.organizationEvidence(t, 0, text, nil)
+	}
+	config := maintenanceSettings(t, f)
+	_, err := config.UpdateTopicMaintenanceSettings(context.Background(), map[string]string{domain.AppConfigTopicMaintenanceContextWindow: "300000"}, "control", "", "")
+	require.NoError(t, err)
+	window := maintenanceWindow(t, f, config)
+	var originalRun string
+	require.NoError(t, f.admin.Raw(`SELECT run_id::text FROM topic_maintenance_runs WHERE window_id=?::uuid AND kind='scheduled'`, window.ID).Row().Scan(&originalRun))
+	broken := true
+	service, calls := maintenanceServiceFixture(t, f, config, func(_ assessment.Request, response *assessment.Response) {
+		if broken {
+			response.Items = nil
+		}
+	})
+	for range 30 {
+		progress, runErr := service.RunTurn(context.Background())
+		if runErr != nil {
+			var failure *organization.OrganizationError
+			require.ErrorAs(t, runErr, &failure)
+			require.NotEmpty(t, failure.Code)
+		}
+		if !progress {
+			break
+		}
+	}
+	status, err := service.Status(context.Background())
+	require.NoError(t, err)
+	require.EqualValues(t, 3, status.Counts.Failed)
+	beforeCalls := calls()
+	broken = false
+	_, err = f.store.MaintenanceCommand(context.Background(), domain.TopicMaintenanceCommand{Action: "retry", OperationKey: "single-retry", RetryRunID: originalRun, MaxBatches: 1}, time.Now().UTC(), nil)
+	require.NoError(t, err)
+	drainMaintenance(t, service)
+	status, err = service.Status(context.Background())
+	require.NoError(t, err)
+	require.EqualValues(t, 1, status.Counts.Organized)
+	require.EqualValues(t, 2, status.Counts.Failed)
+	require.EqualValues(t, beforeCalls+1, calls())
+	broken = true
+	unrelated, err := f.store.MaintenanceCommand(context.Background(), domain.TopicMaintenanceCommand{Action: "retry", OperationKey: "unrelated-failed-retry", RetryRunID: originalRun, MaxBatches: 1}, time.Now().UTC(), nil)
+	require.NoError(t, err)
+	_, err = service.RunTurn(context.Background())
+	var failure *organization.OrganizationError
+	require.ErrorAs(t, err, &failure)
+	broken = false
+	retried, err := f.store.MaintenanceCommand(context.Background(), domain.TopicMaintenanceCommand{Action: "retry", OperationKey: "complete-selected-retry", RetryRunID: originalRun, MaxBatches: 100}, time.Now().UTC(), nil)
+	require.NoError(t, err)
+	drainMaintenance(t, service)
+	status, err = service.Status(context.Background())
+	require.NoError(t, err)
+	require.EqualValues(t, 2, status.Counts.Organized)
+	require.EqualValues(t, 1, status.Counts.Failed)
+	require.False(t, status.CoverageComplete)
+	var runStatus string
+	require.NoError(t, f.admin.Raw(`SELECT status FROM topic_maintenance_runs WHERE run_id=?::uuid`, retried.ID).Row().Scan(&runStatus))
+	require.Equal(t, "completed", runStatus)
+	var unrelatedFailures int
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM topic_maintenance_sources WHERE last_run_id=?::uuid AND status='failed'`, unrelated.ID).Row().Scan(&unrelatedFailures))
+	require.Equal(t, 1, unrelatedFailures)
+	runs, err := f.store.ListMaintenanceRuns(context.Background(), "", 100)
+	require.NoError(t, err)
+	var retryableIDs []string
+	for _, run := range runs.Runs {
+		if run.Retryable {
+			retryableIDs = append(retryableIDs, run.ID)
+		}
+	}
+	require.Equal(t, []string{unrelated.ID}, retryableIDs)
+	for range 8 {
+		_, err := service.RunTurn(context.Background())
+		require.NoError(t, err)
+	}
+	require.EqualValues(t, beforeCalls+5, calls())
+}
+
+func TestOntologyMaintenanceCompetingAdmissionAndCrashRecovery(t *testing.T) {
+	f := newOrganizationFixture(t)
+	other := maintenanceOtherTeam(t, f)
+	f.organizationEvidence(t, 0, "Atlas storage.", nil)
+	other.organizationEvidence(t, 0, "Beacon storage.", nil)
+	config := maintenanceSettings(t, f)
+	_, err := config.UpdateTopicMaintenanceSettings(context.Background(), map[string]string{domain.AppConfigTopicMaintenanceConcurrency: "2"}, "control", "", "")
+	require.NoError(t, err)
+	window := maintenanceWindow(t, f, config)
+	_, a := maintenanceClaim(t, f, window)
+	_, b := maintenanceClaim(t, f, window)
+	require.NotEqual(t, a.TeamID, b.TeamID)
+	results := make(chan error, 2)
+	var workers sync.WaitGroup
+	for _, claim := range []*ontology.MaintenanceClaim{a, b} {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			results <- NewStore(f.app, f.rls).AdmitMaintenanceAttempt(context.Background(), *claim, uuid.NewString(), 1, 80, 80, time.Now().UTC())
+		}()
+	}
+	workers.Wait()
+	close(results)
+	admitted, deferred := 0, 0
+	for err := range results {
+		if err == nil {
+			admitted++
+		} else {
+			require.ErrorIs(t, err, ontology.ErrWindowClosed)
+			deferred++
+		}
+	}
+	require.Equal(t, 2, admitted)
+	require.Zero(t, deferred)
+	require.NoError(t, f.rls.WithSystemTx(context.Background(), f.app, func(tx *gorm.DB) error {
+		if err := tx.Exec(`UPDATE topic_maintenance_teams SET lease_until=clock_timestamp()-interval '1 second' WHERE lease_token IS NOT NULL`).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`UPDATE topic_maintenance_batches SET lease_until=clock_timestamp()-interval '1 second' WHERE status='running'`).Error
+	}))
+	restarted := NewStore(f.app, f.rls)
+	next, err := restarted.ClaimMaintenanceTurn(context.Background(), window.ID, time.Now().UTC(), time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, next)
+	status, err := restarted.MaintenanceStatus(context.Background(), time.Now().UTC())
+	require.NoError(t, err)
+	require.EqualValues(t, 2, status.Usage.UnreconciledAttempts)
+	require.False(t, status.CoverageComplete)
+	var lost int
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM topic_maintenance_batches WHERE status='lost'`).Row().Scan(&lost))
+	require.Equal(t, 2, lost)
+	claim, err := restarted.ClaimMaintenanceBatch(context.Background(), *next, window.ID, time.Now().UTC())
+	require.NoError(t, err)
+	require.NotNil(t, claim)
+	require.NoError(t, restarted.AdmitMaintenanceAttempt(context.Background(), *claim, uuid.NewString(), 1, 30, 30, time.Now().UTC()))
+	require.NoError(t, restarted.ReleaseMaintenanceTurn(context.Background(), *next))
+}
+
+func TestOntologyMaintenanceClaimRefreshesCurrentVersion(t *testing.T) {
+	f := newOrganizationFixture(t)
+	source := maintenanceEvidence(t, f, "Atlas")
+	window := maintenanceWindow(t, f, maintenanceSettings(t, f))
+	turn, claim := maintenanceClaim(t, f, window)
+	before := f.source(t, source).Fingerprint
+	require.NoError(t, f.rls.WithTeamProfileTx(f.actor(0, "member"), f.app, f.team, f.owners[0], func(tx *gorm.DB) error {
+		if err := appendMaintenanceOccurrence(tx, f, source); err != nil {
+			return err
+		}
+		return collectMaintenanceRevisions(tx, scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation}, claim)
+	}))
+	require.Equal(t, source, claim.Sources[0])
+	require.NotEqual(t, before, f.source(t, source).Fingerprint)
+	require.NoError(t, f.store.ReleaseMaintenanceTurn(context.Background(), *turn))
+}
+
+func assertNativeMaintenanceSeek(t *testing.T, f *ontologyFixture, cursor string) {
+	t.Helper()
+	var plan []byte
+	require.NoError(t, f.rls.WithTeamTx(context.Background(), f.app, f.team, func(tx *gorm.DB) error {
+		if err := tx.Exec(`SET LOCAL enable_seqscan=off`).Error; err != nil {
+			return err
+		}
+		return tx.Raw(`EXPLAIN(ANALYZE,FORMAT JSON) `+maintenanceEvidencePageSQL, f.team, f.space, f.generation, cursor, 101).Row().Scan(&plan)
+	}))
+	require.Contains(t, string(plan), "Index Cond")
+	require.Contains(t, string(plan), "fragment_id >")
+	require.NotContains(t, string(plan), "((fragment_id)::text)")
+	require.False(t, strings.Contains(string(plan), "Seq Scan"))
+}

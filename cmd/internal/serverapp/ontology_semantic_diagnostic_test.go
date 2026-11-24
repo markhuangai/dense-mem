@@ -14,8 +14,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	contract "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -51,7 +51,7 @@ func ontologyPublicationPayloads(t *testing.T, records []map[string]any) map[str
 	var manifest map[string]any
 	chunkCount := 0
 	for _, record := range records {
-		if record["msg"] != "ontology_semantic_publication" {
+		if record["msg"] != "topic_semantic_publication" {
 			continue
 		}
 		value, ok := record["payload_chunk"]
@@ -131,10 +131,10 @@ func TestOntologySemanticPublicationRealLoggerLevelsAndProtection(t *testing.T) 
 				require.Equal(t, input["secret"], actual["secret"])
 				require.Contains(t, actual["description"], observability.CredentialProtectionRedacted)
 			} else {
-				require.NotContains(t, console, "ontology_semantic_publication\"")
+				require.NotContains(t, console, "topic_semantic_publication\"")
 				require.NotContains(t, console, "exact admitted")
 			}
-			require.Contains(t, console, "ontology_semantic_publication_rejected")
+			require.Contains(t, console, "topic_semantic_publication_rejected")
 			require.Contains(t, console, "not_committed")
 		})
 	}
@@ -148,7 +148,7 @@ func TestOntologySemanticPublicationExhaustionIsExplicit(t *testing.T) {
 		finish(contract.ErrInvalid)
 	})
 	require.Contains(t, console, "publication_bound")
-	require.Contains(t, console, "ontology_semantic_publication_capture_incomplete")
+	require.Contains(t, console, "topic_semantic_publication_capture_incomplete")
 	require.NotContains(t, console, strings.Repeat("x", 100))
 }
 
@@ -198,7 +198,7 @@ func TestOntologySemanticManagerRealLoggerCommandsAndProtection(t *testing.T) {
 				}
 				if action == "denied" || action == "unavailable" {
 					require.Len(t, records, 1)
-					require.Equal(t, "ontology_semantic_manager_rejected", records[0]["msg"])
+					require.Equal(t, "topic_semantic_manager_rejected", records[0]["msg"])
 					require.NotContains(t, console, draftID)
 					require.NotContains(t, console, "Admitted")
 					return
@@ -215,7 +215,7 @@ func TestOntologySemanticManagerRealLoggerCommandsAndProtection(t *testing.T) {
 				}
 				var outcomes []map[string]any
 				for _, record := range records {
-					if record["msg"] != "ontology_semantic_publication" {
+					if record["msg"] != "topic_semantic_publication" {
 						outcomes = append(outcomes, record)
 					}
 				}
@@ -228,19 +228,19 @@ func TestOntologySemanticManagerRealLoggerCommandsAndProtection(t *testing.T) {
 				require.Equal(t, draftID, outcome["draft_id"])
 				switch action {
 				case "preview_draft":
-					require.Equal(t, "ontology_semantic_draft_preview", outcome["msg"])
+					require.Equal(t, "topic_semantic_draft_preview", outcome["msg"])
 					require.Equal(t, "DEBUG", outcome["level"])
 					require.Equal(t, "read_only", outcome["transaction_outcome"])
 					require.EqualValues(t, 3, outcome["affected_sources"])
 				case "rejected":
-					require.Equal(t, "ontology_semantic_manager_rejected", outcome["msg"])
+					require.Equal(t, "topic_semantic_manager_rejected", outcome["msg"])
 					require.Equal(t, "draft_version", outcome["reason"])
 				case "audit_failure":
-					require.Equal(t, "ontology_semantic_publication_failed", outcome["msg"])
+					require.Equal(t, "topic_semantic_publication_failed", outcome["msg"])
 					require.Equal(t, "ERROR", outcome["level"])
 					require.Equal(t, "not_committed", outcome["transaction_outcome"])
 				default:
-					require.Equal(t, "ontology_semantic_manager_command", outcome["msg"])
+					require.Equal(t, "topic_semantic_manager_command", outcome["msg"])
 					require.Equal(t, "INFO", outcome["level"])
 					require.Equal(t, "committed", outcome["transaction_outcome"])
 				}

@@ -9,12 +9,14 @@ import (
 )
 
 type recallApplicationDependencies struct {
-	Decisions           modelprovider.DecisionProvider
-	DecisionSettings    modelprovider.DecisionSettings
-	Logger              observability.LogProvider
-	DiagnosticProtector observability.DiagnosticProtector
-	Search              recallcontract.SearchRepository
-	Provider            embeddingcontract.EmbeddingProviderInterface
+	ExpansionEnabled      bool
+	DisableQueryEmbedding bool
+	Decisions             modelprovider.DecisionProvider
+	DecisionSettings      modelprovider.DecisionSettings
+	Logger                observability.LogProvider
+	DiagnosticProtector   observability.DiagnosticProtector
+	Search                recallcontract.SearchRepository
+	Provider              embeddingcontract.EmbeddingProviderInterface
 
 	OntologyConfig recall.RecallOntologyConfigProvider
 	Metrics        observability.DiscoverabilityMetrics
@@ -22,6 +24,7 @@ type recallApplicationDependencies struct {
 
 func buildRecallApplication(deps recallApplicationDependencies) recall.RecallService {
 	return recall.NewRecallService(recall.RecallDependencies{
+		ExpansionEnabled: deps.ExpansionEnabled, DisableQueryEmbedding: deps.DisableQueryEmbedding,
 		Decisions: deps.Decisions, DecisionSettings: deps.DecisionSettings, Logger: deps.Logger,
 		DiagnosticProtector: deps.DiagnosticProtector,
 		Search:              deps.Search,

@@ -27,6 +27,7 @@ type Retrieval struct {
 	repository recallcontract.SearchRepository
 	decisions  modelprovider.DecisionProvider
 	logger     observability.LogProvider
+	protector  observability.DiagnosticProtector
 }
 
 func NewRetrieval(repository recallcontract.SearchRepository) *Retrieval {
@@ -59,9 +60,16 @@ func (r *Retrieval) RecallEvidence(ctx context.Context, input recallcontract.Rec
 	if err != nil {
 		return nil, err
 	}
-	if snapshots, ok := r.repository.(recallcontract.EvidenceSnapshotRepository); ok && input.OrganizationEnabled && (input.SpaceKind == "" || input.SpaceKind == string(domain.MemorySpaceTeamShared)) {
+	organizedShared := input.OrganizationEnabled && (input.SpaceKind == "" || input.SpaceKind == string(domain.MemorySpaceTeamShared))
+	candidateLimit := recallOverfetchLimit(input.Limit)
+	if input.ExpansionEnabled {
+		candidateLimit = recallOverfetchLimit(requestedInput.Limit)
+	}
+	if snapshots, ok := r.repository.(recallcontract.EvidenceSnapshotRepository); ok && (organizedShared || input.ExpansionEnabled) {
 		err = snapshots.WithEvidenceSnapshot(ctx, input.TeamID, func(repository recallcontract.SearchRepository) error {
-			result, err = NewRetrieval(repository).recallEvidence(ctx, input, contract)
+			scoped := *r
+			scoped.repository = repository
+			result, err = scoped.recallEvidence(ctx, input, contract, candidateLimit)
 			return err
 		})
 		if err != nil {
@@ -72,21 +80,29 @@ func (r *Retrieval) RecallEvidence(ctx context.Context, input recallcontract.Rec
 		}
 		return result, nil
 	}
-	result, err = r.recallEvidence(ctx, input, contract)
+	result, err = r.recallEvidence(ctx, input, contract, candidateLimit)
 	if err == nil && decisionEnabled {
 		return r.finishDecisionEvidence(ctx, requestedInput, result)
 	}
 	return result, err
 }
 
-func (r *Retrieval) recallEvidence(ctx context.Context, input recallcontract.RecallEvidenceInput, contract *searchcontract.ActiveSearchContract) (*recallcontract.RecallEvidenceResult, error) {
+func (r *Retrieval) recallEvidence(ctx context.Context, input recallcontract.RecallEvidenceInput, contract *searchcontract.ActiveSearchContract, candidateLimit int) (*recallcontract.RecallEvidenceResult, error) {
 	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "recall_search"})
-	batch, err := r.repository.ReadEvidenceCandidates(ctx, input, contract, recallOverfetchLimit(input.Limit))
+	batch, err := r.repository.ReadEvidenceCandidates(ctx, input, contract, candidateLimit)
 	if err != nil {
 		return nil, fmt.Errorf("recall: search evidence: %w", err)
 	}
 	_, fusion := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageFusion)
 	candidates := fuseRecallCandidates(batch, "evidence", input.KnownEvidenceIDs)
+	var bridges map[string]recallcontract.EvidenceBridge
+	if input.ExpansionEnabled && len(candidates) > 0 {
+		candidates, bridges, err = r.expandEvidence(ctx, input, contract, batch, candidates)
+		if err != nil {
+			fusion.Finish(err, 0)
+			return nil, err
+		}
+	}
 	fusion.Finish(nil, len(candidates))
 	if len(candidates) == 0 {
 		return &recallcontract.RecallEvidenceResult{
@@ -111,6 +127,9 @@ func (r *Retrieval) recallEvidence(ctx context.Context, input recallcontract.Rec
 		return nil, fmt.Errorf("recall: hydrate evidence: %w", err)
 	}
 	_, selection := observability.StartReadStage(ctx, observability.ReadOperationEvidenceRecall, observability.ReadStageSelection)
+	if len(bridges) > 0 {
+		candidates = reserveBridgeResults(candidates, bridges, hydrated, input.KnownEvidenceIDs)
+	}
 	results, conflictSources, organizationCode := selectRecallEvidence(candidates, hydrated, input)
 	searchState := batch.SearchState
 	for _, hit := range results {

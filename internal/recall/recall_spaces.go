@@ -68,7 +68,7 @@ func (s *recallService) recallAcrossSpaces(ctx context.Context, req recallExecut
 	}
 	req.recallContract = contract
 	req.recallEmbeddingReady = true
-	if req.Query != "" {
+	if req.Query != "" && !s.disableQueryEmbedding {
 		embedCtx := observability.WithAIOperation(ctx, observability.AIOperationRecallEmbedding, 1)
 		req.recallEmbedding, req.recallEmbeddingDegradation = s.queryEmbedding(embedCtx, contract, req.Query)
 	}
@@ -112,6 +112,7 @@ func (s *recallService) recallAcrossSpaces(ctx context.Context, req recallExecut
 		return nil, teamErr
 	}
 	fused = fuseRecallResults(results, req.Limit)
+	fused.RankingMethod = recallRankingMethod(req.Query, len(req.recallEmbedding) != 0, s.expansionEnabled)
 	if embeddingDegradation != nil {
 		fused.Degradations = append([]RecallDegradationResult{*embeddingDegradation}, fused.Degradations...)
 		fused.Degradation = &fused.Degradations[0]

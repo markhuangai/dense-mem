@@ -531,7 +531,7 @@ const secondsPerCase = {
   server: 10, "session-ingest": 11, settings: 6, trace: 8,
 };
 const packageSetupSeconds = {
-  "./internal/ontology/postgres": 41, "./cmd/internal/serverapp": 75,
+  "./internal/topics/postgres": 41, "./cmd/internal/serverapp": 75,
   "./internal/conflict/postgres": 47, "./internal/http": 18, "./internal/http/middleware": 16,
   "./internal/knowledge/postgres": 4, "./internal/sse": 2, "./internal/storage/postgres": 3,
   "./internal/storage/redis": 2, "./internal/trace/postgres": 2, "./cmd/internal/demo/postgres": 34,
