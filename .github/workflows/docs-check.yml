@@ -28,6 +28,16 @@ jobs:
           source: ./
           destination: ./_preview/dense-mem
       - run: python3 tests/check-site.py _preview/dense-mem
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.x'
+          cache: false
+      - name: Verify schemas and rendered MCP examples
+        shell: bash
+        run: |
+          revision=$(awk '$1 == "lesson_source_revision:" { print $2 }' _config.yml)
+          git worktree add --detach "$RUNNER_TEMP/dense-mem-application" "$revision"
+          python3 tests/contracts.py "$RUNNER_TEMP/dense-mem-application" --preview _preview/dense-mem
       - run: npm ci --ignore-scripts
       - run: npx playwright install --with-deps chromium
       - run: npm test

@@ -1,20 +1,11 @@
 ---
 layout: base
-title: All guides
+title: Reference guides
 permalink: /guides/
 ---
 <main id="content" class="guide-index">
-  <h1>All guides</h1>
-  <p>Open a step-through walkthrough or jump into a reference.</p>
-  <section aria-labelledby="walkthroughs">
-    <h2 id="walkthroughs">Walkthroughs</h2>
-    <div class="trail-grid">
-      {% for record in site.data.workflows %}
-        {% assign flow = record[1] %}
-        <a href="{{ flow.url | relative_url }}"><strong>{{ flow.title | escape }}</strong><span>{{ flow.description | escape }}</span></a>
-      {% endfor %}
-    </div>
-  </section>
+  <h1>Reference guides</h1>
+  <p><a href="{{ '/system/' | relative_url }}">Explore the interactive lessons</a> or look up an exact field in the <a href="{{ '/fields/' | relative_url }}">MCP field reference</a>.</p>
   <section aria-labelledby="references">
     <h2 id="references">Guides and reference</h2>
     <div class="reference-grid">
@@ -25,5 +16,17 @@ permalink: /guides/
         </div>
       {% endfor %}
     </div>
+  </section>
+  <section aria-labelledby="walkthroughs">
+    <h2 id="walkthroughs">Detailed walkthroughs</h2>
+    <details class="related-walkthroughs">
+      <summary>Browse the original workflows</summary>
+      <div class="trail-grid">
+        {% for record in site.data.workflows %}
+          {% assign flow = record[1] %}
+          <a href="{{ flow.url | relative_url }}"><strong>{{ flow.title | escape }}</strong><span>{{ flow.description | escape }}</span></a>
+        {% endfor %}
+      </div>
+    </details>
   </section>
 </main>

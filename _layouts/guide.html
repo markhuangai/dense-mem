@@ -4,15 +4,33 @@ layout: base
 <main id="content" class="reference">
   {% unless page.retired or page.url == '/Home/' %}
   <aside class="reference-rail" aria-label="Guide navigation">
-    <a href="{{ '/guides/' | relative_url }}">← All guides</a>
-    {% if page.workflows %}
-    <p>Walkthroughs</p>
-    <ul>
-      {% for id in page.workflows %}
-        {% assign flow = site.data.workflows[id] %}
-        <li><a href="{{ flow.url | relative_url }}">{{ flow.title | escape }}</a></li>
+    <a href="{{ '/guides/' | relative_url }}">← Reference guides</a>
+    {% capture related_lessons %}
+    {% for lesson in site.lessons %}
+      {% for ref in lesson.references %}
+        {% assign reference_page = ref[1] | split: '#' | first %}
+        {% if reference_page == page.url %}
+          <li><a href="{{ lesson.url | relative_url }}">{{ lesson.title | escape }}</a></li>
+          {% break %}
+        {% endif %}
       {% endfor %}
-    </ul>
+    {% endfor %}
+    {% endcapture %}
+    {% assign related_lessons = related_lessons | strip %}
+    {% if related_lessons != '' %}
+    <p>Interactive lessons</p>
+    <ul>{{ related_lessons }}</ul>
+    {% endif %}
+    {% if page.workflows %}
+    <details class="related-walkthroughs">
+      <summary>Detailed walkthroughs</summary>
+      <ul>
+        {% for id in page.workflows %}
+          {% assign flow = site.data.workflows[id] %}
+          <li><a href="{{ flow.url | relative_url }}">{{ flow.title | escape }}</a></li>
+        {% endfor %}
+      </ul>
+    </details>
     {% endif %}
   </aside>
   {% endunless %}

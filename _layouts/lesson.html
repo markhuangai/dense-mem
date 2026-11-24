@@ -1,0 +1,70 @@
+---
+layout: base
+---
+{% assign area = site.data.system | where: 'id', page.area | first %}
+<main id="content" class="lesson" data-lesson="{{ page.slug | escape }}" data-covers="{{ page.covers | join: ' ' | escape }}">
+  <header class="lesson-heading">
+    <a class="learn-link" href="{{ '/system/' | relative_url }}#{{ page.area }}">← {{ area.title | escape }}</a>
+    <h1>{{ page.title | escape }}</h1>
+    <p>{{ page.summary | escape }}</p>
+  </header>
+  <div class="lesson-tools" data-interactive hidden>
+    <nav class="lesson-views" aria-label="Lesson view">
+      <a data-change-view="story" href="?view=story#{{ page.frames.first.id }}">What happens</a>
+      <a data-change-view="system" href="?view=system#{{ page.frames.first.id }}">How it works</a>
+      <a data-change-view="data" href="?view=data#{{ page.frames.first.id }}">Follow the data</a>
+    </nav>
+    <div class="lesson-options">
+      {% if page.variant %}
+      <button class="learn-link" type="button" data-scenario aria-pressed="false">{{ page.variant.label | escape }}</button>
+      {% endif %}
+      <button class="learn-link" type="button" data-transcript aria-pressed="false">Read all frames</button>
+    </div>
+  </div>
+  <div class="lesson-frames">
+    {% for frame in page.frames %}
+    <article class="lesson-frame" id="{{ frame.id }}" data-frame aria-labelledby="{{ frame.id }}-title">
+      <h2 id="{{ frame.id }}-title">{{ frame.title | escape }}</h2>
+      {% include lesson-frame.html frame=frame scenario='default' %}
+      {% if page.variant %}
+      {% assign alternative = page.variant.frames[frame.id] %}
+      <details class="lesson-alternative" data-alternative>
+        <summary>{{ page.variant.label | escape }}</summary>
+        {% include lesson-frame.html frame=frame alternative=alternative scenario=page.variant.id %}
+      </details>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+  <nav class="lesson-player" aria-label="Playback" data-interactive hidden>
+    <button class="learn-button" type="button" data-play>Play</button>
+    <div class="lesson-progress">
+      {% for frame in page.frames %}
+      <a href="#{{ frame.id }}" data-frame-link="{{ frame.id }}">{{ frame.title | escape }}</a>
+      {% endfor %}
+    </div>
+    <div class="lesson-step-controls">
+      <button type="button" data-previous>Back</button>
+      <button type="button" data-next-frame>Next</button>
+    </div>
+  </nav>
+  <p class="sr-only" role="status" data-lesson-status></p>
+  <div class="lesson-preview" data-detail-preview aria-hidden="true" hidden></div>
+  {% if page.related_lesson %}
+  <p class="lesson-next"><a class="learn-link" href="{{ page.related_lesson.url | relative_url }}">{{ page.related_lesson.label | escape }} <span aria-hidden="true">→</span></a></p>
+  {% endif %}
+  <section class="lesson-references" aria-labelledby="lesson-reference-title">
+    <h2 id="lesson-reference-title">Read the reference</h2>
+    <ul>
+      {% for ref in page.references %}
+      <li><a href="{{ ref[1] | relative_url }}">{{ ref[0] | escape }}</a></li>
+      {% endfor %}
+      {% for tool in page.tools %}
+      <li><a href="{{ '/fields/' | relative_url }}#{{ tool }}"><code>{{ tool }}</code> fields</a></li>
+      {% endfor %}
+      {% for source in page.sources %}
+      <li><a href="{{ site.source_repository }}/blob/{{ site.lesson_source_revision }}/{{ source[1] }}">{{ source[0] | escape }}</a></li>
+      {% endfor %}
+    </ul>
+  </section>
+</main>

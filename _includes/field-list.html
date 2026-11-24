@@ -1,0 +1,14 @@
+<dl class="catalog-fields">
+  {% for field in include.fields %}
+  <div id="{{ include.prefix }}-{{ field.path | slugify }}">
+    <dt><code>{{ field.path | escape }}</code></dt>
+    <dd>{{ field.type | escape }} · {% if field.required %}Required{% else %}Optional{% endif %}{% if field.purpose != '' %}<p>{{ field.purpose | escape }}</p>{% endif %}
+      {% if field.constraints.size > 0 %}
+      <ul class="field-constraints">
+        {% for rule in field.constraints %}<li><code>{{ rule[0] | escape }} {{ rule[1] | jsonify | escape }}</code></li>{% endfor %}
+      </ul>
+      {% endif %}
+    </dd>
+  </div>
+  {% endfor %}
+</dl>

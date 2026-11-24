@@ -3,10 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
+  <meta name="color-scheme" content="light dark">
+  <script src="{{ '/assets/js/theme.js' | relative_url }}"></script>
   <title>{{ page.title | escape }} · {{ site.title | escape }}</title>
   <link rel="icon" type="image/svg+xml" href="{{ '/assets/mark.svg' | relative_url }}">
   <link rel="stylesheet" href="{{ '/assets/css/site.css' | relative_url }}">
+  {% if page.experience or page.collection == 'lessons' %}<link rel="stylesheet" href="{{ '/assets/css/learn.css' | relative_url }}">{% endif %}
   <script type="module" src="{{ '/assets/js/site.js' | relative_url }}"></script>
 </head>
 <body>
@@ -17,10 +19,16 @@
         <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>Dense-Mem
       </a>
       <nav class="site-nav" aria-label="Documentation">
+        <a href="{{ '/system/' | relative_url }}">System</a>
         <a href="{{ '/Quick-Start/' | relative_url }}">Quick Start</a>
-        <a href="{{ '/guides/' | relative_url }}">All guides</a>
+        <a href="{{ '/guides/' | relative_url }}">Reference</a>
         <a href="{{ '/search/' | relative_url }}">Search</a>
       </nav>
+      <select class="theme-control" data-theme-control aria-label="Color theme" hidden>
+        <option value="system">System theme</option>
+        <option value="light">Light theme</option>
+        <option value="dark">Dark theme</option>
+      </select>
     </header>
     {{ content }}
     <footer class="site-footer">

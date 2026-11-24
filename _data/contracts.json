@@ -1,0 +1,3462 @@
+{
+  "revision": "27886c16078959bf2637ad9db5ec2509b010017a",
+  "tools": {
+    "export_memory_pack": {
+      "request": [
+        {
+          "path": "description",
+          "type": "string",
+          "required": false,
+          "purpose": "Memory pack description.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "evidence_ids",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minItems": 1,
+            "maxItems": 500,
+            "uniqueItems": true
+          }
+        },
+        {
+          "path": "include_evidence",
+          "type": "boolean",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "name",
+          "type": "string",
+          "required": true,
+          "purpose": "Memory pack name.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      ],
+      "result": [
+        {
+          "path": "artifact_json",
+          "type": "string",
+          "required": true,
+          "purpose": "Canonical dense-mem.memory-pack.v3.0 JSON.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 4194304
+          }
+        },
+        {
+          "path": "content_sha256",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minLength": 64,
+            "maxLength": 64,
+            "pattern": "^[a-f0-9]{64}$"
+          }
+        },
+        {
+          "path": "counts",
+          "type": "object",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "maxProperties": 32
+          }
+        },
+        {
+          "path": "filename",
+          "type": "string",
+          "required": true,
+          "purpose": "Suggested artifact filename.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        {
+          "path": "omissions",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 500
+          }
+        },
+        {
+          "path": "omissions[].item_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Evidence ID, or artifact for an unscoped omission.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "omissions[].reason",
+          "type": "string",
+          "required": true,
+          "purpose": "All omission reasons for this item, separated by semicolons.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        }
+      ]
+    },
+    "ingest_session": {
+      "request": [
+        {
+          "path": "app_name",
+          "type": "string",
+          "required": true,
+          "purpose": "Application provenance; never authorization.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        {
+          "path": "events",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minItems": 1,
+            "maxItems": 20
+          }
+        },
+        {
+          "path": "events[].event_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Immutable framework event identifier.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        {
+          "path": "events[].occurred_at",
+          "type": "date-time",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "events[].text",
+          "type": "string",
+          "required": true,
+          "purpose": "Exact user-authored text. Dense-Mem owns chunking; send the original event.",
+          "constraints": {
+            "minLength": 1
+          }
+        },
+        {
+          "path": "framework",
+          "type": "string",
+          "required": true,
+          "purpose": "Framework provenance; never authorization.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        {
+          "path": "idempotency_key",
+          "type": "string",
+          "required": true,
+          "purpose": "Retain this key and the complete original request for unchanged-request retries.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "session_id",
+          "type": "string",
+          "required": true,
+          "purpose": "External session provenance; never a memory-space selector.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        {
+          "path": "user_id",
+          "type": "string",
+          "required": true,
+          "purpose": "External user provenance; never profile identity.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      ],
+      "result": [
+        {
+          "path": "accepted_event_count",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0,
+            "maximum": 20
+          }
+        },
+        {
+          "path": "contract_version",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "dense-mem.v2.8.0"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "correlation_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Invocation correlation identifier.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "duplicate_event_count",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0,
+            "maximum": 20
+          }
+        },
+        {
+          "path": "errors",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 20
+          }
+        },
+        {
+          "path": "errors[].code",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "submission_policy_rejected",
+              "stale_input",
+              "provider_unavailable",
+              "provider_response_invalid",
+              "input_budget_exceeded",
+              "configuration_invalid",
+              "idempotency_conflict",
+              "retired_contract",
+              "embedding_unavailable",
+              "embedding_response_invalid",
+              "commit_conflict",
+              "database_failure",
+              "request_timeout",
+              "request_cancelled",
+              "internal_failure"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "errors[].message",
+          "type": "string",
+          "required": true,
+          "purpose": "Bounded processing failure.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        {
+          "path": "errors[].next_action",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "retry_same_request",
+              "contact_operator",
+              "none"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "errors[].remediation",
+          "type": "string",
+          "required": true,
+          "purpose": "Recovery preserves the complete original request and retained key.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        {
+          "path": "errors[].retryable",
+          "type": "boolean",
+          "required": true,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "events",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minItems": 1,
+            "maxItems": 20
+          }
+        },
+        {
+          "path": "events[].disposition",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "accepted",
+              "duplicate"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "events[].event_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Original immutable event identifier.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        {
+          "path": "events[].evidence_ids",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 100,
+            "uniqueItems": true
+          }
+        },
+        {
+          "path": "events[].processing_state",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "completed",
+              "failed"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "memory_outcome",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "stored",
+              "no_memory",
+              "failed",
+              "retired_contract"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "original_contract_version",
+          "type": "string",
+          "required": false,
+          "purpose": "Original contract retained by a migrated terminal receipt.",
+          "constraints": {
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "processing_state",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "completed",
+              "failed"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "retired_payload",
+          "type": "boolean",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "search_state",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "current",
+              "not_required"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "submission_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Durable intake submission identifier.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "submission_kind",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "session_ingest"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "warnings",
+          "type": "array",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 20,
+            "uniqueItems": true
+          }
+        }
+      ]
+    },
+    "recall_memory": {
+      "request": [
+        {
+          "path": "known_at",
+          "type": "date-time",
+          "required": false,
+          "purpose": "System-knowledge Evidence time.",
+          "constraints": {}
+        },
+        {
+          "path": "known_evidence_ids",
+          "type": "array",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 200,
+            "uniqueItems": true
+          }
+        },
+        {
+          "path": "limit",
+          "type": "integer",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "minimum": 1,
+            "maximum": 50
+          }
+        },
+        {
+          "path": "query",
+          "type": "string",
+          "required": false,
+          "purpose": "Natural-language query; optional with topic_ids.",
+          "constraints": {
+            "maxLength": 512
+          }
+        },
+        {
+          "path": "topic_ids",
+          "type": "array",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "minItems": 1,
+            "maxItems": 10,
+            "uniqueItems": true
+          }
+        },
+        {
+          "path": "topic_limit",
+          "type": "integer",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "default": 3,
+            "minimum": 0,
+            "maximum": 10
+          }
+        },
+        {
+          "path": "valid_at",
+          "type": "date-time",
+          "required": false,
+          "purpose": "Real-world Evidence time.",
+          "constraints": {}
+        }
+      ],
+      "result": [
+        {
+          "path": "conflicts",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 20
+          }
+        },
+        {
+          "path": "conflicts[].conflict_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Evidence conflict case ID.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "conflicts[].kind",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "evidence_conflict"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "conflicts[].positions",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minItems": 2,
+            "maxItems": 10
+          }
+        },
+        {
+          "path": "conflicts[].positions[].authority",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "authoritative",
+              "primary",
+              "secondary",
+              "inferred",
+              "unknown"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "conflicts[].positions[].disposition",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "candidate",
+              "preferred"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "conflicts[].positions[].evidence_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Canonical evidence ID.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "conflicts[].positions[].occurrence_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Exact cited occurrence ID.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "conflicts[].positions[].position_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Evidence conflict position ID.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "conflicts[].positions[].quote",
+          "type": "string",
+          "required": true,
+          "purpose": "Exact server-derived evidence quote.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 4000
+          }
+        },
+        {
+          "path": "conflicts[].positions[].span_end",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 1
+          }
+        },
+        {
+          "path": "conflicts[].positions[].span_start",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0
+          }
+        },
+        {
+          "path": "conflicts[].positions[].submitted",
+          "type": "boolean",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "conflicts[].positions_truncated",
+          "type": "boolean",
+          "required": true,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "conflicts[].preferred_position_id",
+          "type": "string or null",
+          "required": false,
+          "purpose": "Preferred evidence position when resolved.",
+          "constraints": {
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "conflicts[].status",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "open",
+              "resolved"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "conflicts[].version",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 1
+          }
+        },
+        {
+          "path": "degradations",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 10
+          }
+        },
+        {
+          "path": "degradations[].code",
+          "type": "string",
+          "required": true,
+          "purpose": "Stable bounded degradation code.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "degradations[].frontier",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "evidence",
+              "topics",
+              "feedback"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "degradations[].message",
+          "type": "string",
+          "required": true,
+          "purpose": "Safe bounded degradation message.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        {
+          "path": "degradations[].optional",
+          "type": "boolean",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "degradations[].required_failure",
+          "type": "boolean",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "recall_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Recall event ID.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "related_topics",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 10
+          }
+        },
+        {
+          "path": "related_topics[].description",
+          "type": "string",
+          "required": true,
+          "purpose": "Current topic description.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        {
+          "path": "related_topics[].eligible_evidence_count",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0
+          }
+        },
+        {
+          "path": "related_topics[].name",
+          "type": "string",
+          "required": true,
+          "purpose": "Current topic name.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "related_topics[].rank",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 1,
+            "maximum": 10
+          }
+        },
+        {
+          "path": "related_topics[].topic_id",
+          "type": "uuid",
+          "required": true,
+          "purpose": "Direct Evidence topic identity.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "results",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 50
+          }
+        },
+        {
+          "path": "results[].context",
+          "type": "string",
+          "required": true,
+          "purpose": "Exact Evidence slice.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 16384
+          }
+        },
+        {
+          "path": "results[].context_truncated",
+          "type": "boolean",
+          "required": false,
+          "purpose": "Historical Evidence exceeds the content bound; use Trace for explicit bounded provenance.",
+          "constraints": {}
+        },
+        {
+          "path": "results[].equivalent_evidence_ids",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 20,
+            "uniqueItems": true
+          }
+        },
+        {
+          "path": "results[].equivalents_truncated",
+          "type": "boolean",
+          "required": true,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "results[].evidence_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Evidence ID.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "results[].space_kind",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "team_shared",
+              "private"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "search_states",
+          "type": "object",
+          "required": true,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "search_states.evidence",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "not_required",
+              "pending",
+              "current",
+              "failed"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "suggested_actions",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 2
+          }
+        },
+        {
+          "path": "suggested_actions[].guidance",
+          "type": "string",
+          "required": true,
+          "purpose": "Bounded next-step guidance.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        {
+          "path": "suggested_actions[].recall_event_id",
+          "type": "string",
+          "required": false,
+          "purpose": "Recall event ID accepted by the feedback tool.",
+          "constraints": {
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "suggested_actions[].tool",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "submit_recall_session_feedback"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "topics_truncated",
+          "type": "boolean",
+          "required": true,
+          "purpose": "",
+          "constraints": {}
+        }
+      ]
+    },
+    "remember": {
+      "request": [
+        {
+          "path": "evidence",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minItems": 1,
+            "maxItems": 20
+          }
+        },
+        {
+          "path": "evidence[].authority",
+          "type": "string",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "authoritative",
+              "primary",
+              "secondary",
+              "inferred",
+              "unknown"
+            ]
+          }
+        },
+        {
+          "path": "evidence[].content",
+          "type": "string",
+          "required": true,
+          "purpose": "Verbatim evidence text. Submit exact text up to 16,384 Unicode code points per item. The server partitions independent meanings into exact Evidence slices, preserving dependent sentences, whitespace and source offsets. The terminal receipt maps each submitted item to all stored slices.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 16384
+          }
+        },
+        {
+          "path": "evidence[].force_insert",
+          "type": "boolean",
+          "required": false,
+          "purpose": "Bypass semantic duplicate reuse; exact reuse still applies.",
+          "constraints": {}
+        },
+        {
+          "path": "evidence[].labels",
+          "type": "array",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 20,
+            "uniqueItems": true
+          }
+        },
+        {
+          "path": "evidence[].metadata",
+          "type": "object",
+          "required": false,
+          "purpose": "Source-policy-approved metadata.",
+          "constraints": {
+            "maxProperties": 50,
+            "x-max-depth": 4,
+            "x-max-bytes": 16384
+          }
+        },
+        {
+          "path": "evidence[].previous_source_revision",
+          "type": "string",
+          "required": false,
+          "purpose": "Exact previous source revision token.",
+          "constraints": {
+            "maxLength": 256
+          }
+        },
+        {
+          "path": "evidence[].source",
+          "type": "string",
+          "required": false,
+          "purpose": "Bounded provenance label.",
+          "constraints": {
+            "maxLength": 256
+          }
+        },
+        {
+          "path": "evidence[].source_group",
+          "type": "string",
+          "required": false,
+          "purpose": "Proposed evidence source grouping.",
+          "constraints": {
+            "maxLength": 256
+          }
+        },
+        {
+          "path": "evidence[].source_key",
+          "type": "string",
+          "required": false,
+          "purpose": "Stable source-owner-scoped identity.",
+          "constraints": {
+            "maxLength": 256
+          }
+        },
+        {
+          "path": "evidence[].source_revision",
+          "type": "string",
+          "required": false,
+          "purpose": "Opaque current source revision token.",
+          "constraints": {
+            "maxLength": 256
+          }
+        },
+        {
+          "path": "evidence[].source_type",
+          "type": "string",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "conversation",
+              "document",
+              "observation",
+              "manual"
+            ]
+          }
+        },
+        {
+          "path": "evidence[].supersedes_evidence_ids",
+          "type": "array",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 50,
+            "uniqueItems": true
+          }
+        },
+        {
+          "path": "idempotency_key",
+          "type": "string",
+          "required": true,
+          "purpose": "One retained batch retry key scoped to team and profile.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "target_space",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "private",
+              "team_shared"
+            ],
+            "minLength": 1
+          }
+        }
+      ],
+      "result": [
+        {
+          "path": "contract_version",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "dense-mem.v2.8.0"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "correlation_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Request correlation ID.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "errors",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 50
+          }
+        },
+        {
+          "path": "errors[].code",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "stale_input",
+              "retired_contract",
+              "provider_unavailable",
+              "provider_response_invalid",
+              "input_budget_exceeded",
+              "configuration_invalid",
+              "idempotency_conflict",
+              "embedding_unavailable",
+              "embedding_response_invalid",
+              "commit_conflict",
+              "database_failure",
+              "request_timeout",
+              "request_cancelled",
+              "internal_failure",
+              "submission_policy_rejected"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "errors[].details",
+          "type": "object",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "errors[].details.attempts",
+          "type": "integer",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0,
+            "maximum": 20
+          }
+        },
+        {
+          "path": "errors[].details.client_controlled",
+          "type": "boolean",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "errors[].details.component",
+          "type": "string",
+          "required": false,
+          "purpose": "Owning server component.",
+          "constraints": {
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "errors[].details.issues",
+          "type": "array",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 20
+          }
+        },
+        {
+          "path": "errors[].details.issues[].code",
+          "type": "string",
+          "required": true,
+          "purpose": "Server-owned verified issue category.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "errors[].details.issues[].message",
+          "type": "string",
+          "required": true,
+          "purpose": "Server-owned issue explanation.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        {
+          "path": "errors[].details.issues[].path",
+          "type": "string",
+          "required": true,
+          "purpose": "JSON Pointer to caller-submitted input.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        {
+          "path": "errors[].details.issues[].span_end",
+          "type": "integer",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0,
+            "maximum": 100000
+          }
+        },
+        {
+          "path": "errors[].details.issues[].span_start",
+          "type": "integer",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0,
+            "maximum": 100000
+          }
+        },
+        {
+          "path": "errors[].details.issues_truncated",
+          "type": "boolean",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "errors[].details.limit",
+          "type": "integer",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0
+          }
+        },
+        {
+          "path": "errors[].details.observed",
+          "type": "integer",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0
+          }
+        },
+        {
+          "path": "errors[].details.observed_at_least",
+          "type": "boolean",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "errors[].details.retry_after_seconds",
+          "type": "integer",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0,
+            "maximum": 86400
+          }
+        },
+        {
+          "path": "errors[].details.server_owned",
+          "type": "boolean",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "errors[].details.tool",
+          "type": "string",
+          "required": false,
+          "purpose": "Affected tool name.",
+          "constraints": {
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "errors[].details.unit",
+          "type": "string",
+          "required": false,
+          "purpose": "Measurement unit.",
+          "constraints": {
+            "maxLength": 32
+          }
+        },
+        {
+          "path": "errors[].message",
+          "type": "string",
+          "required": true,
+          "purpose": "Bounded safe submission error.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        {
+          "path": "errors[].next_action",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "retry_same_request",
+              "resubmit_remember",
+              "contact_operator",
+              "none"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "errors[].reason_code",
+          "type": "string",
+          "required": false,
+          "purpose": "Code-specific bounded reason.",
+          "constraints": {
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "errors[].remediation",
+          "type": "string",
+          "required": true,
+          "purpose": "Bounded action the caller can take next.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        {
+          "path": "errors[].retryable",
+          "type": "boolean",
+          "required": true,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "evidence",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 100
+          }
+        },
+        {
+          "path": "evidence[].content_hash",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence content hash.",
+          "constraints": {
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "evidence[].disposition",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "stored",
+              "not_stored"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "evidence[].error",
+          "type": "variant",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "evidence[].error.code",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "stale_input",
+              "retired_contract",
+              "provider_unavailable",
+              "provider_response_invalid",
+              "input_budget_exceeded",
+              "configuration_invalid",
+              "idempotency_conflict",
+              "embedding_unavailable",
+              "embedding_response_invalid",
+              "commit_conflict",
+              "database_failure",
+              "request_timeout",
+              "request_cancelled",
+              "internal_failure",
+              "submission_policy_rejected"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "evidence[].error.details",
+          "type": "object",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "evidence[].error.details.attempts",
+          "type": "integer",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0,
+            "maximum": 20
+          }
+        },
+        {
+          "path": "evidence[].error.details.client_controlled",
+          "type": "boolean",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "evidence[].error.details.component",
+          "type": "string",
+          "required": false,
+          "purpose": "Owning server component.",
+          "constraints": {
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "evidence[].error.details.issues",
+          "type": "array",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 20
+          }
+        },
+        {
+          "path": "evidence[].error.details.issues[].code",
+          "type": "string",
+          "required": true,
+          "purpose": "Server-owned verified issue category.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "evidence[].error.details.issues[].message",
+          "type": "string",
+          "required": true,
+          "purpose": "Server-owned issue explanation.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        {
+          "path": "evidence[].error.details.issues[].path",
+          "type": "string",
+          "required": true,
+          "purpose": "JSON Pointer to caller-submitted input.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        {
+          "path": "evidence[].error.details.issues[].span_end",
+          "type": "integer",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0,
+            "maximum": 100000
+          }
+        },
+        {
+          "path": "evidence[].error.details.issues[].span_start",
+          "type": "integer",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0,
+            "maximum": 100000
+          }
+        },
+        {
+          "path": "evidence[].error.details.issues_truncated",
+          "type": "boolean",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "evidence[].error.details.limit",
+          "type": "integer",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0
+          }
+        },
+        {
+          "path": "evidence[].error.details.observed",
+          "type": "integer",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0
+          }
+        },
+        {
+          "path": "evidence[].error.details.observed_at_least",
+          "type": "boolean",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "evidence[].error.details.retry_after_seconds",
+          "type": "integer",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0,
+            "maximum": 86400
+          }
+        },
+        {
+          "path": "evidence[].error.details.server_owned",
+          "type": "boolean",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "evidence[].error.details.tool",
+          "type": "string",
+          "required": false,
+          "purpose": "Affected tool name.",
+          "constraints": {
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "evidence[].error.details.unit",
+          "type": "string",
+          "required": false,
+          "purpose": "Measurement unit.",
+          "constraints": {
+            "maxLength": 32
+          }
+        },
+        {
+          "path": "evidence[].error.message",
+          "type": "string",
+          "required": true,
+          "purpose": "Bounded safe submission error.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        {
+          "path": "evidence[].error.next_action",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "retry_same_request",
+              "resubmit_remember",
+              "contact_operator",
+              "none"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "evidence[].error.reason_code",
+          "type": "string",
+          "required": false,
+          "purpose": "Code-specific bounded reason.",
+          "constraints": {
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "evidence[].error.remediation",
+          "type": "string",
+          "required": true,
+          "purpose": "Bounded action the caller can take next.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 512
+          }
+        },
+        {
+          "path": "evidence[].error.retryable",
+          "type": "boolean",
+          "required": true,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "evidence[].evidence_id",
+          "type": "string",
+          "required": false,
+          "purpose": "Durable evidence ID when stored.",
+          "constraints": {
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "evidence[].evidence_index",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0
+          }
+        },
+        {
+          "path": "evidence[].occurrence_id",
+          "type": "uuid",
+          "required": false,
+          "purpose": "Exact slice occurrence.",
+          "constraints": {
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "evidence[].partition_index",
+          "type": "integer",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0,
+            "maximum": 99
+          }
+        },
+        {
+          "path": "evidence[].reason",
+          "type": "string",
+          "required": false,
+          "purpose": "Bounded reason when not stored.",
+          "constraints": {
+            "maxLength": 256
+          }
+        },
+        {
+          "path": "evidence[].search_state",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "current",
+              "not_required"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "evidence[].source_item_id",
+          "type": "uuid",
+          "required": false,
+          "purpose": "Immutable original submitted item.",
+          "constraints": {
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "evidence[].span_end",
+          "type": "integer",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "minimum": 1,
+            "maximum": 16384
+          }
+        },
+        {
+          "path": "evidence[].span_start",
+          "type": "integer",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0,
+            "maximum": 16384
+          }
+        },
+        {
+          "path": "evidence[].superseded_evidence_ids",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 50,
+            "uniqueItems": true
+          }
+        },
+        {
+          "path": "processing_state",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "completed",
+              "failed"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "search_state",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "current",
+              "not_required"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "space_kind",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "private",
+              "team_shared"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "submission_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Submission ID.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "submission_kind",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "remember"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "warnings",
+          "type": "array",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 20,
+            "uniqueItems": true
+          }
+        }
+      ]
+    },
+    "retract_evidence": {
+      "request": [
+        {
+          "path": "evidence_ids",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minItems": 1,
+            "maxItems": 50,
+            "uniqueItems": true
+          }
+        },
+        {
+          "path": "idempotency_key",
+          "type": "string",
+          "required": true,
+          "purpose": "Retraction retry key scoped to team and profile.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "reason",
+          "type": "string",
+          "required": true,
+          "purpose": "Required bounded retraction reason.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        }
+      ],
+      "result": [
+        {
+          "path": "decision_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Append-only lifecycle decision ID.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "processing_state",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "completed"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "retracted_evidence_ids",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 50,
+            "uniqueItems": true
+          }
+        }
+      ]
+    },
+    "submit_recall_session_feedback": {
+      "request": [
+        {
+          "path": "recalls",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minItems": 1,
+            "maxItems": 20
+          }
+        },
+        {
+          "path": "recalls[].answer_supported",
+          "type": "boolean",
+          "required": true,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "recalls[].feedback_comment",
+          "type": "string",
+          "required": false,
+          "purpose": "Bounded feedback note.",
+          "constraints": {
+            "maxLength": 1000
+          }
+        },
+        {
+          "path": "recalls[].irrelevant",
+          "type": "boolean",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "recalls[].irrelevant_result_refs",
+          "type": "array",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 100
+          }
+        },
+        {
+          "path": "recalls[].irrelevant_result_refs[].id",
+          "type": "string",
+          "required": true,
+          "purpose": "Result ID from the recall event.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "recalls[].irrelevant_result_refs[].rank",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 1,
+            "maximum": 1000
+          }
+        },
+        {
+          "path": "recalls[].irrelevant_result_refs[].type",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "evidence",
+              "topic"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "recalls[].missing_context",
+          "type": "boolean",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "recalls[].quality",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ]
+          }
+        },
+        {
+          "path": "recalls[].recall_event_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Recall event ID.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "recalls[].used",
+          "type": "boolean",
+          "required": true,
+          "purpose": "",
+          "constraints": {}
+        }
+      ],
+      "result": [
+        {
+          "path": "error",
+          "type": "string",
+          "required": false,
+          "purpose": "Bounded feedback failure summary.",
+          "constraints": {
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "error_code",
+          "type": "string",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "degraded",
+              "invalid_input",
+              "internal_failure"
+            ]
+          }
+        },
+        {
+          "path": "failed_index",
+          "type": "integer",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0,
+            "maximum": 19
+          }
+        },
+        {
+          "path": "next_action",
+          "type": "string",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "correct_and_resubmit",
+              "retry_same_request",
+              "contact_operator",
+              "stop"
+            ]
+          }
+        },
+        {
+          "path": "partial_success",
+          "type": "boolean",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "reason_code",
+          "type": "string",
+          "required": false,
+          "purpose": "Code-specific bounded failure reason.",
+          "constraints": {
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "recorded",
+          "type": "boolean",
+          "required": true,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "recorded_count",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0,
+            "maximum": 20
+          }
+        },
+        {
+          "path": "remediation",
+          "type": "string",
+          "required": false,
+          "purpose": "Bounded action for the remaining feedback items.",
+          "constraints": {
+            "maxLength": 512
+          }
+        }
+      ]
+    },
+    "trace_memory": {
+      "request": [
+        {
+          "path": "evidence_id",
+          "type": "uuid",
+          "required": true,
+          "purpose": "Authorized Evidence ID.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "include_evidence_content",
+          "type": "boolean",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "include_transitions",
+          "type": "boolean",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "max_events",
+          "type": "integer",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "default": 100,
+            "minimum": 1,
+            "maximum": 500
+          }
+        },
+        {
+          "path": "max_fragment_content_runes",
+          "type": "integer",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "default": 2000,
+            "minimum": 1,
+            "maximum": 16384
+          }
+        }
+      ],
+      "result": [
+        {
+          "path": "decisions",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 500
+          }
+        },
+        {
+          "path": "decisions[].created_at",
+          "type": "date-time",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minLength": 1
+          }
+        },
+        {
+          "path": "decisions[].decision",
+          "type": "string",
+          "required": true,
+          "purpose": "Bounded original decision.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "decisions[].decision_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Evidence decision identity.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "decisions[].ingest_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Original submission identity.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "decisions[].kind",
+          "type": "string",
+          "required": true,
+          "purpose": "Decision kind.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "decisions[].occurrence_id",
+          "type": "string",
+          "required": false,
+          "purpose": "Exact occurrence identity.",
+          "constraints": {
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "decisions[].reason",
+          "type": "string",
+          "required": false,
+          "purpose": "Bounded decision reason.",
+          "constraints": {
+            "maxLength": 1000
+          }
+        },
+        {
+          "path": "evidence",
+          "type": "object",
+          "required": true,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "evidence.authority",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "evidence.content",
+          "type": "string",
+          "required": false,
+          "purpose": "Exact bounded Evidence content.",
+          "constraints": {
+            "maxLength": 16384
+          }
+        },
+        {
+          "path": "evidence.content_hash",
+          "type": "string",
+          "required": true,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "evidence.content_omitted",
+          "type": "boolean",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "evidence.content_truncated",
+          "type": "boolean",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "evidence.created_at",
+          "type": "date-time",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "evidence.current_revision_id",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "evidence.evidence_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "evidence.evidence_index",
+          "type": "integer",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0,
+            "maximum": 99
+          }
+        },
+        {
+          "path": "evidence.ingest_id",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "evidence.labels",
+          "type": "array",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 20,
+            "uniqueItems": true
+          }
+        },
+        {
+          "path": "evidence.metadata",
+          "type": "object",
+          "required": false,
+          "purpose": "Original admitted metadata.",
+          "constraints": {
+            "maxProperties": 50,
+            "x-max-depth": 4,
+            "x-max-bytes": 16384
+          }
+        },
+        {
+          "path": "evidence.occurrence_id",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "evidence.occurrence_owner_profile_id",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "evidence.owner_profile_id",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "evidence.partition",
+          "type": "object",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "evidence.partition.original_content_hash",
+          "type": "string",
+          "required": true,
+          "purpose": "Original exact item hash.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "evidence.partition.partition_index",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0,
+            "maximum": 99
+          }
+        },
+        {
+          "path": "evidence.partition.policy_version",
+          "type": "string",
+          "required": true,
+          "purpose": "Server partition policy version.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "evidence.partition.source_item_id",
+          "type": "uuid",
+          "required": true,
+          "purpose": "Immutable original submitted item.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "evidence.partition.span_end",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 1,
+            "maximum": 16384
+          }
+        },
+        {
+          "path": "evidence.partition.span_start",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0,
+            "maximum": 16384
+          }
+        },
+        {
+          "path": "evidence.partition.submitted_index",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0,
+            "maximum": 19
+          }
+        },
+        {
+          "path": "evidence.revision_token",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "evidence.session",
+          "type": "object",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "evidence.session.app_name",
+          "type": "string",
+          "required": true,
+          "purpose": "Original application provenance.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        {
+          "path": "evidence.session.event_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Immutable original event identifier.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        {
+          "path": "evidence.session.event_index",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0,
+            "maximum": 19
+          }
+        },
+        {
+          "path": "evidence.session.framework",
+          "type": "string",
+          "required": true,
+          "purpose": "Original framework provenance.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        {
+          "path": "evidence.session.occurred_at",
+          "type": "date-time",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "evidence.session.session_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Original external session provenance.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        {
+          "path": "evidence.session.span_end",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 1
+          }
+        },
+        {
+          "path": "evidence.session.span_start",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0
+          }
+        },
+        {
+          "path": "evidence.session.user_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Original external user provenance.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        {
+          "path": "evidence.source_id",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "evidence.source_key",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "evidence.source_kind",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "evidence.source_ref",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "evidence.source_revision_id",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "evidence.source_type",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "lifecycle",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 500
+          }
+        },
+        {
+          "path": "lifecycle[].action",
+          "type": "string",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "enum": [
+              "supersede",
+              "retract"
+            ],
+            "minLength": 1
+          }
+        },
+        {
+          "path": "lifecycle[].created_at",
+          "type": "date-time",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minLength": 1
+          }
+        },
+        {
+          "path": "lifecycle[].lifecycle_event_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Append-only evidence lifecycle event ID.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "lifecycle[].lifecycle_operation_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Append-only evidence lifecycle operation ID.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "lifecycle[].owner_profile_id",
+          "type": "string",
+          "required": false,
+          "purpose": "Lifecycle operation owner.",
+          "constraints": {
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "lifecycle[].reason",
+          "type": "string",
+          "required": false,
+          "purpose": "Bounded lifecycle reason.",
+          "constraints": {
+            "maxLength": 1000
+          }
+        },
+        {
+          "path": "lifecycle[].replacement_evidence_id",
+          "type": "string or null",
+          "required": false,
+          "purpose": "Replacement evidence ID when superseded.",
+          "constraints": {
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "lifecycle[].replacement_evidence_ids",
+          "type": "array",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 100,
+            "uniqueItems": true
+          }
+        },
+        {
+          "path": "lifecycle[].replacement_occurrence_ids",
+          "type": "array",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 100,
+            "uniqueItems": true
+          }
+        },
+        {
+          "path": "lifecycle[].target_evidence_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Retired evidence ID.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "occurrences",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 500
+          }
+        },
+        {
+          "path": "occurrences[].authority",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "occurrences[].content",
+          "type": "string",
+          "required": false,
+          "purpose": "Exact bounded Evidence content.",
+          "constraints": {
+            "maxLength": 16384
+          }
+        },
+        {
+          "path": "occurrences[].content_hash",
+          "type": "string",
+          "required": true,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "occurrences[].content_omitted",
+          "type": "boolean",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "occurrences[].content_truncated",
+          "type": "boolean",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "occurrences[].created_at",
+          "type": "date-time",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "occurrences[].current_revision_id",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "occurrences[].evidence_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "occurrences[].evidence_index",
+          "type": "integer",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0,
+            "maximum": 99
+          }
+        },
+        {
+          "path": "occurrences[].ingest_id",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "occurrences[].labels",
+          "type": "array",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 20,
+            "uniqueItems": true
+          }
+        },
+        {
+          "path": "occurrences[].metadata",
+          "type": "object",
+          "required": false,
+          "purpose": "Original admitted metadata.",
+          "constraints": {
+            "maxProperties": 50,
+            "x-max-depth": 4,
+            "x-max-bytes": 16384
+          }
+        },
+        {
+          "path": "occurrences[].occurrence_id",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "occurrences[].occurrence_owner_profile_id",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "occurrences[].owner_profile_id",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "occurrences[].partition",
+          "type": "object",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "occurrences[].partition.original_content_hash",
+          "type": "string",
+          "required": true,
+          "purpose": "Original exact item hash.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "occurrences[].partition.partition_index",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0,
+            "maximum": 99
+          }
+        },
+        {
+          "path": "occurrences[].partition.policy_version",
+          "type": "string",
+          "required": true,
+          "purpose": "Server partition policy version.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "occurrences[].partition.source_item_id",
+          "type": "uuid",
+          "required": true,
+          "purpose": "Immutable original submitted item.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "occurrences[].partition.span_end",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 1,
+            "maximum": 16384
+          }
+        },
+        {
+          "path": "occurrences[].partition.span_start",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0,
+            "maximum": 16384
+          }
+        },
+        {
+          "path": "occurrences[].partition.submitted_index",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0,
+            "maximum": 19
+          }
+        },
+        {
+          "path": "occurrences[].revision_token",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "occurrences[].session",
+          "type": "object",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "occurrences[].session.app_name",
+          "type": "string",
+          "required": true,
+          "purpose": "Original application provenance.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        {
+          "path": "occurrences[].session.event_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Immutable original event identifier.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        {
+          "path": "occurrences[].session.event_index",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0,
+            "maximum": 19
+          }
+        },
+        {
+          "path": "occurrences[].session.framework",
+          "type": "string",
+          "required": true,
+          "purpose": "Original framework provenance.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        {
+          "path": "occurrences[].session.occurred_at",
+          "type": "date-time",
+          "required": false,
+          "purpose": "",
+          "constraints": {
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "occurrences[].session.session_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Original external session provenance.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        {
+          "path": "occurrences[].session.span_end",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 1
+          }
+        },
+        {
+          "path": "occurrences[].session.span_start",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 0
+          }
+        },
+        {
+          "path": "occurrences[].session.user_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Original external user provenance.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        {
+          "path": "occurrences[].source_id",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "occurrences[].source_key",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "occurrences[].source_kind",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "occurrences[].source_ref",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "occurrences[].source_revision_id",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "occurrences[].source_type",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence provenance field.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "omissions",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 500,
+            "uniqueItems": true
+          }
+        },
+        {
+          "path": "search_documents",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 500
+          }
+        },
+        {
+          "path": "search_documents[].created_at",
+          "type": "date-time",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "search_documents[].document_hash",
+          "type": "string",
+          "required": true,
+          "purpose": "Evidence search projection metadata.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "search_documents[].document_version",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 1
+          }
+        },
+        {
+          "path": "search_documents[].embedding_contract_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Evidence search projection metadata.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "search_documents[].embedding_dimensions",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 1
+          }
+        },
+        {
+          "path": "search_documents[].owner_profile_id",
+          "type": "string",
+          "required": false,
+          "purpose": "Evidence search projection metadata.",
+          "constraints": {
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "search_documents[].search_document_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Evidence search projection metadata.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "search_documents[].search_state",
+          "type": "string",
+          "required": true,
+          "purpose": "Evidence search projection metadata.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "search_documents[].source_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Evidence search projection metadata.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "search_documents[].source_kind",
+          "type": "string",
+          "required": true,
+          "purpose": "Evidence search projection metadata.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 128
+          }
+        },
+        {
+          "path": "search_documents[].source_version",
+          "type": "integer",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minimum": 1
+          }
+        },
+        {
+          "path": "search_documents[].updated_at",
+          "type": "date-time",
+          "required": false,
+          "purpose": "",
+          "constraints": {}
+        },
+        {
+          "path": "source_revisions",
+          "type": "array",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "maxItems": 500
+          }
+        },
+        {
+          "path": "source_revisions[].content_hash",
+          "type": "string",
+          "required": true,
+          "purpose": "Source revision provenance.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "source_revisions[].created_at",
+          "type": "date-time",
+          "required": true,
+          "purpose": "",
+          "constraints": {
+            "minLength": 1
+          }
+        },
+        {
+          "path": "source_revisions[].current_revision_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Source revision provenance.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "source_revisions[].envelope",
+          "type": "object",
+          "required": true,
+          "purpose": "Original bounded source envelope.",
+          "constraints": {
+            "maxProperties": 50,
+            "x-max-depth": 4,
+            "x-max-bytes": 16384
+          }
+        },
+        {
+          "path": "source_revisions[].owner_profile_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Source revision provenance.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "source_revisions[].revision_token",
+          "type": "string",
+          "required": true,
+          "purpose": "Source revision provenance.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "source_revisions[].source_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Source revision provenance.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "source_revisions[].source_key",
+          "type": "string",
+          "required": true,
+          "purpose": "Source revision provenance.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "source_revisions[].source_revision_id",
+          "type": "string",
+          "required": true,
+          "purpose": "Source revision provenance.",
+          "constraints": {
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "source_revisions[].supersedes_revision_id",
+          "type": "string",
+          "required": false,
+          "purpose": "Source revision provenance.",
+          "constraints": {
+            "maxLength": 1024
+          }
+        },
+        {
+          "path": "truncated",
+          "type": "boolean",
+          "required": true,
+          "purpose": "",
+          "constraints": {}
+        }
+      ]
+    }
+  },
+  "error": [
+    {
+      "path": "code",
+      "type": "string",
+      "required": true,
+      "purpose": "",
+      "constraints": {
+        "enum": [
+          "invalid_input",
+          "unauthorized_scope",
+          "wrong_owner",
+          "conflict",
+          "provider_unavailable",
+          "provider_malformed",
+          "degraded"
+        ],
+        "minLength": 1
+      }
+    },
+    {
+      "path": "correlation_id",
+      "type": "string",
+      "required": true,
+      "purpose": "Request correlation ID.",
+      "constraints": {
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    {
+      "path": "details",
+      "type": "object",
+      "required": false,
+      "purpose": "Code-specific bounded safe metadata.",
+      "constraints": {
+        "maxProperties": 50,
+        "x-max-depth": 4,
+        "x-max-bytes": 16384
+      }
+    },
+    {
+      "path": "message",
+      "type": "string",
+      "required": true,
+      "purpose": "Bounded public error message.",
+      "constraints": {
+        "minLength": 1,
+        "maxLength": 512
+      }
+    },
+    {
+      "path": "next_action",
+      "type": "string",
+      "required": true,
+      "purpose": "",
+      "constraints": {
+        "enum": [
+          "retry_same_request",
+          "correct_and_resubmit",
+          "refresh_state",
+          "obtain_authorization",
+          "contact_operator",
+          "stop"
+        ],
+        "minLength": 1
+      }
+    },
+    {
+      "path": "reason_code",
+      "type": "string",
+      "required": false,
+      "purpose": "Stable code-specific reason.",
+      "constraints": {
+        "maxLength": 128
+      }
+    },
+    {
+      "path": "remediation",
+      "type": "string",
+      "required": true,
+      "purpose": "Bounded next step for the caller.",
+      "constraints": {
+        "minLength": 1,
+        "maxLength": 512
+      }
+    },
+    {
+      "path": "retry_after_seconds",
+      "type": "integer",
+      "required": false,
+      "purpose": "",
+      "constraints": {
+        "minimum": 0,
+        "maximum": 86400
+      }
+    },
+    {
+      "path": "retryable",
+      "type": "boolean",
+      "required": true,
+      "purpose": "",
+      "constraints": {}
+    }
+  ]
+}
