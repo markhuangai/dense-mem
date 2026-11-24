@@ -28,19 +28,21 @@ func recordRecallFeedbackSnapshot(
 			degradation = mapped
 		}
 	}
+	metadata := map[string]any{"result_schema": "v3.evidence_topic_refs.v1"}
+	if len(res.DecisionStages) > 0 {
+		metadata["decision_stages"] = res.DecisionStages
+	}
 	err := deps.Core.RecallFeedbackEvents.RecordRecallSnapshot(ctx, domain.RecallFeedbackEvent{
-		RecallID:        res.RecallID,
-		ToolName:        ToolRecallMemory,
-		Query:           req.Query,
-		ToolArgs:        recallFeedbackToolArgs(input, req),
-		ResultRefs:      recall.FeedbackResultRefs(res),
-		ContractVersion: domain.ContractVersion,
-		SearchState:     res.SearchState,
-		Degradation:     degradation,
-		SnapshotMetadata: map[string]any{
-			"result_schema":   "v3.evidence_topic_refs.v1",
-			"decision_stages": res.DecisionStages,
-		},
+		RecallID:         res.RecallID,
+		RankingMethod:    res.RankingMethod,
+		ToolName:         ToolRecallMemory,
+		Query:            req.Query,
+		ToolArgs:         recallFeedbackToolArgs(input, req),
+		ResultRefs:       recall.FeedbackResultRefs(res),
+		ContractVersion:  domain.ContractVersion,
+		SearchState:      res.SearchState,
+		Degradation:      degradation,
+		SnapshotMetadata: metadata,
 	})
 	if err != nil {
 		res.Degradations = append(res.Degradations, recall.RecallDegradationResult{

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,7 +18,7 @@ func BenchmarkRecallOntology(b *testing.B) {
 	for _, workload := range []string{"grouping", "discovery", "ordinary_fallback"} {
 		b.Run(workload, func(b *testing.B) {
 			f := newRecallOntologyFixture(b)
-			handles := []ontology.SourceHandle{}
+			handles := []topic.SourceHandle{}
 			meanings := map[string]string{}
 			for i := range 96 {
 				text := fmt.Sprintf("Project %d stores its data in PostgreSQL.", i)
@@ -36,7 +36,7 @@ func BenchmarkRecallOntology(b *testing.B) {
 			}
 			if workload != "ordinary_fallback" {
 				producer, _ := f.organizer(b, meanings)
-				_, err := producer.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
+				_, err := producer.Organize(context.Background(), f.team, topic.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
 				require.NoError(b, err)
 			}
 			query := "Atlas PostgreSQL"

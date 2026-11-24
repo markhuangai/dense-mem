@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	privacypostgres "github.com/markhuangai/dense-mem/internal/privacy/postgres"
+	assignment "github.com/markhuangai/dense-mem/internal/topicassignment/contract"
+	assignmentpg "github.com/markhuangai/dense-mem/internal/topics/postgres"
 	"testing"
 	"time"
 
@@ -101,16 +103,38 @@ func runRememberEvidenceOnlyAtomicScenario(t *testing.T) {
 	ownerID := createLedgerProfile(t, adminDB, rls, teamID, "remember-primitives-evidence-only-owner")
 	repo := NewStore(appDB, rls)
 
-	input := evidenceOnlyRememberInput(teamID, ownerID, "remember-primitives-evidence-only-success")
-	plan, err := repo.PlanRememberEmbeddings(ctx, input)
+	assignments := assignmentpg.NewStore(appDB, rls)
+	repo.WithTopicAssignments(assignments)
+	credential, err := accesspostgres.NewCredentialRepository(appDB, rls, nil).GetByIDForTeam(ctx, uuid.MustParse(teamID), uuid.MustParse(ownerID))
+	require.NoError(t, err)
+	require.NotNil(t, credential)
+	actorCtx := privateCredentialContext(credential)
+	space, generation := credential.TeamSharedSpaceID.String(), credential.TeamSharedSpaceGeneration
+	sharedInput := func(label string) SynchronousRememberCommitInput {
+		input := evidenceOnlyRememberInput(teamID, ownerID, label)
+		input.SpaceID, input.SpaceGeneration = space, generation
+		input.Metadata = map[string]any{"target_space": string(domain.MemorySpaceTeamShared)}
+		return input
+	}
+	input := sharedInput("remember-primitives-evidence-only-success")
+	input.TopicAssignments = []assignment.Outcome{{Text: input.Evidence[0].Content, InputHash: input.RequestHash, Method: "generation", Proposals: []assignment.Proposal{{Label: "Storage", Description: "Data storage.", Quote: "stores"}, {Label: "Relationships", Description: "Semantic Relationships.", Quote: "Relationship"}}}}
+	plan, err := repo.PlanRememberEmbeddings(actorCtx, input)
 	require.NoError(t, err)
 	require.Len(t, plan.Documents, 1)
-	result, err := repo.CommitRememberWithEmbeddings(ctx, input, rememberTestEmbeddings(plan, false))
+	result, err := repo.CommitRememberWithEmbeddings(actorCtx, input, rememberTestEmbeddings(plan, false))
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "completed", result.Outcome)
 	require.Len(t, result.SearchDocuments, 1)
 	require.Equal(t, string(domain.SearchProjectionCurrent), result.SearchDocuments[0].SearchState)
+	replay, err := repo.CommitRememberWithEmbeddings(actorCtx, input, rememberTestEmbeddings(plan, false))
+	require.ErrorIs(t, err, ErrRememberReplay)
+	require.NotNil(t, replay)
+	firstReceipt, err := json.Marshal(result.PublicResult)
+	require.NoError(t, err)
+	replayedReceipt, err := json.Marshal(replay.PublicResult)
+	require.NoError(t, err)
+	require.JSONEq(t, string(firstReceipt), string(replayedReceipt))
 
 	counts := rememberPrimitiveCounts(t, ctx, adminDB, rls, teamID, input.IngestID)
 	require.EqualValues(t, 1, counts["knowledge_ingests"])
@@ -119,14 +143,35 @@ func runRememberEvidenceOnlyAtomicScenario(t *testing.T) {
 	require.EqualValues(t, 1, counts["search_documents"])
 	require.EqualValues(t, 1, counts["remember_attempts"])
 
-	unsafe := evidenceOnlyRememberInput(teamID, ownerID, "remember-primitives-evidence-only-unsafe")
+	var published int
+	require.NoError(t, rls.WithTeamProfileTx(actorCtx, appDB, teamID, ownerID, func(tx *gorm.DB) error {
+		return tx.Raw(`SELECT cardinality(topic_ids) FROM topic_assignment_outcomes WHERE team_id=?::uuid AND evidence_id=?::uuid AND operation_id=?::uuid`, teamID, input.Evidence[0].FragmentID, input.IngestID).Row().Scan(&published)
+	}))
+	require.Equal(t, 2, published)
+	stale := sharedInput("remember-stale-assignment")
+	catalog, err := assignments.ReadAssignmentCandidates(actorCtx, assignment.Scope{TeamID: teamID, SpaceID: space, Generation: generation}, assignment.Slice{Text: "Storage"})
+	candidates := catalog.Topics
+	require.NoError(t, err)
+	require.NotEmpty(t, candidates)
+	stale.TopicAssignments = []assignment.Outcome{{Text: stale.Evidence[0].Content, InputHash: stale.RequestHash, Method: "generation", Reviewed: candidates, Matches: []assignment.Match{{ID: candidates[0].ID, Version: candidates[0].Version + 1, Quote: "stores"}}}}
+	stalePlan, err := repo.PlanRememberEmbeddings(actorCtx, stale)
+	require.NoError(t, err)
+	_, err = repo.CommitRememberWithEmbeddings(actorCtx, stale, rememberTestEmbeddings(stalePlan, false))
+	require.ErrorIs(t, err, assignment.ErrStale)
+	require.Equal(t, "topic_assignment", RememberCommitFailureStage(err))
+	for name, count := range rememberPrimitiveCounts(t, ctx, adminDB, rls, teamID, stale.IngestID) {
+		require.Zero(t, count, name)
+	}
+
+	unsafe := sharedInput("remember-primitives-evidence-only-unsafe")
 	unsafeContent := "Dense-Mem must reject this unsafe evidence item."
 	unsafe.Evidence = append(unsafe.Evidence, EvidenceInput{
 		FragmentID: uuid.NewString(), Content: unsafeContent, ContentHash: sha256Hex(unsafeContent), SourceType: "manual", Authority: "primary",
 	})
-	require.NoError(t, repo.RecordRememberFailure(ctx, RememberFailureRecordInput{
+	require.NoError(t, repo.RecordRememberFailure(actorCtx, RememberFailureRecordInput{
 		Attempt: RememberAttemptRecordInput{
 			TeamID: teamID, OwnerProfileID: ownerID, AttemptID: unsafe.IngestID,
+			SpaceID: unsafe.SpaceID, SpaceGeneration: unsafe.SpaceGeneration,
 			IdempotencyKey: unsafe.IdempotencyKey, RequestHash: unsafe.RequestHash,
 			ContractVersion: domain.ContractVersion, SubmissionKind: "remember", Outcome: "failed",
 			FailedPhase: "assessment", ErrorCode: "submission_policy_rejected", Retryable: false, RetryabilitySet: true,
@@ -142,11 +187,12 @@ func runRememberEvidenceOnlyAtomicScenario(t *testing.T) {
 		require.Zero(t, count, "unsafe batch must not create %s", name)
 	}
 
-	rollback := evidenceOnlyRememberInput(teamID, ownerID, "remember-primitives-evidence-only-rollback")
-	rollbackPlan, err := repo.PlanRememberEmbeddings(ctx, rollback)
+	rollback := sharedInput("remember-primitives-evidence-only-rollback")
+	rollbackPlan, err := repo.PlanRememberEmbeddings(actorCtx, rollback)
 	require.NoError(t, err)
-	_, err = repo.CommitRememberWithEmbeddings(ctx, rollback, rememberTestEmbeddings(rollbackPlan, true))
+	_, err = repo.CommitRememberWithEmbeddings(actorCtx, rollback, rememberTestEmbeddings(rollbackPlan, true))
 	require.Error(t, err)
+	require.Equal(t, "embeddings", RememberCommitFailureStage(err))
 	rollbackCounts := rememberPrimitiveCounts(t, ctx, adminDB, rls, teamID, rollback.IngestID)
 	for _, count := range rollbackCounts {
 		require.Zero(t, count)

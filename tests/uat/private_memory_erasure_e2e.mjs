@@ -695,6 +695,8 @@ function assertErasedSpace(spaceID, operation, fixture, lifecycle) {
     END
     $private_erasure_zero$
   `);
+  assert(postgresScalar(`SELECT (SELECT count(*) FROM recall_outcomes WHERE recall_id=${sqlLiteral(fixture.recallID)})
+    + (SELECT count(*) FROM recall_rerank_outcomes WHERE recall_id=${sqlLiteral(fixture.recallID)})`) === "0", "captured Recall outcomes survived private erasure");
   const audit = postgresRow(`
     SELECT count(*), count(*) FILTER (
       WHERE before_payload IS NULL AND after_payload IS NULL
@@ -858,11 +860,14 @@ function richSpaceStatements(ids) {
        FROM embedding_contracts ORDER BY created_at DESC LIMIT 1`,
     `INSERT INTO recall_feedback_events (
        recall_id, team_id, profile_id, key_id, auth_method, query, tool_args,
-       result_refs, result_count, snapshot_state, space_id
+       result_count, snapshot_state, space_id
      ) VALUES (${q.recallID}, ${q.teamID}::uuid, ${q.ownerID}::uuid, ${q.keyID}::uuid,
        'api_key', ${q.sentinel}, jsonb_build_object('query', ${q.sentinel}),
-       jsonb_build_array(jsonb_build_object('id', ${q.fragmentID}, 'type', 'evidence')),
        1, 'captured', ${q.spaceID}::uuid)`,
+    `INSERT INTO recall_outcomes(recall_id,method,result_refs) VALUES
+       (${q.recallID}, 'full_text', jsonb_build_array(jsonb_build_object('id', ${q.fragmentID}, 'type', 'evidence')))`,
+    `INSERT INTO recall_rerank_outcomes(recall_id,method,decision_stages) VALUES
+       (${q.recallID}, 'typed_decisions', jsonb_build_array(jsonb_build_object('reason', ${q.sentinel})))`,
   ];
 }
 
@@ -1070,7 +1075,7 @@ function postgresErrorSummary(result) {
 
 function postgresCommand(sql) {
   return spawnSync("docker", [
-    "compose", "-p", composeProject, "-f", composeFile, "exec", "-T", "-e", "PGOPTIONS=-c app.storage_layout=feature-storage-v1", "postgres", "sh", "-ec",
+    "compose", "-p", composeProject, "-f", composeFile, "exec", "-T", "-e", "PGOPTIONS=-c app.storage_layout=feature-storage-v1 -c app.topic_layout=topic-storage-v1", "postgres", "sh", "-ec",
     'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -F "|" -c "$1"',
     "private-memory-erasure-e2e", sql,
   ], { cwd: repositoryRoot(), encoding: "utf8", maxBuffer: 20 * 1024 * 1024 });

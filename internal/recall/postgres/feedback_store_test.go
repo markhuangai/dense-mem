@@ -4,7 +4,6 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"math"
-	"strings"
 	"testing"
 	"time"
 
@@ -27,7 +26,7 @@ func feedbackQueryRow() []driver.Value {
 }
 
 func feedbackQueryRows(values ...[]driver.Value) *sqlmock.Rows {
-	rows := sqlmock.NewRows(strings.Split(recallFeedbackEventColumns(), ","))
+	rows := sqlmock.NewRows(make([]string, len(feedbackQueryRow())))
 	for _, value := range values {
 		rows.AddRow(value...)
 	}
@@ -48,8 +47,10 @@ func TestFeedbackStoreSnapshotBindsIdentityAndOrderedReferences(t *testing.T) {
 	require.NoError(t, err)
 	mock.ExpectExec(`(?s)INSERT INTO recall_feedback_events.*ON CONFLICT.*space_generation = EXCLUDED.space_generation`).WithArgs(
 		"rec_test", recallTime, recallTime, recallTeam, recallID1, recallID2, recallSpace, int64(4), "api_key", "recall_memory", "query",
-		`{"limit":2}`, string(refs), 2, "captured", "canonical", "", "", "", "current", "{}", "{}",
+		`{"limit":2}`, 2, "captured", "canonical", "", "", "", "current", "{}", "{}",
 	).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO recall_outcomes").WithArgs("rec_test", "legacy", string(refs)).WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("DELETE FROM recall_rerank_outcomes").WithArgs("rec_test").WillReturnResult(sqlmock.NewResult(0, 0))
 	require.NoError(t, NewFeedbackStore(db, recallQueryRLS{}).RecordSnapshot(t.Context(), event))
 }
 
@@ -194,7 +195,7 @@ func TestFeedbackStoreGetAndPrune(t *testing.T) {
 		if found {
 			rows.AddRow(feedbackQueryRow()...)
 		}
-		mock.ExpectQuery(`(?s)FROM recall_feedback_events WHERE recall_id = \$1.*recall_feedback_events.space_generation = dense_mem_active_space_generation.*LIMIT 1`).WithArgs("rec_test").WillReturnRows(rows).RowsWillBeClosed()
+		mock.ExpectQuery(`(?s)FROM recall_feedback_events .*WHERE recall_id = \$1.*recall_feedback_events.space_generation = dense_mem_active_space_generation.*LIMIT 1`).WithArgs("rec_test").WillReturnRows(rows).RowsWillBeClosed()
 		mock.ExpectCommit()
 		got, err := store.Get(t.Context(), " rec_test ")
 		require.NoError(t, err)

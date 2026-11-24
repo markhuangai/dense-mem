@@ -193,7 +193,8 @@ func TestMigratorRunUpAppliesTopicProjectionAfterUpdatedMain(t *testing.T) {
 	require.NoError(t, migrator.RunUp(ctx))
 	require.False(t, tableExists(t, ctx, db, "community_topic_versions"))
 	assertEvidenceOnlyCatalog(t, ctx, db)
-	require.True(t, tableExists(t, ctx, db, "ontology_draft_heads"))
+	require.False(t, tableExists(t, ctx, db, "ontology_draft_heads"))
+	require.True(t, tableExists(t, ctx, db, "topic_draft_heads"))
 	require.True(t, tableExists(t, ctx, db, "session_submissions"))
 	require.NoError(t, migrator.RunUp(ctx))
 	require.NoError(t, ValidateStartupMigrationState(ctx, db, getMigrationsDir()))
@@ -828,7 +829,7 @@ func execPostgresTxMode(ctx context.Context, db *sql.DB, txMode string, fn func(
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.tx_mode', $1, true),set_config('app.storage_layout','feature-storage-v1',true)`, txMode); err != nil {
+	if _, err := tx.ExecContext(ctx, `SELECT set_config('app.tx_mode', $1, true),set_config('app.storage_layout','feature-storage-v1',true),set_config('app.topic_layout','topic-storage-v1',true)`, txMode); err != nil {
 		_ = tx.Rollback()
 		return err
 	}

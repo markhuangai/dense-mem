@@ -121,6 +121,8 @@ func AIVerifierMaxConcurrency(cfg ConfigProvider) int {
 type Config struct {
 	Decision                        DecisionProviderConfig
 	SessionIngestEnabled            bool
+	RecallExpansionEnabled          bool
+	RecallDisableQueryEmbedding     bool
 	DangerouslySkipAISecurityCheck  bool
 	PostgresDSN                     string `json:"-"`
 	PostgresMaxOpenConns            int
@@ -504,6 +506,14 @@ func loadWithPostgresDSN(postgresDSN string) (Config, error) {
 		return cfg, err
 	}
 	cfg.SessionIngestEnabled, err = parseBoolOrDefault("SESSION_INGEST_ENABLED", false)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.RecallExpansionEnabled, err = parseBoolOrDefault("RECALL_EXPANSION_ENABLED", false)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.RecallDisableQueryEmbedding, err = parseBoolOrDefault("RECALL_DISABLE_QUERY_EMBEDDING", false)
 	if err != nil {
 		return cfg, err
 	}

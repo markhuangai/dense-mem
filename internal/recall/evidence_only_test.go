@@ -50,7 +50,7 @@ func TestEvidenceOnlyUnitRecallBindsActorAndProjectsDirectTopics(t *testing.T) {
 		result:   &recallcontract.RecallEvidenceResult{SearchState: "current", Results: []recallcontract.RecallEvidenceHit{{TeamID: team.String(), EvidenceID: evidence, Context: "exact Evidence", Source: "document:1", SourceType: "document"}}},
 	}, selection: recallcontract.RelatedTopicResult{Topics: []recallcontract.RelatedTopic{{TopicID: topic, Name: "Operations", Description: "Operating procedures", EligibleEvidenceCount: 8, Rank: 1}}, Truncated: true}}
 	provider := &recallProviderStub{available: true, model: "test-model", dims: 3, vector: []float32{1, 0, 0}}
-	svc := NewRecallService(RecallDependencies{Search: fixture, Provider: provider, OntologyConfig: recallOntologyConfigStub{enabled: true}})
+	svc := NewRecallService(RecallDependencies{Search: fixture, Provider: provider, TopicMaintenanceConfig: recallOntologyConfigStub{enabled: true}})
 	ctx := requestctx.WithActor(t.Context(), requestctx.Actor{TeamID: team, OwnerID: owner, AllowedSpaces: []domain.MemorySpaceAccess{{ID: shared, Kind: domain.MemorySpaceTeamShared}}})
 	result, err := svc.Recall(ctx, RecallRequest{Query: " exact ", TopicIDs: []string{topic}})
 	require.NoError(t, err)
@@ -70,7 +70,7 @@ func TestEvidenceOnlyUnitRecallBindsActorAndProjectsDirectTopics(t *testing.T) {
 func TestEvidenceOnlyUnitRecallTopicFailureIsVisibleAndExplicitFiltersFail(t *testing.T) {
 	ctx := authenticatedRememberContext(uuid.New(), uuid.New(), uuid.New())
 	fixture := &evidenceTopicFixture{recallSearchStub: &recallSearchStub{contract: &searchcontract.ActiveSearchContract{}, result: &recallcontract.RecallEvidenceResult{SearchState: "current"}}, err: errors.New("topic snapshot unavailable")}
-	svc := NewRecallService(RecallDependencies{Search: fixture, OntologyConfig: recallOntologyConfigStub{enabled: true}})
+	svc := NewRecallService(RecallDependencies{Search: fixture, TopicMaintenanceConfig: recallOntologyConfigStub{enabled: true}})
 	result, err := svc.Recall(ctx, RecallRequest{Query: "question"})
 	require.NoError(t, err)
 	require.Contains(t, result.Degradations, RecallDegradationResult{Frontier: "topics", Optional: true, Code: "topic_unavailable", Message: "Related topics are unavailable."})

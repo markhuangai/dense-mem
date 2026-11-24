@@ -54,7 +54,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 
 	api := e.Group("/ui/api")
 	useUserPortalMiddleware(api, deps, authOpts)
-	registerOntologyManagementRoutes(api, deps.OntologyManagement)
+	registerTopicManagementRoutes(api, deps.TopicManagement)
 	api.POST("/session", portal.createPortalSession, httpmw.BindAndValidateStrict[dto.CreateUserPortalSessionRequest](userPortalCreateSessionBodyKey))
 
 	teamHandler := handler.NewTeamHandler(deps.TeamSvc)

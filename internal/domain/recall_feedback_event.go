@@ -17,6 +17,7 @@ const (
 // RecallFeedbackEvent is the durable investigation record that connects a
 // recall_memory result set to deferred host-LLM session feedback.
 type RecallFeedbackEvent struct {
+	RankingMethod             string                          `json:"-"`
 	RecallID                  string                          `json:"recall_id"`
 	CreatedAt                 time.Time                       `json:"created_at"`
 	UpdatedAt                 time.Time                       `json:"updated_at"`

@@ -57,6 +57,17 @@ func TestRecallAcrossSpacesEmbedsQueryOnceAndReusesVector(t *testing.T) {
 	require.Len(t, search.inputs, 2)
 	require.Equal(t, []float32{1, 2, 3}, search.inputs[0].QueryEmbedding)
 	require.Equal(t, search.inputs[0].QueryEmbedding, search.inputs[1].QueryEmbedding)
+
+	search.inputs = nil
+	lexical := NewRecallService(RecallDependencies{Search: search, Provider: provider, DisableQueryEmbedding: true})
+	result, err := lexical.Recall(ctx, RecallRequest{Query: "same vector", TopicLimit: intPtr(0)})
+	require.NoError(t, err)
+	require.Equal(t, "full_text", result.RankingMethod)
+	require.Empty(t, result.Degradations)
+	require.Equal(t, 1, provider.calls)
+	for _, branch := range search.inputs {
+		require.Empty(t, branch.QueryEmbedding)
+	}
 }
 
 func TestRecallAcrossSpacesReportsEmbeddingDegradationOnce(t *testing.T) {

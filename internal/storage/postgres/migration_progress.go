@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/markhuangai/dense-mem/internal/jsonstrict"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	gooselock "github.com/pressly/goose/v3/lock"
 )
 
@@ -312,7 +312,7 @@ func MigrationFailureReason(err error) string {
 	case errors.Is(err, context.DeadlineExceeded):
 		return "deadline_exceeded"
 	}
-	if errors.Is(err, ontology.ErrMaintenanceUpgradeBlocked) {
+	if errors.Is(err, topic.ErrMaintenanceUpgradeBlocked) {
 		if strings.HasSuffix(err.Error(), " unreconciled attempts require terminal evidence") {
 			return "ontology upgrade blocked: unreconciled attempts require terminal evidence"
 		}

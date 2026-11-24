@@ -143,6 +143,9 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 		input.AssessorSecurityRejected = true
 		return fail(rememberapp.AssessmentSecurityRejectionFailure(prepared), "assessment")
 	}
+	if err := p.prepareTopics(ctx, input.SpaceKind, &commitInput, snapshot.DuplicateCandidates, decisionSnapshot); err != nil {
+		return fail(err, "assessment")
+	}
 	embeddingStarted = time.Now()
 	embeddingCtx, embeddingCancel := rememberapp.ContextForPhase(ctx, rememberapp.RememberPhaseEmbedding)
 	embeddingCtx = requestctx.WithProgressOperation(embeddingCtx, "embedding")

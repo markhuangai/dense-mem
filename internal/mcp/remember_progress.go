@@ -113,6 +113,10 @@ func progressMessage(stage rememberapp.ProgressStage) string {
 		return "Checking duplicate Evidence"
 	case rememberapp.ProgressAssessingEvidence:
 		return "Assessing Evidence"
+	case "topic_assignment":
+		return "Assigning Topics to Evidence"
+	case "validating_topic_assignment":
+		return "Validating Topic assignments"
 	case rememberapp.ProgressPreparingSearch:
 		return "Preparing search state"
 	case rememberapp.ProgressCommitting:
@@ -165,6 +169,8 @@ func progressMessage(stage rememberapp.ProgressStage) string {
 		return "Preparing query embedding"
 	case "recall_search":
 		return "Searching authorized Evidence"
+	case "recall_expansion":
+		return "Following terms and topic memberships in authorized Evidence"
 	case "recall_hydration":
 		return "Reading authorized Evidence"
 	case "recall_conflicts":
@@ -200,6 +206,7 @@ func (p *sdkRememberProgress) emitUpdate(ctx context.Context, update requestctx.
 		"duplicate_embedding": "duplicate embedding provider", "embedding": "embedding provider",
 		"session_extraction": "session extraction provider", "recall_embedding": "query embedding provider",
 		"recall_reranking": "Recall ranking provider",
+		"topic_assignment": "Topic assignment provider",
 	}[update.Operation]
 	if operation != "" {
 		switch update.Stage {

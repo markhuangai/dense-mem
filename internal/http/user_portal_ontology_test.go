@@ -13,9 +13,9 @@ import (
 	"github.com/labstack/echo/v5"
 	mw "github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
-	"github.com/markhuangai/dense-mem/internal/ontology"
-	contract "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	topics "github.com/markhuangai/dense-mem/internal/topics"
+	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -43,17 +43,18 @@ func TestOntologyManagementHTTPClosedInputsAndPermissions(t *testing.T) {
 			router := echo.New()
 			router.HTTPErrorHandler = httperr.ErrorHandler
 			var diagnostics []contract.PublicationDiagnostic
-			service := ontology.NewManagementService(nil, nil).WithPublicationDiagnostics(func(_ context.Context, diagnostic contract.PublicationDiagnostic) {
+			service := topics.NewManagementService(nil, nil).WithPublicationDiagnostics(func(_ context.Context, diagnostic contract.PublicationDiagnostic) {
 				diagnostics = append(diagnostics, diagnostic)
 			})
-			registerOntologyManagementRoutes(router.Group("/ui/api"), service)
-			req := httptest.NewRequest(tc.method, "/ui/api/ontology"+tc.path, strings.NewReader(tc.body))
+			registerTopicManagementRoutes(router.Group("/ui/api"), service)
+			req := httptest.NewRequest(tc.method, "/ui/api/topics"+tc.path, strings.NewReader(tc.body))
 			req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 			ctx := mw.SetPrincipalForTest(req.Context(), &mw.Principal{Role: tc.role, Grants: tc.grants})
 			ctx = requestctx.WithActor(ctx, requestctx.Actor{TeamID: uuid.New(), OwnerID: uuid.New(), Role: tc.role, Grants: tc.grants})
 			rec := httptest.NewRecorder()
 			router.ServeHTTP(rec, req.WithContext(ctx))
 			require.Equal(t, tc.status, rec.Code, rec.Body.String())
+			require.NotContains(t, strings.ToLower(rec.Body.String()), "ontology")
 			if tc.status == http.StatusForbidden {
 				require.Len(t, diagnostics, 1)
 				require.True(t, diagnostics[0].Management)
@@ -83,5 +84,6 @@ func TestOntologyManagementHTTPBoundedErrors(t *testing.T) {
 		require.Equal(t, tc.status, rec.Code)
 		require.NotContains(t, rec.Body.String(), "private canary")
 		require.NotContains(t, rec.Body.String(), "storage detail")
+		require.NotContains(t, strings.ToLower(rec.Body.String()), "ontology")
 	}
 }

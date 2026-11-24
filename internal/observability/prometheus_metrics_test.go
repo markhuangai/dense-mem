@@ -164,7 +164,7 @@ func TestPrometheusMetricsRecordsLifecycleAndPricedAIOperations(t *testing.T) {
 		},
 	)
 	RecordAIOperationUsage(
-		WithAIOperation(ctx, AIOperationOntologyOrganization, 1),
+		WithAIOperation(ctx, AIOperationLegacyOrganization, 1),
 		metrics,
 		AIOperationUsage{
 			Component:    AIComponentVerifier,

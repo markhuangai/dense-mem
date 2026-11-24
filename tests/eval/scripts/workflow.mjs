@@ -289,9 +289,16 @@ export async function setup(env, options = {}) {
     }
   }
   if (operation === "bootstrap" || (preparing && !seed)) {
-    const values = { ONTOLOGY_MAINTENANCE_ENABLED: "false", ONTOLOGY_MAINTENANCE_MODEL: configured.model, ONTOLOGY_MAINTENANCE_MAX_CONCURRENCY: "4", ONTOLOGY_MAINTENANCE_TEAM_MAX_CONCURRENCY: "4", ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS: String(configured.context) };
-    await control(state, "PATCH", "/config/ontology-maintenance", { items: Object.entries(values).map(([key, value]) => ({ key, value })) });
-    await control(state, "POST", "/ontology/pause", { operation_key: `pause-${paths.runID}` });
+    const layout = docker(["exec", `${prefix}-postgres`, "psql", "-U", "densemem", "-d", "densemem", "-XAtc",
+      "SELECT to_regclass('public.topic_maintenance_batches') IS NOT NULL, to_regclass('public.ontology_maintenance_batches') IS NOT NULL"]).trim();
+    if (layout !== "t|f" && layout !== "f|t") throw new Error("Evaluation runtime maintenance layout is incompatible");
+    const legacy = layout === "f|t";
+    const settingPrefix = legacy ? "ONTOLOGY_MAINTENANCE" : "TOPIC_MAINTENANCE";
+    const values = { ENABLED: "false", MODEL: configured.model, MAX_CONCURRENCY: "4", TEAM_MAX_CONCURRENCY: "4", CONTEXT_WINDOW_TOKENS: String(configured.context) };
+    await control(state, "PATCH", legacy ? "/config/ontology-maintenance" : "/config/topic-maintenance", {
+      items: Object.entries(values).map(([key, value]) => ({ key: `${settingPrefix}_${key}`, value })),
+    });
+    await control(state, "POST", legacy ? "/ontology/pause" : "/topic-maintenance/pause", { operation_key: `pause-${paths.runID}` });
   }
   save(paths.stateFile, state); save(paths.manifestFile, manifest);
   if (resumable && !checkpoint) save(paths.checkpointFile, checkpointIdentity);

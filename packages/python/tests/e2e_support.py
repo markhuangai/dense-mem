@@ -49,7 +49,7 @@ def sql(query):
         "exec",
         "-T",
         "-e",
-        "PGOPTIONS=-c app.storage_layout=feature-storage-v1",
+        "PGOPTIONS=-c app.storage_layout=feature-storage-v1 -c app.topic_layout=topic-storage-v1",
         "postgres",
         "sh",
         "-ec",

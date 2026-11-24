@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -199,11 +199,11 @@ func TestMigrationProgressLegacyFailureReasons(t *testing.T) {
 		{"native lock timeout", &pgconn.PgError{Code: "55P03", Message: "canceling statement due to lock timeout", Where: "private-canary"}, "lock timeout"},
 		{"other lock failure", &pgconn.PgError{Code: "55P03", Message: "private-canary lock timeout"}, "database operation failed (SQLSTATE 55P03)"},
 		{"wrong lock code", &pgconn.PgError{Code: "P0001", Message: "canceling statement due to lock timeout"}, "database operation failed (SQLSTATE P0001)"},
-		{"wrapped ontology guard", fmt.Errorf("prepare ontology upgrade: %w: 7 unreconciled attempts require terminal evidence", ontology.ErrMaintenanceUpgradeBlocked), "ontology upgrade blocked: unreconciled attempts require terminal evidence"},
+		{"wrapped ontology guard", fmt.Errorf("prepare ontology upgrade: %w: 7 unreconciled attempts require terminal evidence", topic.ErrMaintenanceUpgradeBlocked), "ontology upgrade blocked: unreconciled attempts require terminal evidence"},
 		{"untyped ontology message", errors.New("7 unreconciled attempts require terminal evidence"), "migration operation failed; database payload omitted"},
-		{"other ontology guard", fmt.Errorf("%w: private-canary", ontology.ErrMaintenanceUpgradeBlocked), "ontology upgrade blocked"},
-		{"canceled ontology", errors.Join(ontology.ErrMaintenanceUpgradeBlocked, context.Canceled), "canceled"},
-		{"expired ontology", errors.Join(ontology.ErrMaintenanceUpgradeBlocked, context.DeadlineExceeded), "deadline_exceeded"},
+		{"other ontology guard", fmt.Errorf("%w: private-canary", topic.ErrMaintenanceUpgradeBlocked), "ontology upgrade blocked"},
+		{"canceled ontology", errors.Join(topic.ErrMaintenanceUpgradeBlocked, context.Canceled), "canceled"},
+		{"expired ontology", errors.Join(topic.ErrMaintenanceUpgradeBlocked, context.DeadlineExceeded), "deadline_exceeded"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			original := fmt.Errorf("startup: %w", test.err)

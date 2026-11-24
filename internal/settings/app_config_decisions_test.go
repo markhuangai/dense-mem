@@ -21,7 +21,14 @@ func TestDecisionPreferencesDefaultAndPartialUpdates(t *testing.T) {
 	svc.now = func() time.Time { return now }
 	initial, err := svc.GetDecisionSettings(ctx)
 	require.NoError(t, err)
-	require.Equal(t, domain.DecisionTasks{Deduplication: true, SecurityReview: true, ConflictReview: true, RecallReranking: true}, initial.Effective.Effective)
+	require.Equal(t, domain.DecisionTasks{
+		Deduplication:      true,
+		SecurityReview:     true,
+		ConflictReview:     true,
+		RecallReranking:    true,
+		TopicAssignment:    true,
+		CommunityPlacement: true,
+	}, initial.Effective.Effective)
 	for _, item := range initial.Items {
 		require.Equal(t, "default", item.Source)
 		require.Empty(t, item.Value)

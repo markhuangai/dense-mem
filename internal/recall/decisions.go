@@ -100,7 +100,15 @@ func (r *Retrieval) finishDecisionEvidence(ctx context.Context, input recallcont
 		groups := make([]modelprovider.DecisionGroup, 0, len(result.Results))
 		for index, hit := range result.Results {
 			name := fmt.Sprintf("evidence_%d", index)
-			groups = append(groups, modelprovider.DecisionGroup{ID: name, Reference: hit.EvidenceID, Input: map[string]any{"query": input.Query, "topic_ids": input.TopicIDs, "valid_at": input.ValidAt, "known_at": input.KnownAt, "evidence": hit}, Questions: []modelprovider.DecisionQuestion{rankingQuestion(name)}})
+			candidate := map[string]any{"query": input.Query, "topic_ids": input.TopicIDs, "valid_at": input.ValidAt, "known_at": input.KnownAt, "evidence": hit}
+			if hit.Bridge != nil {
+				candidate["retrieval_bridge"] = hit.Bridge
+			}
+			question := rankingQuestion(name)
+			if input.ExpansionEnabled {
+				question.Instructions += " A passage that directly contradicts the proposition can be just as relevant as one that supports it. Use the retrieval bridge only to resolve the subject or connection. Judge what the candidate passage itself establishes."
+			}
+			groups = append(groups, modelprovider.DecisionGroup{ID: name, Reference: hit.EvidenceID, Input: candidate, Questions: []modelprovider.DecisionQuestion{question}})
 		}
 		stage, err := r.rank(ctx, "evidence", input, groups)
 		if errors.Is(err, context.Canceled) {

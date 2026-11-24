@@ -17,7 +17,7 @@ specific parts of the supported runtime behavior.
 - `internal/session` owns exact current-event excerpt selection and original
   Unicode offsets. Prior context is read-only. Session acceptance uses the same
   Evidence assessment and atomic commit owners as Remember.
-- `internal/ontology/contract` owns organizational topics, direct Evidence
+- `internal/topics/contract` owns organizational topics, direct Evidence
   memberships, equivalence, manager overrides, dependency fingerprints, and
   publication policy. Its PostgreSQL adapter implements current shared-source
   reads, maintenance coordination, and atomic publications. Organization never

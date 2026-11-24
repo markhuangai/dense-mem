@@ -116,14 +116,14 @@ SQL
 }
 
 identity_postgres_scalar() {
-  local statement="$1"
+  local statement="$1" database="${2:-$DENSE_MEM_CI_IDENTITY_POSTGRES_DATABASE}"
   ci_compose exec -T \
     -e "PGPASSWORD=${DENSE_MEM_CI_IDENTITY_POSTGRES_PASSWORD}" \
-    -e "PGOPTIONS=-c app.tx_mode=system -c app.storage_layout=feature-storage-v1" \
+    -e "PGOPTIONS=-c app.tx_mode=system -c app.storage_layout=feature-storage-v1 -c app.topic_layout=topic-storage-v1" \
     postgres psql -X -v ON_ERROR_STOP=1 -At \
     -h 127.0.0.1 \
     -U "$DENSE_MEM_CI_IDENTITY_POSTGRES_USER" \
-    -d "$DENSE_MEM_CI_IDENTITY_POSTGRES_DATABASE" \
+    -d "$database" \
     -c "$statement"
 }
 
@@ -322,6 +322,7 @@ stage_identity_cleanup_retirement_preflight() {
 BEGIN;
 SELECT set_config('app.tx_mode', 'system', true);
 SELECT set_config('app.storage_layout','feature-storage-v1',true);
+SELECT set_config('app.topic_layout','topic-storage-v1',true);
 SELECT set_config('app.current_team_id', '', true);
 SELECT set_config('app.current_profile_id', '', true);
 
@@ -587,18 +588,25 @@ run_feature_storage_startup_matrix() {
   fi
   collect_feature_storage_logs "$source_dir" resumed
   verify_postgres_runtime_migration_state
-  [[ "$(feature_storage_fixture_fingerprints ontology_revision_records)" == "$before" ]] || fail "feature storage resumed conversion changed original data"
+  [[ "$(feature_storage_fixture_fingerprints topic_revision_records)" == "$before" ]] || fail "feature storage resumed conversion changed original data"
   state="$(identity_postgres_scalar "SELECT concat(
-    (SELECT count(*) FROM ontology_topic_revision_payloads),'|',
+    (SELECT count(*) FROM topic_revision_payloads),'|',
     EXISTS(SELECT 1 FROM data_migration_runs run JOIN v2_compatibility_markers marker ON marker.marker_kind='feature_storage' AND marker.version='feature-storage-v1' AND marker.status='compatible' WHERE run.migration_version=20261113010001 AND run.phase='complete' AND marker.metadata->>'source_fingerprint'=run.source_fingerprint))")"
   [[ "$state" == '210|true' || "$state" == '210|t' ]] || fail "feature storage recovery receipt is incomplete: ${state}"
   printf '%s\n' '{"scenario":"ontology_upgrade","feature_storage_failed_batch_rolled_back":true,"feature_storage_resumed":true,"feature_storage_evidence_preserved":true}' >&2
 }
 
 ontology_upgrade_fingerprints() {
-  local table
-  for table in evidence_fragments ontology_maintenance_windows ontology_maintenance_attempts ontology_assessments; do
-    identity_postgres_scalar "SELECT '${table}:'||md5(COALESCE(jsonb_agg(to_jsonb(row)-'estimated_input_tokens'-'max_output_tokens' ORDER BY to_jsonb(row)::text)::text,'[]')) FROM ${table} AS row" || return
+  local era="$1" database="${2:-$DENSE_MEM_CI_IDENTITY_POSTGRES_DATABASE}" table label index
+  local labels=(evidence_fragments ontology_maintenance_windows ontology_maintenance_attempts ontology_assessments)
+  local tables=("${labels[@]}")
+  if [[ "$era" == "current" ]]; then
+    tables=(evidence_fragments topic_maintenance_windows topic_maintenance_attempts historical_organization_assessments)
+  fi
+  for index in "${!tables[@]}"; do
+    table="${tables[index]}"
+    label="${labels[index]}"
+    identity_postgres_scalar "SELECT '${label}:'||md5(COALESCE(jsonb_agg(to_jsonb(row)-'estimated_input_tokens'-'max_output_tokens' ORDER BY to_jsonb(row)::text)::text,'[]')) FROM ${table} AS row" "$database" || return
   done
 }
 
@@ -626,13 +634,47 @@ start_ontology_upgrade_helpers() {
   ((observed == 1)) || fail "ontology upgrade provider was not ready before startup reconciliation"
 }
 
+ontology_backup_command() {
+  ci_compose exec -T -e "PGPASSWORD=${DENSE_MEM_CI_BOOTSTRAP_POSTGRES_PASSWORD}" postgres "$@"
+}
+
+restore_pre_cutover_backup() {
+  local source_dir="$1" archive="$2" before="$3" restored_database="topic_cutover_restore" schema
+  local restore_list="${archive}.restore-list"
+  ontology_backup_command createdb -h 127.0.0.1 -U "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER" \
+    --owner=densemem_e2e_database_owner "$restored_database" || fail "isolated pre-cutover restore database creation failed"
+  ontology_backup_command pg_restore --list "$archive" |
+    node --input-type=module -e '
+      import { readFileSync } from "node:fs";
+      import { pathToFileURL } from "node:url";
+      const { remainingSeedRestoreEntries } = await import(pathToFileURL(process.argv[1]));
+      process.stdout.write(remainingSeedRestoreEntries(readFileSync(0, "utf8")));
+    ' "$source_dir/.github/scripts/evaluation-seeds.mjs" |
+    ontology_backup_command sh -ec 'umask 077; cat > "$1"' sh "$restore_list" || fail "pre-cutover restore list preparation failed"
+  local -a restore=(pg_restore -h 127.0.0.1 -U "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER" --exit-on-error --single-transaction -d "$restored_database")
+  ontology_backup_command "${restore[@]}" --section=pre-data "$archive" || fail "pre-cutover schema restore failed"
+  # Legacy scope checks resolve the shared memory space while copying dependent rows.
+  ontology_backup_command "${restore[@]}" --data-only --schema=public --table=memory_spaces "$archive" || fail "pre-cutover memory space restore failed"
+  ontology_backup_command "${restore[@]}" --section=data --section=post-data --use-list="$restore_list" "$archive" || fail "pre-cutover data restore failed"
+  schema="$(identity_postgres_scalar "SELECT to_regclass('public.ontology_record_heads') IS NOT NULL
+    AND to_regclass('public.topic_record_heads') IS NULL AND EXISTS(SELECT 1 FROM ontology_maintenance_runs WHERE operation_key='ontology-upgrade-fixture')
+    AND NOT EXISTS(SELECT 1 FROM v2_compatibility_markers WHERE marker_kind='topic_storage')" "$restored_database")"
+  [[ "$schema" == "t" ]] || fail "restored database has the wrong physical layout or missing operation"
+  [[ "$(ontology_upgrade_fingerprints historical "$restored_database")" == "$before" ]] || fail "pre-cutover backup did not reproduce source history"
+}
+
 run_ontology_upgrade_startup_matrix() {
-  local source_dir="$1" project="$2" variant before state observed
+  local source_dir="$1" project="$2" variant before state observed archive
   for variant in expired unreconciled live; do
     reset_identity_cleanup_database
     seed_ontology_upgrade_database "$source_dir" "$project" "$variant" || fail "ontology upgrade fixture seed failed"
     start_ontology_upgrade_helpers "$source_dir" "$project"
-    before="$(ontology_upgrade_fingerprints)" || fail "ontology upgrade history snapshot failed"
+    before="$(ontology_upgrade_fingerprints historical)" || fail "ontology upgrade history snapshot failed"
+    if [[ "$variant" == "expired" ]]; then
+      archive="$(ontology_backup_command mktemp /tmp/topic-precutover.XXXXXXXX)" || fail "pre-cutover archive allocation failed"
+      ontology_backup_command pg_dump -h 127.0.0.1 -U "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER" \
+        --format=custom --file="$archive" "$DENSE_MEM_CI_IDENTITY_POSTGRES_DATABASE" || fail "pre-cutover backup failed"
+    fi
     if [[ "$variant" == "unreconciled" ]]; then
       for _ in 1 2; do
         ci_compose --profile verifier up -d --no-deps --force-recreate server >/dev/null || fail "ontology upgrade refusal probe failed to start"
@@ -647,7 +689,7 @@ run_ontology_upgrade_startup_matrix() {
         ((observed == 1)) || fail "ontology upgrade did not report unreconciled attempts"
         ci_compose stop server >/dev/null || fail "ontology upgrade refusal probe failed to stop"
         assert_ontology_upgrade_blocked
-        [[ "$(ontology_upgrade_fingerprints)" == "$before" ]] || fail "blocked ontology upgrade changed history"
+        [[ "$(ontology_upgrade_fingerprints historical)" == "$before" ]] || fail "blocked ontology upgrade changed history"
       done
       state="$(identity_postgres_scalar "SELECT count(*) FROM audit_log WHERE operation='ONTOLOGY_UPGRADE_COMMAND'")"
       [[ "$state" == "1" ]] || fail "blocked startup repeated the automatic pause audit"
@@ -664,7 +706,7 @@ run_ontology_upgrade_startup_matrix() {
       ((observed == 1)) || fail "ontology upgrade did not wait for its live lease"
       ci_compose stop server >/dev/null || fail "ontology upgrade interruption probe failed to stop"
       assert_ontology_upgrade_blocked
-      [[ "$(ontology_upgrade_fingerprints)" == "$before" ]] || fail "interrupted ontology upgrade changed history"
+      [[ "$(ontology_upgrade_fingerprints historical)" == "$before" ]] || fail "interrupted ontology upgrade changed history"
       observed=0
       for _ in $(seq 1 40); do
         state="$(identity_postgres_scalar "SELECT count(*) FROM ontology_maintenance_batches WHERE status='running' AND lease_until>clock_timestamp()")"
@@ -680,12 +722,13 @@ run_ontology_upgrade_startup_matrix() {
     fi
     verify_postgres_runtime_migration_state
     state="$(identity_postgres_scalar "SELECT concat(paused,'|',
-      NOT EXISTS(SELECT 1 FROM ontology_maintenance_batches WHERE status='running'),'|',
+      NOT EXISTS(SELECT 1 FROM topic_maintenance_batches WHERE status='running'),'|',
       (SELECT count(*) FROM audit_log WHERE operation='ONTOLOGY_UPGRADE_COMMAND'),'|',
       (SELECT count(*) FROM audit_log WHERE operation='ONTOLOGY_BUDGET_RETIREMENT'),'|',
-      EXISTS(SELECT 1 FROM ontology_maintenance_runs WHERE operation_key='ontology-upgrade-fixture' AND status='incomplete' AND failure_code='window_closed')) FROM ontology_maintenance_state")"
+      EXISTS(SELECT 1 FROM topic_maintenance_runs WHERE operation_key='ontology-upgrade-fixture' AND status='incomplete' AND failure_code='window_closed')) FROM topic_maintenance_state")"
     [[ "$state" == "false|true|2|1|true" || "$state" == "f|t|2|1|t" ]] || fail "ontology upgrade did not restore its admission state: ${state}"
-    [[ "$(ontology_upgrade_fingerprints)" == "$before" ]] || fail "automatic ontology upgrade changed canonical or historical rows"
+    [[ "$(ontology_upgrade_fingerprints current)" == "$before" ]] || fail "automatic ontology upgrade changed canonical or historical rows"
+    if [[ "$variant" == "expired" ]]; then restore_pre_cutover_backup "$source_dir" "$archive" "$before"; fi
   done
-  printf '%s\n' '{"scenario":"ontology_upgrade","expired_recovered":true,"unreconciled_refused":true,"interrupted_restart_resumed":true,"history_preserved":true}' >&2
+  printf '%s\n' '{"scenario":"ontology_upgrade","expired_recovered":true,"unreconciled_refused":true,"interrupted_restart_resumed":true,"history_preserved":true,"pre_cutover_restore_read":true}' >&2
 }

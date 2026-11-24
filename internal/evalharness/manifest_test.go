@@ -96,9 +96,9 @@ func TestReadManifestValidatesExecutionPins(t *testing.T) {
 		name, message string
 		change        func(*Manifest)
 	}{
-		{"scoring without a condition", "requires ontology off", func(m *Manifest) { m.RunID, m.Condition = "42-hotpotqa", "" }},
-		{"unknown condition", "requires ontology off", func(m *Manifest) { m.Condition = "both" }},
-		{"retired condition", "requires ontology off", func(m *Manifest) { m.Condition = "on" }},
+		{"scoring without a condition", "requires topic maintenance to be disabled", func(m *Manifest) { m.RunID, m.Condition = "42-hotpotqa", "" }},
+		{"unknown condition", "requires topic maintenance to be disabled", func(m *Manifest) { m.Condition = "both" }},
+		{"retired condition", "requires topic maintenance to be disabled", func(m *Manifest) { m.Condition = "on" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			manifest := frozen

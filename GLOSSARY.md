@@ -23,3 +23,11 @@ A named organizational concept used to discover related Evidence.
 **Topic membership**:
 A derived association placing Evidence under a Topic. Membership describes
 organization and does not assert that one item supports another item's claims.
+
+**Topic assignment**:
+The derived selection of all grounded Topics for one Evidence item.
+
+**Community placement**:
+The arrangement of a Topic under a suitable broader Topic for browsing. A
+top-level Topic is standalone. Explicit Topic filters select direct
+memberships.

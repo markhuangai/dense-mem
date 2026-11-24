@@ -2,6 +2,7 @@ package contract
 
 import (
 	"encoding/json"
+	assignment "github.com/markhuangai/dense-mem/internal/topicassignment/contract"
 	"time"
 )
 
@@ -85,6 +86,7 @@ type EvidenceSecurityResult struct {
 // one final Remember transaction. Provider work happens before this input is
 // committed; no field represents a pre-provider reservation.
 type SynchronousRememberCommitInput struct {
+	TopicAssignments    []assignment.Outcome
 	SubmittedItems      []RememberSubmittedItem
 	AssessorDiagnostics map[string]any
 	TeamID              string

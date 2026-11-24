@@ -20,7 +20,7 @@ let completed = false;
 try {
   const initial = await control(controlURL);
   assert.equal(initial.effective.provider.configured, true);
-  assert.deepEqual(initial.effective.effective, { deduplication: true, security_review: true, conflict_review: true, recall_reranking: true });
+  assert.deepEqual(initial.effective.effective, { deduplication: true, security_review: true, conflict_review: true, recall_reranking: true, topic_assignment: true, community_placement: true });
   assert(initial.items.every((item) => item.source === "default"));
   assert(!JSON.stringify(initial).includes("dense-mem-e2e-decision-key"));
   const beforeNormal = (await getJSON(`${fixtureURL}/health`)).chat_requests.length;
@@ -110,6 +110,7 @@ try {
   const recalled = await rpc(userURL, "recall_memory", { query: `${prefix} Normal`, limit: 2 });
   assert(recalled.results.some((item) => item.evidence_id === stored.result.evidence[0].evidence_id));
   await verifyReranking(userURL, "openai");
+  await verifyTopicRouting(userURL, controlURL, "openai");
   await control(controlURL, [{ key: "DECISION_SECURITY_REVIEW_ENABLED", value: "false" }]);
   const saved = await control(controlURL);
   assert.equal(saved.effective.preferences.security_review, false);
@@ -148,6 +149,7 @@ try {
   assert(oversized.receipt.evidence.every((item) => item.disposition === "not_stored"));
   await rpc(typesafeUser, "recall_memory", { query: `${prefix} TypeSafe`, limit: 2 });
   await verifyReranking(typesafeUser, "typesafe");
+  await verifyTopicRouting(typesafeUser, typesafeControl, "typesafe");
   const exchanges = (await fixture()).exchanges;
   assert(exchanges.some((item) => item.vendor === "openai"));
   assert(exchanges.some((item) => item.vendor === "typesafe"));
@@ -205,6 +207,75 @@ async function remember(base, suffix, fault = "") {
   if (fault) request.evidence[0].content += ` [fixture-fault:${fault}]`;
   return { request, result: await rememberWithRetry(base, apiKey, request) };
 }
+async function verifyTopicRouting(base, adminBase, vendor) {
+  const admin = async (path, body, method = body ? "POST" : "GET") => {
+    const response = await getJSON(`${adminBase}/control/api${path}`, { method, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
+    return response.data;
+  };
+  const initial = await admin("/topic-maintenance/status");
+  const saved = await admin("/config/topic-maintenance");
+  const team = await admin("/teams", { name: `topic-decision-${vendor}-${randomUUID()}` });
+  const actor = await admin(`/teams/${team.id}/credentials`, { name: "Topic decisions", role: "manager", scopes: ["read", "write"] });
+  const store = async (content) => {
+    const result = await rememberWithRetry(base, actor.api_key, { target_space: "team_shared", idempotency_key: randomUUID(), evidence: [{ content, source_type: "manual", force_insert: true }] });
+    assert.equal(result.processing_state, "completed");
+    assert.equal(result.evidence.length, 1);
+    return result.evidence[0].evidence_id;
+  };
+  const generations = async () => (await getJSON(`${fixtureURL}/health`)).chat_requests.filter((call) => call.schema_name === "topic_assignment_v1").length;
+  await admin("/topic-maintenance/pause", { operation_key: randomUUID() });
+  try {
+    await admin("/config/topic-maintenance", { items: [{ key: "TOPIC_MAINTENANCE_ENABLED", value: "true" }, { key: "TOPIC_MAINTENANCE_CONTEXT_WINDOW_TOKENS", value: "300000" }] }, "PATCH");
+    await store("Atlas uses PostgreSQL.");
+    const beforeGeneration = await generations();
+    const start = (await fixture()).exchanges.length;
+    const familiar = await store("Orion stores records in PostgreSQL.");
+    assert.equal(await generations(), beforeGeneration, "a clear match with no uncovered subject must complete through Decisions");
+    const mixed = await store("Vega keeps backups of PostgreSQL.");
+    assert.equal(await generations(), beforeGeneration + 1, "a covered and an uncovered subject must request a complete structured assignment");
+    const routed = (await fixture()).exchanges.slice(start).filter((item) => item.vendor === vendor && item.names.includes("uncovered"));
+    assert.equal(routed.length, 2);
+    assert(routed.every((item) => item.names.some((name) => name.startsWith("match_"))));
+    const recall = (args) => callTool(base, actor.api_key, "recall_memory", args).then((result) => result.receipt);
+    const topics = (await recall({ query: "PostgreSQL backups", limit: 20, topic_limit: 10 })).related_topics;
+    const storage = topics.find((topic) => topic.name === "memory-storage");
+    const backups = topics.find((topic) => topic.name === "storage-backups");
+    assert(storage && backups);
+    const direct = async (id) => (await recall({ topic_ids: [id], limit: 20 })).results.flatMap((hit) => [hit.evidence_id, ...hit.equivalent_evidence_ids]);
+    const storageIDs = await direct(storage.topic_id);
+    assert(storageIDs.includes(familiar) && storageIDs.includes(mixed));
+    const backupIDs = await direct(backups.topic_id);
+    assert(backupIDs.includes(mixed) && !backupIDs.includes(familiar));
+    if (vendor === "openai") {
+      const record = async (id) => (await getJSON(`${base}/ui/api/topics/records/${id}`, {
+        headers: { Authorization: `Bearer ${actor.api_key}` },
+      })).data;
+      const communityGenerations = async () => (await getJSON(`${fixtureURL}/health`)).chat_requests.filter((call) => call.schema_name === "community_placement_v1").length;
+      const beforePlacement = await communityGenerations();
+      const startPlacement = (await fixture()).exchanges.length;
+      await fixture("community-partial-outage");
+      try {
+        await admin("/topic-maintenance/resume", { operation_key: randomUUID() });
+        await admin("/topic-maintenance/runs", { operation_key: randomUUID(), max_batches: 20 });
+        await until(async () => {
+          const [parent, child] = await Promise.all([record(storage.topic_id), record(backups.topic_id)]);
+          return parent.community_placement === "failed" && child.community_placement === "placed"
+            && child.community_parent_id === storage.topic_id;
+        }, 150_000);
+        assert.equal(await communityGenerations(), beforePlacement, "a clear parent choice and a required provider outage must both skip generation");
+        const placements = (await fixture()).exchanges.slice(startPlacement).filter((item) => item.vendor === vendor && item.names.includes("parent"));
+        assert(placements.length >= 2);
+      } finally {
+        await admin("/topic-maintenance/pause", { operation_key: randomUUID() });
+        await fixture("normal");
+      }
+    }
+  } finally {
+    await admin("/config/topic-maintenance", { items: saved.items.map(({ key, value }) => ({ key, value })) }, "PATCH");
+    if (!initial.paused) await admin("/topic-maintenance/resume", { operation_key: randomUUID() });
+  }
+}
+
 async function verifyReranking(base, vendor) {
   for (const frontier of ["evidence"]) {
     await fixture("normal");
@@ -239,6 +310,6 @@ async function control(base, items) {
 }
 async function fixture(value) { return getJSON(`${fixtureURL}/decision-fixture`, value ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: value }) } : undefined); }
 async function getJSON(url, init) { const response = await fetch(url, init); assert(response.ok, `fixture HTTP ${response.status}`); return response.json(); }
-async function until(check) { const deadline = Date.now() + 30000; let cause; while (Date.now() < deadline) { try { if (await check()) return; } catch (error) { cause = error; } await new Promise((resolve) => setTimeout(resolve, 250)); } throw new Error("decision scenario condition did not complete", { cause }); }
+async function until(check, timeoutMS = 30_000) { const deadline = Date.now() + timeoutMS; let cause; while (Date.now() < deadline) { try { if (await check()) return; } catch (error) { cause = error; } await new Promise((resolve) => setTimeout(resolve, 250)); } throw new Error("decision scenario condition did not complete", { cause }); }
 function docker(args) { const result = spawnSync("docker", args, { encoding: "utf8", maxBuffer: 2 * 1024 * 1024 }); assert.equal(result.status, 0, "decision test container operation failed"); return result.stdout; }
 function required(name) { const value = process.env[name]; assert(value, `${name} is required`); return value.replace(/\/$/, ""); }

@@ -48,9 +48,9 @@ removed need a fresh import. After resume, the preparation time in the seed
 receipt measures the successful invocation. Earlier import times remain in
 that build's logs.
 
-Each dataset restores the bootstrap, imports its complete corpus with ontology
-disabled and paused, verifies the source/partition mapping and search state, and
-exports a private PostgreSQL archive. The image build restores it once into a
+Each dataset restores the bootstrap, imports its complete corpus with Topic
+maintenance disabled and paused, verifies the source/partition mapping and
+search state, and exports a private PostgreSQL archive. The image build restores it once into a
 clean cluster and bakes the stopped data directory, including indexes, into a
 bootable image. Before publication the builder starts that image in fresh
 storage and verifies startup, source mappings, canonical and search fingerprints,
@@ -135,8 +135,8 @@ Use **Actions → Run evaluation → Run workflow**, select `main`, and enter a
 Dense-Mem production image tag such as `test-777`, `v2.8.1-rc.6`, or `v2.8.1`.
 You can also enter a full GHCR tag or digest reference. In `mode=live`, the five
 public datasets are checked by default. Select any of HotpotQA, MuSiQue,
-2WikiMultiHopQA, NQ Rear, and PopQA. Each selected dataset runs one
-ontology-off job. `seed_version` defaults to `latest`. Use a UTC
+2WikiMultiHopQA, NQ Rear, and PopQA. Each selected dataset runs one job with
+Topic maintenance disabled. `seed_version` defaults to `latest`. Use a UTC
 timestamp/release suffix to select a dated seed available for each selected
 dataset.
 
@@ -158,8 +158,8 @@ leaves its selected dataset incomplete. Other verified datasets can finish.
 Each job starts its pinned PostgreSQL image in fresh writable storage.
 Dense-Mem applies pending migrations. Before and after scoring, the runner
 verifies the locked inputs, authenticated scope, row counts, source mappings,
-canonical and search fingerprints, and embedding contract. Ontology must be
-disabled and drained with zero organized sources and provider attempts.
+canonical and search fingerprints, and embedding contract. Topic maintenance
+must be disabled and drained with zero organized sources and provider attempts.
 
 The seed image build creates the schema, loads memory spaces before rows whose
 checks resolve shared-space identity, then restores remaining data and indexes

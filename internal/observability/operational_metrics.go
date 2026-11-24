@@ -21,7 +21,10 @@ var aiOperationLabels = []string{
 	AIOperationRecallReranking,
 	AIOperationSearchDocumentEmbedding,
 
-	AIOperationOntologyOrganization,
+	AIOperationLegacyOrganization,
+	AIOperationTopicAssignment,
+	AIOperationCommunityPlacement,
+	AIOperationEvidenceEquivalence,
 }
 
 type LogicalOperationMetrics interface {

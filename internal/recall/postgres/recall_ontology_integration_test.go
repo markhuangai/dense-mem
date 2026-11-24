@@ -12,9 +12,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	recallservice "github.com/markhuangai/dense-mem/internal/recall"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -22,7 +22,7 @@ import (
 func TestRecallOntologyGroupingKnownIDsAndStaleSources(t *testing.T) {
 	f := newRecallOntologyFixture(t)
 	texts := []string{"Atlas stores data in PostgreSQL.", "PostgreSQL is Atlas's datastore.", "Atlas stores data in PostgreSQL and Redis."}
-	handles := []ontology.SourceHandle{}
+	handles := []topic.SourceHandle{}
 	meanings := map[string]string{}
 	for i, text := range texts {
 		handles = append(handles, f.evidence(t, i, text, nil))
@@ -30,7 +30,7 @@ func TestRecallOntologyGroupingKnownIDsAndStaleSources(t *testing.T) {
 	}
 	meanings[texts[2]] = "storage-and-cache"
 	service, calls := f.organizer(t, meanings)
-	_, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
+	_, err := service.Organize(context.Background(), f.team, topic.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
 	require.NoError(t, err)
 	beforeCalls := calls.Load()
 	input := RecallEvidenceInput{TeamID: f.team, Query: "PostgreSQL", Limit: 3, SpaceID: f.space, OrganizationEnabled: true}
@@ -75,9 +75,9 @@ func TestRecallOntologyGroupingKnownIDsAndStaleSources(t *testing.T) {
 
 func TestRecallOntologyDiscoveryAliasesAndTemporalFallback(t *testing.T) {
 	f := newRecallOntologyFixture(t)
-	handles := []ontology.SourceHandle{f.evidence(t, 0, "Atlas stores data in PostgreSQL.", nil), f.evidence(t, 1, "PostgreSQL is Atlas's datastore.", nil)}
+	handles := []topic.SourceHandle{f.evidence(t, 0, "Atlas stores data in PostgreSQL.", nil), f.evidence(t, 1, "PostgreSQL is Atlas's datastore.", nil)}
 	service, _ := f.organizer(t, map[string]string{"Atlas stores data in PostgreSQL.": "same", "PostgreSQL is Atlas's datastore.": "same"})
-	_, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
+	_, err := service.Organize(context.Background(), f.team, topic.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
 	require.NoError(t, err)
 	input := RecallEvidenceInput{TeamID: f.team, Query: "database", Limit: 3, SpaceID: f.space}
 	ordinary, err := f.search.RecallEvidence(f.actor(2, "member"), input)
@@ -88,11 +88,11 @@ func TestRecallOntologyDiscoveryAliasesAndTemporalFallback(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, discovered.Results, 1)
 	require.Len(t, discovered.Results[0].EquivalentEvidenceIDs, 1)
-	page, err := f.ontology.ListRecords(context.Background(), f.team, "", "", 1)
+	page, err := f.topicStore.ListRecords(context.Background(), f.team, "", "", 1)
 	require.NoError(t, err)
-	duplicate := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "database-alias-conflict", Label: "Database alias conflict", Aliases: []string{"database"}}}
-	_, err = f.ontology.PublishManager(f.actor(0, "manager"), f.team, ontology.Publication{OperationKey: uuid.NewString(), ExpectedRevision: page.Revision, Reason: "reject duplicate topic alias", Changes: []ontology.Change{{ExpectedVersion: duplicate.Version, Record: duplicate}}})
-	require.ErrorIs(t, err, ontology.ErrInvalid)
+	duplicate := topic.Record{ID: uuid.NewString(), Kind: topic.Topic, Definition: &topic.Definition{Key: "database-alias-conflict", Label: "Database alias conflict", Aliases: []string{"database"}}}
+	_, err = f.topicStore.PublishManager(f.actor(0, "manager"), f.team, topic.Publication{OperationKey: uuid.NewString(), ExpectedRevision: page.Revision, Reason: "reject duplicate topic alias", Changes: []topic.Change{{ExpectedVersion: duplicate.Version, Record: duplicate}}})
+	require.ErrorIs(t, err, topic.ErrInvalid)
 	unchanged, err := f.search.RecallEvidence(f.actor(2, "member"), input)
 	require.NoError(t, err)
 	require.Len(t, unchanged.Results, 1, "rejected aliases must not change current discovery")
@@ -115,36 +115,36 @@ func TestRecallOntologyDiscoveryAliasesAndTemporalFallback(t *testing.T) {
 			}
 		})
 	}
-	f.override(t, ontology.KeepSeparate, handles)
-	separated, err := f.search.RecallEvidence(f.actor(2, "member"), input)
+	f.rejectHistoricalOverride(t, topic.KeepSeparate, handles)
+	retained, err := f.search.RecallEvidence(f.actor(2, "member"), input)
 	require.NoError(t, err)
-	require.Len(t, separated.Results, 2)
-	for _, hit := range separated.Results {
-		require.Empty(t, hit.EquivalentEvidenceIDs)
-	}
+	require.Len(t, retained.Results, 1)
+	hit := retained.Results[0]
+	require.ElementsMatch(t, []string{handles[0].ID, handles[1].ID}, append([]string{hit.EvidenceID}, hit.EquivalentEvidenceIDs...))
+
 }
 
 func TestRecallOntologyOptionalFailureAndRequiredFailureRemainDistinct(t *testing.T) {
 	f := newRecallOntologyFixture(t)
 	f.evidence(t, 0, "Atlas uses PostgreSQL.", nil)
 	input := RecallEvidenceInput{TeamID: f.team, Query: "PostgreSQL", Limit: 1, SpaceID: f.space, OrganizationEnabled: true}
-	reader := f.search.recall.ontology
-	f.search.recall.WithOntology(func() OntologyReader {
-		return func(ctx context.Context, tx *gorm.DB, team string, input ontology.RecallReadInput) (ontology.RecallOrganization, error) {
-			return ontology.RecallOrganization{}, tx.Exec("SELECT deliberately_missing_ontology_function()").Error
+	reader := f.search.recall.organizationReader
+	f.search.recall.WithOrganizationReader(func() OrganizationReader {
+		return func(ctx context.Context, tx *gorm.DB, team string, input topic.RecallReadInput) (topic.RecallOrganization, error) {
+			return topic.RecallOrganization{}, tx.Exec("SELECT deliberately_missing_ontology_function()").Error
 		}
 	})
 	result, err := f.search.RecallEvidence(f.actor(2, "member"), input)
 	require.NoError(t, err)
 	require.Len(t, result.Results, 1)
 	require.Contains(t, degradationCodes(result.Degradations), "ontology_unavailable")
-	f.search.recall.WithOntology(reader)
+	f.search.recall.WithOrganizationReader(reader)
 	ctx, cancel := context.WithCancel(f.actor(2, "member"))
 	cancel()
 	result, err = f.search.RecallEvidence(ctx, input)
 	require.ErrorIs(t, err, context.Canceled)
 	require.Nil(t, result)
-	_, err = reader()(f.actor(2, "member"), nil, f.team, ontology.RecallReadInput{Limit: 1})
+	_, err = reader()(f.actor(2, "member"), nil, f.team, topic.RecallReadInput{Limit: 1})
 	require.Error(t, err)
 	foreignTeam := createLedgerTeam(t, f.admin, f.rls, "foreign ontology recall")
 	result, err = f.search.RecallEvidence(f.actor(2, "member"), RecallEvidenceInput{TeamID: foreignTeam, Query: "PostgreSQL", OrganizationEnabled: true})
@@ -166,8 +166,9 @@ func TestRecallOntologyPunctuatedKeysAndAliases(t *testing.T) {
 	f := newRecallOntologyFixture(t)
 	handle := f.evidence(t, 0, "Atlas retains durable records.", nil)
 	for _, name := range []string{"C++", "Node.js", "C#"} {
-		definition := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: name, Label: name, Aliases: []string{name + " platform"}}}
-		f.publication(t, definition, f.assignment(t, definition.ID, handle))
+		definition := topic.Record{ID: uuid.NewString(), Kind: topic.Topic, Definition: &topic.Definition{Key: name, Label: name, Aliases: []string{name + " platform"}}}
+		assignment := f.assignment(t, definition.ID, handle)
+		f.publication(t, definition, assignment)
 		for _, query := range []string{name, "What is " + name + "?", "Where is (" + name + " platform)?"} {
 			input := RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, Query: query, Limit: 3}
 			ordinary, err := f.search.RecallEvidence(f.actor(2, "member"), input)
@@ -181,8 +182,10 @@ func TestRecallOntologyPunctuatedKeysAndAliases(t *testing.T) {
 		}
 		definition.Version = 1
 		definition.Definition.Key = name + " language"
+		definition.Definition.Label = name + " language"
 		definition.Definition.Aliases = []string{name}
-		f.publication(t, definition, f.assignment(t, definition.ID, handle))
+		assignment.Version = 1
+		f.publication(t, definition, assignment)
 		alias, err := f.search.RecallEvidence(f.actor(2, "member"), RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, Query: "What is " + name + "?", Limit: 3, OrganizationEnabled: true})
 		require.NoError(t, err)
 		require.Len(t, alias.Results, 1)
@@ -192,9 +195,9 @@ func TestRecallOntologyPunctuatedKeysAndAliases(t *testing.T) {
 
 func TestRecallOntologyFeedbackAlternatesDoNotInflateResults(t *testing.T) {
 	f := newRecallOntologyFixture(t)
-	handles := []ontology.SourceHandle{f.evidence(t, 0, "Atlas stores data in PostgreSQL.", nil), f.evidence(t, 1, "PostgreSQL is Atlas's datastore.", nil)}
+	handles := []topic.SourceHandle{f.evidence(t, 0, "Atlas stores data in PostgreSQL.", nil), f.evidence(t, 1, "PostgreSQL is Atlas's datastore.", nil)}
 	producer, _ := f.organizer(t, map[string]string{"Atlas stores data in PostgreSQL.": "same", "PostgreSQL is Atlas's datastore.": "same"})
-	_, err := producer.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
+	_, err := producer.Organize(context.Background(), f.team, topic.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
 	require.NoError(t, err)
 	result, err := f.search.RecallEvidence(f.actor(2, "member"), RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, Query: "PostgreSQL", Limit: 1, OrganizationEnabled: true})
 	require.NoError(t, err)

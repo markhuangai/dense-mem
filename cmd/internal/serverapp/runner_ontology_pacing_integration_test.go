@@ -15,8 +15,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/evalharness"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/markhuangai/dense-mem/internal/recall"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 )
@@ -25,6 +25,7 @@ const (
 	originalPacingEvidence  = "Obsidian cools."
 	correctedPacingEvidence = "Fluorite fluoresces."
 	pacingBatches           = 3
+	pacingBacklog           = (pacingBatches - 1) * topic.MaxOrganizationSources
 	pacingSamplesPerBatch   = 16
 	pacingSampleInterval    = 150 * time.Millisecond
 )
@@ -71,8 +72,10 @@ func measureOntologyPacing(t *testing.T, mode string, tick time.Duration) ontolo
 	defer cancel()
 	client := f.native.Client
 	drain := func() {
+		var status topic.MaintenanceStatus
 		for range 8 {
-			status, err := f.maintenance.Status(ctx)
+			var err error
+			status, err = f.maintenance.Status(ctx)
 			require.NoError(t, err)
 			if status.CoverageComplete {
 				return
@@ -80,23 +83,23 @@ func measureOntologyPacing(t *testing.T, mode string, tick time.Duration) ontolo
 			_, err = f.maintenance.RunTurn(ctx)
 			require.NoError(t, err)
 		}
-		t.Fatal("ontology fixture did not reach complete coverage")
+		t.Fatalf("fixture did not reach complete Topic coverage: assignment=%+v placement=%+v", status.Counts, status.Communities)
 	}
 	batchCount := func() int {
 		var count int
 		require.NoError(t, f.native.DB.QueryRowContext(ctx,
-			`SELECT count(*) FROM ontology_maintenance_batches WHERE team_id=$1::uuid AND status='completed'`,
+			`SELECT count(*) FROM topic_maintenance_batches WHERE team_id=$1::uuid AND status='completed' AND community_topic_id IS NULL`,
 			f.native.Scope.TeamID).Scan(&count))
 		return count
 	}
 
 	original, err := rememberPacingEvidence(ctx, client, "team_shared", originalPacingEvidence, "pacing-mineral", "first", "")
 	require.NoError(t, err)
-	_, err = f.maintenance.Command(ctx, domain.OntologyMaintenanceCommand{Action: "resume", OperationKey: uuid.NewString()}, "", "")
+	_, err = f.maintenance.Command(ctx, domain.TopicMaintenanceCommand{Action: "resume", OperationKey: uuid.NewString()}, "", "")
 	require.NoError(t, err)
 	drain()
 	initialBatches := batchCount()
-	require.Equal(t, 1, initialBatches)
+	require.Positive(t, initialBatches, "warm-up must complete assignment work before measurement")
 	var originalRecall recall.RecallResult
 	require.NoError(t, client.CallTool(ctx, "recall_memory", map[string]any{"query": originalPacingEvidence, "limit": 5, "topic_limit": 1}, &originalRecall))
 	require.Len(t, originalRecall.RelatedTopics, 1)
@@ -106,14 +109,15 @@ func measureOntologyPacing(t *testing.T, mode string, tick time.Duration) ontolo
 	require.NoError(t, err)
 	require.NotNil(t, status.Window)
 	discover := func() {
-		turn, err := f.ontology.ClaimMaintenanceTurn(ctx, status.Window.ID, time.Now(), time.Minute)
+		turn, err := f.topicStore.ClaimMaintenanceTurn(ctx, status.Window.ID, time.Now(), time.Minute)
 		require.NoError(t, err)
 		require.NotNil(t, turn)
-		_, err = f.ontology.DiscoverMaintenance(ctx, *turn, ontology.MaintenancePageSize)
-		releaseErr := f.ontology.ReleaseMaintenanceTurn(ctx, *turn)
+		_, err = f.topicStore.DiscoverMaintenance(ctx, *turn, topic.MaintenancePageSize)
+		releaseErr := f.topicStore.ReleaseMaintenanceTurn(ctx, *turn)
 		require.NoError(t, errors.Join(err, releaseErr))
 	}
-	for _, text := range []string{"Celandine blossoms.", "Tamarind ripens."} {
+	for index := range pacingBacklog {
+		text := fmt.Sprintf("Botanical entry %d describes Celandine blossoms.", index+1)
 		_, err := rememberPacingEvidence(ctx, client, "team_shared", text, "", "", "")
 		require.NoError(t, err)
 		discover()
@@ -180,7 +184,8 @@ func measureOntologyPacing(t *testing.T, mode string, tick time.Duration) ontolo
 		require.Equal(t, expected, batchCount())
 		if topicTime == 0 {
 			var members recall.RecallResult
-			err := client.CallTool(foreground, "recall_memory", map[string]any{"topic_ids": []string{topicID}, "limit": 10}, &members)
+			// Topic-only Recall orders by Evidence ID, so probe the full test backlog and correction.
+			err := client.CallTool(foreground, "recall_memory", map[string]any{"topic_ids": []string{topicID}, "limit": pacingBacklog + 1}, &members)
 			var toolErr *evalharness.StructuredToolError
 			if errors.As(err, &toolErr) && toolErr.Result["reason_code"] == "topic_unavailable" {
 				continue

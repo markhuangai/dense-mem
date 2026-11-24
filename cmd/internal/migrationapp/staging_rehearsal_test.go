@@ -224,7 +224,9 @@ func TestStagingEvidenceFingerprintsNullableLifecycleField(t *testing.T) {
 func assertStagingEvidenceOnlyCatalog(t *testing.T, ctx context.Context, db *gorm.DB) {
 	t.Helper()
 	var remaining int
-	require.NoError(t, db.WithContext(ctx).Raw(`SELECT count(*) FROM pg_class WHERE relnamespace='public'::regnamespace AND relname ~ '^(entity_|value_|relationship_|predicate_|team_predicate_|hypothes|dream_|community_)'`).Row().Scan(&remaining))
+	require.NoError(t, db.WithContext(ctx).Raw(`SELECT count(*) FROM pg_class WHERE relnamespace='public'::regnamespace
+		AND relname ~ '^(entity_|value_|relationship_|predicate_|team_predicate_|hypothes|dream_|community_)'
+		AND relname NOT IN ('community_placement_outcomes','community_placement_outcomes_pkey','community_placement_operation_idx','community_placement_topic_idx')`).Row().Scan(&remaining))
 	require.Zero(t, remaining, "factual graph catalog remains after rehearsal")
 	var metadata []byte
 	require.NoError(t, storagepostgres.NewRLS().WithSystemReadOnlyRepeatableTx(ctx, db, func(tx *gorm.DB) error {

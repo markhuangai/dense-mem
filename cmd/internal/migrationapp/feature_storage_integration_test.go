@@ -72,7 +72,7 @@ func TestFeatureStoragePostgresLogOnlyFailureAndRecovery(t *testing.T) {
 	require.True(t, complete)
 	var count int
 	require.NoError(t, postgres.NewRLS().WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
-		return tx.Raw(`SELECT count(*) FROM ontology_topic_revision_payloads`).Row().Scan(&count)
+		return tx.Raw(`SELECT count(*) FROM topic_revision_payloads`).Row().Scan(&count)
 	}))
 	require.Equal(t, 210, count)
 }

@@ -17,11 +17,11 @@ import (
 	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	application "github.com/markhuangai/dense-mem/internal/ontology"
-	contract "github.com/markhuangai/dense-mem/internal/ontology/contract"
-	ontologypg "github.com/markhuangai/dense-mem/internal/ontology/postgres"
 	operations "github.com/markhuangai/dense-mem/internal/operations"
 	operationspg "github.com/markhuangai/dense-mem/internal/operations/postgres"
+	application "github.com/markhuangai/dense-mem/internal/topics"
+	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topicpg "github.com/markhuangai/dense-mem/internal/topics/postgres"
 	"github.com/stretchr/testify/require"
 )
 
@@ -41,13 +41,13 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 			ctx = observability.WithAuthenticationSecrets(ctx, auth)
 			protector := observability.NewCredentialProtector(secret)
 			logs := operations.NewOperationLogService(operationspg.NewOperationLogRepository(app, rls), nil)
-			store := ontologypg.NewStore(app, rls)
+			store := topicpg.NewStore(app, rls)
 			var root *observability.Logger
 			capture := func(run func()) (string, []map[string]any) {
 				return captureOntologyPublicationConsole(t, func() {
 					root = observability.NewWithProtector(level, protector)
 					require.NoError(t, root.AttachSink(logs))
-					store.WithPublicationDiagnostics(ontologyPublicationDiagnostics(root.ContextSlog(), protector))
+					store.WithPublicationDiagnostics(topicPublicationDiagnostics(root.ContextSlog(), protector))
 					run()
 				})
 			}
@@ -64,7 +64,7 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 				require.NoError(t, err)
 				require.EqualValues(t, 1, result.Revision)
 			})
-			require.Contains(t, console, "ontology_semantic_publication_committed")
+			require.Contains(t, console, "topic_semantic_publication_committed")
 			require.Contains(t, console, "\"transaction_outcome\":\"committed\"")
 			for _, test := range []struct {
 				name, reason string
@@ -84,9 +84,9 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 			} {
 				t.Run(test.name, func(t *testing.T) {
 					console, records := capture(func() { _, err := publish(test.expected, test.change); require.Error(t, err) })
-					require.Contains(t, console, "ontology_semantic_publication_rejected")
+					require.Contains(t, console, "topic_semantic_publication_rejected")
 					require.Contains(t, console, test.reason)
-					require.NotContains(t, console, "ontology_semantic_publication_committed")
+					require.NotContains(t, console, "topic_semantic_publication_committed")
 					require.NotContains(t, console, secret)
 					require.NotContains(t, console, auth)
 					var operation string
@@ -119,64 +119,61 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 			service := application.NewManagementService(store, auditapp.New(auditpg.NewStore(app, rls)))
 			draft, err := service.SaveDraft(ctx, "", contract.SaveDraftInput{OperationKey: uuid.NewString(), ExpectedRevision: 1, Reason: "Audit failure acceptance", Edits: []contract.ManagementEdit{{Action: "define", Kind: contract.Topic, Definition: record("audit-child", parent.ID).Definition}}})
 			require.NoError(t, err)
-			require.NoError(t, admin.Exec(`CREATE FUNCTION reject_semantic_publication_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.operation='ONTOLOGY_PUBLISH' THEN RAISE EXCEPTION 'fixture semantic audit rejection'; END IF; RETURN NEW; END $$;
+			require.NoError(t, admin.Exec(`CREATE FUNCTION reject_semantic_publication_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.operation='TOPIC_PUBLISH' THEN RAISE EXCEPTION 'fixture semantic audit rejection'; END IF; RETURN NEW; END $$;
 				CREATE TRIGGER reject_semantic_publication_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION reject_semantic_publication_audit()`).Error)
 			t.Cleanup(func() {
 				require.NoError(t, admin.Exec(`DROP TRIGGER IF EXISTS reject_semantic_publication_audit ON audit_log; DROP FUNCTION IF EXISTS reject_semantic_publication_audit()`).Error)
 			})
 			console, _ = capture(func() {
-				service.WithPublicationDiagnostics(ontologyPublicationDiagnostics(root.ContextSlog(), protector))
+				service.WithPublicationDiagnostics(topicPublicationDiagnostics(root.ContextSlog(), protector))
 				_, err := service.CommandDraft(ctx, draft.ID, "publish", contract.DraftCommand{OperationKey: uuid.NewString(), ExpectedVersion: draft.Version, ExpectedRevision: 1, Reason: draft.Reason})
 				require.ErrorIs(t, err, contract.ErrAuditUnavailable)
 			})
 			require.NoError(t, admin.Exec(`DROP TRIGGER reject_semantic_publication_audit ON audit_log; DROP FUNCTION reject_semantic_publication_audit()`).Error)
-			require.Contains(t, console, "ontology_semantic_publication_failed")
+			require.Contains(t, console, "topic_semantic_publication_failed")
 			require.Contains(t, console, "fixture semantic audit rejection")
-			require.NotContains(t, console, "ontology_semantic_publication_committed")
-			require.NotContains(t, console, "ontology_semantic_manager_command")
+			require.NotContains(t, console, "topic_semantic_publication_committed")
+			require.NotContains(t, console, "topic_semantic_manager_command")
 			unchanged, err := service.Draft(ctx, draft.ID)
 			require.NoError(t, err)
 			require.Equal(t, draft, unchanged)
 			require.NoError(t, admin.Exec(`CREATE FUNCTION reject_semantic_publication_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture semantic commit rejection'; END $$;
-				CREATE CONSTRAINT TRIGGER reject_semantic_publication_commit AFTER INSERT ON ontology_publications DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION reject_semantic_publication_commit()`).Error)
+				CREATE CONSTRAINT TRIGGER reject_semantic_publication_commit AFTER INSERT ON topic_publications DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION reject_semantic_publication_commit()`).Error)
 			t.Cleanup(func() {
-				require.NoError(t, admin.Exec(`DROP TRIGGER IF EXISTS reject_semantic_publication_commit ON ontology_publications; DROP FUNCTION IF EXISTS reject_semantic_publication_commit()`).Error)
+				require.NoError(t, admin.Exec(`DROP TRIGGER IF EXISTS reject_semantic_publication_commit ON topic_publications; DROP FUNCTION IF EXISTS reject_semantic_publication_commit()`).Error)
 			})
 			console, _ = capture(func() {
 				_, err := publish(1, contract.Change{Record: record("commit-child", parent.ID)})
 				require.ErrorContains(t, err, "fixture semantic commit rejection")
 			})
-			require.NoError(t, admin.Exec(`DROP TRIGGER reject_semantic_publication_commit ON ontology_publications; DROP FUNCTION reject_semantic_publication_commit()`).Error)
-			require.Contains(t, console, "ontology_semantic_publication_failed")
-			require.NotContains(t, console, "ontology_semantic_publication_committed")
+			require.NoError(t, admin.Exec(`DROP TRIGGER reject_semantic_publication_commit ON topic_publications; DROP FUNCTION reject_semantic_publication_commit()`).Error)
+			require.Contains(t, console, "topic_semantic_publication_failed")
+			require.NotContains(t, console, "topic_semantic_publication_committed")
 			page, err := store.ListRecords(ctx, team.String(), "", "", 200)
 			require.NoError(t, err)
 			require.EqualValues(t, 1, page.Revision)
 			require.Len(t, page.Records, 2)
 			var publications int
-			require.NoError(t, admin.Raw(`SELECT count(*) FROM ontology_publications WHERE team_id=?::uuid`, team).Row().Scan(&publications))
+			require.NoError(t, admin.Raw(`SELECT count(*) FROM topic_publications WHERE team_id=?::uuid`, team).Row().Scan(&publications))
 			require.Equal(t, 1, publications)
-			stored, err := logs.ListOperationLogs(context.Background(), domain.OperationLogFilter{Event: "ontology_semantic_publication_failed", TeamID: &team})
+			stored, err := logs.ListOperationLogs(context.Background(), domain.OperationLogFilter{Event: "topic_semantic_publication_failed", TeamID: &team})
 			require.NoError(t, err)
 			require.EqualValues(t, 2, stored.Total)
 			foreign := uuid.New()
-			invisible, err := logs.ListOperationLogs(context.Background(), domain.OperationLogFilter{Event: "ontology_semantic_publication_failed", TeamID: &foreign})
+			invisible, err := logs.ListOperationLogs(context.Background(), domain.OperationLogFilter{Event: "topic_semantic_publication_failed", TeamID: &foreign})
 			require.NoError(t, err)
 			require.Zero(t, invisible.Total)
-			capture(func() {
+			console, records := capture(func() {
 				pin := contract.Record{ID: uuid.NewString(), Kind: contract.OverrideKind, Override: &contract.Override{Action: contract.PinDefinition, TargetID: child.ID}}
 				_, err := publish(1, contract.Change{Record: pin})
-				require.NoError(t, err)
-			})
-			console, records := capture(func() {
-				_, err := store.PublishAutomatic(context.Background(), team.String(), contract.Publication{OperationKey: uuid.NewString(), ExpectedRevision: 2, Reason: "Pinned semantic definition", Changes: []contract.Change{{ExpectedVersion: 1, Record: child}}})
 				require.ErrorIs(t, err, contract.ErrOverride)
 			})
-			require.Contains(t, console, "definition_pinned")
+			require.Contains(t, console, "topic_semantic_publication_rejected")
+			require.Contains(t, console, "\"transaction_outcome\":\"not_committed\"")
 			if level <= slog.LevelDebug {
-				ontologyPublicationPayloads(t, records)
+				require.Contains(t, string(ontologyPublicationPayloads(t, records)["input:"]), "pin_definition")
 			}
-			depthParent, depthRevision := "", int64(2)
+			depthParent, depthRevision := "", int64(1)
 			var changes []contract.Change
 			for depth := 0; depth <= contract.MaxParentDepth; depth++ {
 				value := record(fmt.Sprintf("depth-%d", depth), depthParent)
@@ -196,14 +193,14 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 				require.ErrorIs(t, err, contract.ErrInvalid)
 			})
 			require.Contains(t, console, "hierarchy_depth")
-			require.NotContains(t, console, "ontology_semantic_publication_committed")
+			require.NotContains(t, console, "topic_semantic_publication_committed")
 			if level <= slog.LevelDebug {
 				ontologyPublicationPayloads(t, records)
 			}
 			t.Run("manager_workflow", func(t *testing.T) {
 				observe := func(run func()) (string, []map[string]any) {
 					return capture(func() {
-						service.WithPublicationDiagnostics(ontologyPublicationDiagnostics(root.ContextSlog(), protector))
+						service.WithPublicationDiagnostics(topicPublicationDiagnostics(root.ContextSlog(), protector))
 						run()
 					})
 				}
@@ -215,7 +212,7 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 					saved, err = service.SaveDraft(ctx, "", input)
 					require.NoError(t, err)
 				})
-				require.Contains(t, console, "ontology_semantic_manager_command")
+				require.Contains(t, console, "topic_semantic_manager_command")
 				require.Contains(t, console, saved.ID)
 				require.NotContains(t, console, secret)
 				require.NotContains(t, console, auth)
@@ -237,7 +234,7 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 					require.True(t, preview.Complete)
 				})
 				if level <= slog.LevelDebug {
-					require.Contains(t, console, "ontology_semantic_draft_preview")
+					require.Contains(t, console, "topic_semantic_draft_preview")
 					payloads := ontologyPublicationPayloads(t, records)
 					require.Contains(t, payloads, "preview:")
 					require.Contains(t, payloads, "draft:")
@@ -249,7 +246,7 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 					_, err := service.Preview(ctx, saved.ID, saved.Version-1)
 					require.ErrorIs(t, err, contract.ErrConflict)
 				})
-				require.Contains(t, console, "ontology_semantic_manager_rejected")
+				require.Contains(t, console, "topic_semantic_manager_rejected")
 				require.Contains(t, console, "draft_version")
 				if level <= slog.LevelDebug {
 					payloads := ontologyPublicationPayloads(t, records)
@@ -265,9 +262,9 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 					require.NoError(t, err)
 					require.NotNil(t, published.Publication)
 				})
-				require.Contains(t, console, "ontology_semantic_manager_command")
+				require.Contains(t, console, "topic_semantic_manager_command")
 				require.Contains(t, console, "\"transaction_outcome\":\"committed\"")
-				stored, err := logs.ListOperationLogs(context.Background(), domain.OperationLogFilter{Event: "ontology_semantic_manager_command", TeamID: &team})
+				stored, err := logs.ListOperationLogs(context.Background(), domain.OperationLogFilter{Event: "topic_semantic_manager_command", TeamID: &team})
 				require.NoError(t, err)
 				require.EqualValues(t, 3, stored.Total)
 				history, err := service.Publication(ctx, published.Publication.ID)
@@ -291,9 +288,9 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 					_, err := service.Rollback(ctx, published.Publication.ID, contract.DraftCommand{OperationKey: uuid.NewString(), ExpectedRevision: advanced.Publication.Revision, Reason: "Reject the stale rollback"})
 					require.ErrorIs(t, err, contract.ErrConflict)
 				})
-				require.Contains(t, console, "ontology_semantic_manager_rejected")
+				require.Contains(t, console, "topic_semantic_manager_rejected")
 				require.Contains(t, console, "rollback_revision")
-				require.NotContains(t, console, "ontology_semantic_manager_command")
+				require.NotContains(t, console, "topic_semantic_manager_command")
 				for _, entry := range records {
 					require.Equal(t, published.Publication.ID, entry["target_publication_id"])
 				}

@@ -17,12 +17,16 @@ func migrateFeatureStorage(ctx context.Context, migrator *postgres.Migrator, log
 
 func reportFeatureStorageProgress(ctx context.Context, logger infoLogger, s postgres.MigrationSnapshot) {
 	attrs := progressAttrs(s)
+	event := "feature_storage_migration"
+	if s.MigrationVersion == postgres.TopicStorageDataVersion {
+		event = "topic_storage_migration"
+	}
 	switch s.State {
 	case "failed":
-		logError(context.WithoutCancel(ctx), logger, "feature_storage_migration_failed", attrs...)
+		logError(context.WithoutCancel(ctx), logger, event+"_failed", attrs...)
 	case "cancelled":
-		logWarn(context.WithoutCancel(ctx), logger, "feature_storage_migration_cancelled", attrs...)
+		logWarn(context.WithoutCancel(ctx), logger, event+"_cancelled", attrs...)
 	default:
-		logInfo(ctx, logger, "feature_storage_migration_progress", attrs...)
+		logInfo(ctx, logger, event+"_progress", attrs...)
 	}
 }

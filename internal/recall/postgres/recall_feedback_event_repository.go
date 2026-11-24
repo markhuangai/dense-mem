@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -32,6 +33,17 @@ func NewFeedbackStore(db *gorm.DB, rls postgres.RLSHelper) *FeedbackStore {
 
 func (r *FeedbackStore) RecordSnapshot(ctx context.Context, event domain.RecallFeedbackEvent) error {
 	event = normalizeRecallFeedbackEvent(event)
+	event.SnapshotMetadata = maps.Clone(event.SnapshotMetadata)
+	stages, hasStages := event.SnapshotMetadata["decision_stages"]
+	delete(event.SnapshotMetadata, "decision_stages")
+	var stageData []byte
+	if hasStages {
+		var err error
+		stageData, err = json.Marshal(stages)
+		if err != nil {
+			return fmt.Errorf("encode recall rerank stages: %w", err)
+		}
+	}
 	toolArgs, resultRefs, degradation, snapshotMetadata, err := marshalRecallFeedbackPayload(event)
 	if err != nil {
 		return err
@@ -41,17 +53,17 @@ func (r *FeedbackStore) RecordSnapshot(ctx context.Context, event domain.RecallF
 				INSERT INTO recall_feedback_events (
 					recall_id, created_at, updated_at, team_id, profile_id, key_id,
 					space_id, space_generation,
-					auth_method, tool_name, query, tool_args, result_refs,
+					auth_method, tool_name, query, tool_args,
 				result_count, snapshot_state, contract_version, ranking_profile_version,
 				embedding_contract_version, search_index_profile_version, search_state,
 				degradation, snapshot_metadata
 			) VALUES (
 				$1, $2, $3, $4, $5, $6,
 					$7, $8,
-					$9, $10, $11, $12::jsonb, $13::jsonb,
-					$14, $15, $16, $17,
-					$18, $19, $20,
-					$21::jsonb, $22::jsonb
+					$9, $10, $11, $12::jsonb,
+					$13, $14, $15, $16,
+					$17, $18, $19,
+					$20::jsonb, $21::jsonb
 			)
 			ON CONFLICT (recall_id) DO UPDATE SET
 				updated_at = EXCLUDED.updated_at,
@@ -67,7 +79,6 @@ func (r *FeedbackStore) RecordSnapshot(ctx context.Context, event domain.RecallF
 				tool_name = EXCLUDED.tool_name,
 				query = EXCLUDED.query,
 				tool_args = EXCLUDED.tool_args,
-				result_refs = EXCLUDED.result_refs,
 				result_count = EXCLUDED.result_count,
 				snapshot_state = 'captured',
 				contract_version = EXCLUDED.contract_version,
@@ -93,7 +104,6 @@ func (r *FeedbackStore) RecordSnapshot(ctx context.Context, event domain.RecallF
 			event.ToolName,
 			event.Query,
 			string(toolArgs),
-			string(resultRefs),
 			event.ResultCount,
 			event.SnapshotState,
 			event.ContractVersion,
@@ -110,7 +120,21 @@ func (r *FeedbackStore) RecordSnapshot(ctx context.Context, event domain.RecallF
 		if result.RowsAffected == 0 {
 			return ErrRecallFeedbackEventNotFound
 		}
-		return nil
+		method := event.RankingMethod
+		if method == "" {
+			method = "legacy"
+		}
+		if err := tx.Exec(`INSERT INTO recall_outcomes(recall_id, method, result_refs) VALUES (?, ?, ?::jsonb)
+			ON CONFLICT(recall_id) DO UPDATE SET method=EXCLUDED.method, result_refs=EXCLUDED.result_refs`,
+			event.RecallID, method, string(resultRefs)).Error; err != nil {
+			return err
+		}
+		if !hasStages {
+			return tx.Exec("DELETE FROM recall_rerank_outcomes WHERE recall_id=?", event.RecallID).Error
+		}
+		return tx.Exec(`INSERT INTO recall_rerank_outcomes(recall_id, method, decision_stages)
+			VALUES (?, 'typed_decisions', ?::jsonb)
+			ON CONFLICT(recall_id) DO UPDATE SET method=EXCLUDED.method, decision_stages=EXCLUDED.decision_stages`, event.RecallID, string(stageData)).Error
 	})
 	if err != nil {
 		return fmt.Errorf("failed to record recall feedback snapshot: %w", err)
@@ -196,7 +220,7 @@ func (r *FeedbackStore) List(ctx context.Context, filter domain.RecallFeedbackEv
 		queryArgs = append(queryArgs, normalized.Limit, normalized.Offset)
 		rows, err := tx.Raw(`
 			SELECT `+recallFeedbackEventColumns()+`
-			FROM recall_feedback_events
+			FROM recall_feedback_events `+recallOutcomeJoins+`
 			`+where+`
 			ORDER BY created_at DESC, recall_id DESC
 			LIMIT ? OFFSET ?
@@ -235,7 +259,7 @@ func (r *FeedbackStore) Get(ctx context.Context, recallID string) (*domain.Recal
 	err := r.withSystemTx(ctx, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
 			SELECT `+recallFeedbackEventColumns()+`
-			FROM recall_feedback_events
+			FROM recall_feedback_events `+recallOutcomeJoins+`
 			WHERE recall_id = ?
 			  AND (space_id IS NULL OR `+activeSemanticSpaceGenerationSQL("recall_feedback_events")+`)
 			LIMIT 1
@@ -371,14 +395,20 @@ func recallFeedbackEventWhere(filter domain.RecallFeedbackEventFilter) (string, 
 	return strings.Join(clauses, " AND "), args
 }
 
+const recallOutcomeJoins = `LEFT JOIN recall_outcomes AS outcome USING (recall_id)
+	LEFT JOIN recall_rerank_outcomes AS rerank USING (recall_id)`
+
 func recallFeedbackEventColumns() string {
 	return `
 			recall_id, created_at, updated_at, feedback_at,
 			team_id::text, profile_id::text, key_id::text, space_id::text, space_generation,
-		auth_method, tool_name, query, tool_args, result_refs,
+		auth_method, tool_name, query, tool_args, COALESCE(outcome.result_refs,'[]'::jsonb),
 		result_count, snapshot_state, contract_version, ranking_profile_version,
 		embedding_contract_version, search_index_profile_version, search_state,
-		degradation, snapshot_metadata, used, answer_supported,
+		degradation, snapshot_metadata
+		|| CASE WHEN outcome.method IS NULL OR outcome.method='legacy' THEN '{}'::jsonb ELSE jsonb_build_object('ranking_method',outcome.method) END
+		|| CASE WHEN rerank.recall_id IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('decision_stages',rerank.decision_stages) END,
+		used, answer_supported,
 		quality, missing_context, irrelevant, feedback_comment,
 		irrelevant_result_refs
 	`

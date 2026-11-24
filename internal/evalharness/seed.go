@@ -122,8 +122,8 @@ func VerifySeed(ctx context.Context, manifest Manifest, corpus []CorpusItem, cli
 			"expected_rows": len(corpus), "mapped_rows": len(mapping.BySourceDocID),
 			"expected_registry_sha256": manifest.RegistryHash, "observed_registry_sha256": seed.RegistryHash,
 			"expected_canonical_sha256": seed.CanonicalHash, "observed_canonical_sha256": observation.CanonicalHash,
-			"ontology_enabled": observation.Ontology.Enabled, "ontology_paused": observation.Ontology.Paused,
-			"organized": observation.Ontology.Counts.Organized, "attempts": len(observation.ProviderAttempts),
+			"ontology_enabled": observation.TopicMaintenance.Enabled, "ontology_paused": observation.TopicMaintenance.Paused,
+			"organized": observation.TopicMaintenance.Counts.Organized, "attempts": len(observation.ProviderAttempts),
 			"search": observation.Search, "error": client.Capture.ProtectError(err),
 		})
 	}
@@ -169,8 +169,8 @@ func verifySeedContent(ctx context.Context, manifest Manifest, corpus []CorpusIt
 }
 
 func verifySeedCondition(native *Native, manifest Manifest, observation NativeObservation) error {
-	if observation.Ontology.Counts.Organized != 0 || len(observation.ProviderAttempts) != 0 {
-		return errors.New("restored seed ontology-off state differs")
+	if observation.TopicMaintenance.Counts.Organized != 0 || len(observation.ProviderAttempts) != 0 {
+		return errors.New("restored seed contains organized sources or topic maintenance attempts")
 	}
 	return NativeReady(observation, false, true, manifest, native.Scope.TeamID)
 }
@@ -193,8 +193,8 @@ func Prepare(ctx context.Context, manifest Manifest, corpus []CorpusItem, client
 	if err != nil {
 		return seed, err
 	}
-	if (before.EvidenceCount != 0 && manifest.ResumeScope == nil) || before.ForeignSources != 0 || before.Ontology.Enabled || !before.Ontology.Paused {
-		return seed, errors.New("seed preparation requires an empty bootstrap with ontology disabled and paused")
+	if (before.EvidenceCount != 0 && manifest.ResumeScope == nil) || before.ForeignSources != 0 || before.TopicMaintenance.Enabled || !before.TopicMaintenance.Paused {
+		return seed, errors.New("seed preparation requires an empty bootstrap with topic maintenance disabled and paused")
 	}
 	options := corpusImportOptions{native: native}
 	if manifest.SeedBuildID != "" && !manifest.IntakeProof {
@@ -237,7 +237,7 @@ func Prepare(ctx context.Context, manifest Manifest, corpus []CorpusItem, client
 	if err = NativeReady(ready, false, true, manifest, native.Scope.TeamID); err != nil {
 		return seed, err
 	}
-	if ready.Ontology.Counts.Organized != 0 {
+	if ready.TopicMaintenance.Counts.Organized != 0 {
 		return seed, errors.New("seed contains organized Evidence")
 	}
 	seed.Scope, seed.CanonicalHash = native.Scope, ready.CanonicalHash

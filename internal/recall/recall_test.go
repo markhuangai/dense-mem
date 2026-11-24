@@ -233,11 +233,11 @@ type recallOntologyConfigStub struct {
 	err     error
 }
 
-func (s recallOntologyConfigStub) OntologyMaintenanceRuntimeConfig(context.Context) (domain.OntologyMaintenanceConfig, error) {
+func (s recallOntologyConfigStub) TopicMaintenanceRuntimeConfig(context.Context) (domain.TopicMaintenanceConfig, error) {
 	if s.err != nil {
-		return domain.OntologyMaintenanceConfig{}, s.err
+		return domain.TopicMaintenanceConfig{}, s.err
 	}
-	return domain.OntologyMaintenanceConfig{Enabled: s.enabled}, nil
+	return domain.TopicMaintenanceConfig{Enabled: s.enabled}, nil
 }
 
 type recallProviderStub struct {

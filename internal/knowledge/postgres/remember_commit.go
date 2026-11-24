@@ -230,6 +230,10 @@ func (r *Store) commitRememberInTx(ctx context.Context, tx *gorm.DB, input Synch
 			return err
 		}
 		publicResult := rememberPublicResult(input, evidence, semanticResult)
+		stage = "topic_assignment"
+		if err := r.commitTopicAssignments(ctx, tx, input, evidence); err != nil {
+			return err
+		}
 		stage = "terminal_attempt"
 		if err := insertRememberAttemptInTx(ctx, tx, RememberAttemptRecordInput{
 			TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, AttemptID: input.IngestID,

@@ -34,8 +34,9 @@ type EvidenceFragment = knowledgecontract.EvidenceFragment
 type rLSHelper = storagepostgres.RLSHelper
 
 type Store struct {
-	db  *gorm.DB
-	rls rLSHelper
+	topicAssignments topicAssignmentWriter
+	db               *gorm.DB
+	rls              rLSHelper
 
 	rememberIdempotencyLockMu sync.Mutex
 	rememberIdempotencyLocks  map[string]*rememberIdempotencyLockEntry

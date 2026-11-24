@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
-	ontologycontract "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"time"
 )
 
@@ -32,6 +32,18 @@ type EvidenceSnapshotRepository interface {
 type OrganizedSearchRepository interface {
 	HydrateOrganizedEvidence(context.Context, RecallEvidenceInput, *searchcontract.ActiveSearchContract, []string) (*EvidenceHydration, error)
 }
+type EvidenceBridgeRepository interface {
+	ReadEvidenceBridges(context.Context, RecallEvidenceInput, *searchcontract.ActiveSearchContract, []string) ([]EvidenceBridge, error)
+}
+type EvidenceBridge struct {
+	SeedExcerpt string `json:"seed_excerpt,omitempty"`
+	SeedID      string
+	EvidenceID  string
+	Term        string
+	TopicID     string
+	TopicName   string
+	Fanout      int
+}
 type TopicDiscoveryRepository interface {
 	RelatedEvidenceTopics(context.Context, RecallEvidenceInput, []string, int) (RelatedTopicResult, error)
 }
@@ -55,22 +67,23 @@ type RecallCandidateBatch struct {
 	TextHits                []searchcontract.SearchHit
 	VectorHits              []searchcontract.SearchHit
 	ExpansionHits           []searchcontract.SearchHit
-	OntologyHits            []searchcontract.SearchHit
+	OrganizationHits        []searchcontract.SearchHit
 	SearchState             string
 	OrganizationDegradation string
 }
 
 type EvidenceHydration struct {
 	Hits                    map[string]RecallEvidenceHit
-	Groups                  []ontologycontract.RecallEvidenceGroup
+	Groups                  []topic.RecallEvidenceGroup
 	OrganizationDegradation string
 }
 
 type RecallEvidenceInput struct {
+	ExpansionEnabled    bool
 	TopicIDs            []string
 	TopicEvidenceIDs    []string
 	OrganizationEnabled bool
-	OrganizationSources []ontologycontract.SourceHandle
+	OrganizationSources []topic.SourceHandle
 	TeamID              string
 	Query               string
 	QueryEmbedding      []float32
@@ -92,6 +105,7 @@ type RecallEvidenceResult struct {
 }
 
 type RecallEvidenceHit struct {
+	Bridge                *EvidenceBridge `json:"-"`
 	ContextTruncated      bool
 	EquivalentEvidenceIDs []string
 	EquivalentsTruncated  bool
@@ -108,6 +122,7 @@ type RecallEvidenceHit struct {
 }
 
 type RecallResult struct {
+	RankingMethod   string                        `json:"-"`
 	DecisionStages  []modelprovider.DecisionStage `json:"-"`
 	RelatedTopics   []RelatedTopic                `json:"related_topics"`
 	TopicsTruncated bool                          `json:"topics_truncated"`

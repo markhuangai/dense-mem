@@ -85,8 +85,8 @@ func TestRecallANNQueryEFSearchCoversCandidateLimit(t *testing.T) {
 
 func TestRecallOntologyScoringSkipsUnchangedPoolsAndRejectsUnboundedPools(t *testing.T) {
 	existing := []SearchHit{{SourceID: "a"}, {SourceID: "b"}}
-	for _, ontology := range [][]SearchHit{nil, {{SourceID: "b"}, {SourceID: "a"}, {SourceID: "a"}}} {
-		actual, err := augmentRecallVectorChannel(existing, ontology, 2, nil)
+	for _, organization := range [][]SearchHit{nil, {{SourceID: "b"}, {SourceID: "a"}, {SourceID: "a"}}} {
+		actual, err := augmentRecallVectorChannel(existing, organization, 2, nil)
 		require.NoError(t, err)
 		require.Equal(t, existing, actual)
 	}

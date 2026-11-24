@@ -19,8 +19,6 @@ import (
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	"github.com/markhuangai/dense-mem/internal/ontology"
-	ontologypostgres "github.com/markhuangai/dense-mem/internal/ontology/postgres"
 	operations "github.com/markhuangai/dense-mem/internal/operations"
 	operationspostgres "github.com/markhuangai/dense-mem/internal/operations/postgres"
 	privacy "github.com/markhuangai/dense-mem/internal/privacy/postgres"
@@ -31,6 +29,9 @@ import (
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres/lockadmission"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
+	"github.com/markhuangai/dense-mem/internal/topicassignment"
+	topics "github.com/markhuangai/dense-mem/internal/topics"
+	topicspostgres "github.com/markhuangai/dense-mem/internal/topics/postgres"
 )
 
 // runtimeWorkerFailure keeps the underlying cause for control flow while exposing a bounded message to logs.
@@ -137,11 +138,11 @@ func RunActiveServer(
 	if err != nil {
 		return fmt.Errorf("active search bootstrap blocked: %w", err)
 	}
-	ontologyStore := ontologypostgres.NewStore(pgDB.GetDB(), rlsHelper)
+	topicStore := topicspostgres.NewStore(pgDB.GetDB(), rlsHelper)
 	recallStore := recallpostgres.NewStore(
 		pgDB.GetDB(), rlsHelper, searchRepo,
 		recallpostgres.LoadRecallEvidenceConflictRecords,
-	).WithOntology(func() recallpostgres.OntologyReader { return ontologyStore.NewRecallReader() }).WithTopics(ontologyStore.NewTopicReader())
+	).WithOrganizationReader(func() recallpostgres.OrganizationReader { return topicStore.NewRecallReader() }).WithTopics(topicStore.NewTopicReader())
 	operationLogDB, err := postgres.OpenOperationLogClient(startupCtx, &cfg, logger)
 	if err != nil {
 		return fmt.Errorf("open operation log sink pool: %w", err)
@@ -235,8 +236,8 @@ func RunActiveServer(
 		Logger:            logger,
 	}
 	recallStore.WithTopicDiagnostics(logger, diagnosticProtector)
-	publicationDiagnostics := ontologyPublicationDiagnostics(rootDiagnosticLogger(logger), diagnosticProtector)
-	ontologyStore.WithPublicationDiagnostics(publicationDiagnostics)
+	publicationDiagnostics := topicPublicationDiagnostics(rootDiagnosticLogger(logger), diagnosticProtector)
+	topicStore.WithPublicationDiagnostics(publicationDiagnostics)
 	telemetry, err := buildTelemetryApplication(startupCtx, cfg, appConfigService, telemetryLifecycleRepo, logger, diagnosticProtector)
 	if err != nil {
 		return fmt.Errorf("failed to build telemetry application: %w", err)
@@ -272,8 +273,17 @@ func RunActiveServer(
 	}
 	sessionAssessmentLimits := assessmentLimits
 	sessionAssessmentLimits.MaxEvidenceItems = 100
-	ontologyMaintenance := buildOntologyMaintenance(ontologyStore, appConfigService, assessorProvider, assessmentLimits, sessionModels.remember, time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second, auditService, rootDiagnosticLogger(logger), ontologyDiagnosticCapture(operationLogService, diagnosticProtector, rootDiagnosticLogger(logger)))
+	topicMaintenance := buildTopicMaintenance(topicStore, appConfigService, assessorProvider, assessmentLimits, sessionModels.remember,
+		time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second, time.Duration(cfg.Decision.TimeoutSeconds)*time.Second,
+		auditService, rootDiagnosticLogger(logger), topicMaintenanceDiagnostics(operationLogService, diagnosticProtector, rootDiagnosticLogger(logger)))
+	rootLogger := rootDiagnosticLogger(logger)
+	topicAssignment := topicassignment.NewService(topicStore, appConfigService, assessorProvider, decisions, assessmentLimits, sessionModels.remember, rootLogger)
+	knowledgeStore.WithTopicAssignments(topicStore)
+	topicMaintenance.WithTopicProcessing(topicAssignment, topicStore, topicStore, topics.CommunityAssessor{
+		Transport: assessorProvider, Decisions: decisions, Settings: appConfigService, Limits: assessmentLimits, Logger: rootLogger,
+	})
 	applications := buildApplicationBundle(applicationCompositionDependencies{
+		TopicAssignment:      topicAssignment,
 		PublicSeedAdmission:  seedAdmission,
 		Knowledge:            knowledgeStore,
 		RememberPersistence:  knowledgeStore,
@@ -283,19 +293,21 @@ func RunActiveServer(
 		RecallFeedbackEvents: recallFeedbackEventRepo,
 		Assessor:             assessorProvider,
 		Decisions:            decisions, DecisionSettings: appConfigService,
-		SessionAssessor:        assessorProvider,
-		SessionEnabled:         cfg.SessionIngestEnabled && cfg.GetAIVerifierAPIURL() != "" && cfg.GetAIVerifierAPIKey() != "" && cfg.IsEmbeddingConfigured(),
-		RememberModel:          sessionModels.remember,
-		GeneratorTransport:     assessorProvider,
-		EmbeddingProvider:      openaiProvider,
-		RetryEmbeddingProvider: retryEmbedder,
-		AssessmentLimits:       assessmentLimits,
-		Metrics:                discoverabilityMetrics,
-		Logger:                 logger,
-		DiagnosticProtector:    diagnosticProtector,
-		Audit:                  auditService,
-		AppConfig:              appConfigService,
-		TelemetryPrometheus:    telemetryPrometheusService,
+		SessionAssessor:             assessorProvider,
+		SessionEnabled:              cfg.SessionIngestEnabled && cfg.GetAIVerifierAPIURL() != "" && cfg.GetAIVerifierAPIKey() != "" && cfg.IsEmbeddingConfigured(),
+		RememberModel:               sessionModels.remember,
+		RecallExpansionEnabled:      cfg.RecallExpansionEnabled,
+		RecallDisableQueryEmbedding: cfg.RecallDisableQueryEmbedding,
+		GeneratorTransport:          assessorProvider,
+		EmbeddingProvider:           openaiProvider,
+		RetryEmbeddingProvider:      retryEmbedder,
+		AssessmentLimits:            assessmentLimits,
+		Metrics:                     discoverabilityMetrics,
+		Logger:                      logger,
+		DiagnosticProtector:         diagnosticProtector,
+		Audit:                       auditService,
+		AppConfig:                   appConfigService,
+		TelemetryPrometheus:         telemetryPrometheusService,
 	})
 	rememberSvc := applications.Remember
 	recallSvc := applications.Recall
@@ -361,8 +373,8 @@ func RunActiveServer(
 		usageMetrics:             usageMetricsService,
 		evidenceConflicts:        evidenceConflictService,
 		recallFeedback:           recallFeedbackEventService,
-		ontologyMaintenance:      ontologyMaintenance,
-		ontologyManagement:       ontology.NewManagementService(ontologyStore, auditService).WithPublicationDiagnostics(publicationDiagnostics),
+		topicMaintenance:         topicMaintenance,
+		topicManagement:          topics.NewManagementService(topicStore, auditService).WithPublicationDiagnostics(publicationDiagnostics),
 		recall:                   recallSvc,
 	})
 	if err != nil {
@@ -509,8 +521,8 @@ func RunActiveServer(
 	if err := startupCheck(); err != nil {
 		return abortStartup(err)
 	}
-	lifecycle.start("ontology maintenance", func(ctx context.Context) {
-		ontology.NewMaintenanceScheduler(ontologyMaintenance, rootSlogLogger(logger)).Start(ctx)
+	lifecycle.start("topic maintenance", func(ctx context.Context) {
+		topics.NewMaintenanceScheduler(topicMaintenance, rootSlogLogger(logger)).Start(ctx)
 	})
 	if err := startupCheck(); err != nil {
 		return abortStartup(err)

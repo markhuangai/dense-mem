@@ -12,9 +12,9 @@ import (
 
 	"github.com/google/uuid"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	evalharness "github.com/markhuangai/dense-mem/internal/testfixture/evaluation"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -24,7 +24,7 @@ type recallAccuracyFixture struct {
 	cohort    []evalharness.RecallAccuracyCase
 	mapping   evalharness.KnowledgeMapping
 	sources   map[string]evalharness.RecallAccuracySource
-	evidence  map[string]ontology.SourceHandle
+	evidence  map[string]topic.SourceHandle
 	vectors   bool
 	preserved string
 }
@@ -33,7 +33,7 @@ func newRecallAccuracyFixture(t *testing.T, reverseIDs, vectors bool) *recallAcc
 	t.Helper()
 	f := &recallAccuracyFixture{recallOntologyFixture: newRecallOntologyFixture(t), cohort: evalharness.RecallAccuracyCohort(),
 		mapping: evalharness.KnowledgeMapping{BySourceDocID: map[string]evalharness.Ref{}},
-		sources: map[string]evalharness.RecallAccuracySource{}, evidence: map[string]ontology.SourceHandle{},
+		sources: map[string]evalharness.RecallAccuracySource{}, evidence: map[string]topic.SourceHandle{},
 		vectors: vectors}
 	var evidenceTimestampDefault string
 	require.NoError(t, f.admin.Raw(`SELECT column_default FROM information_schema.columns
@@ -66,9 +66,9 @@ func newRecallAccuracyFixture(t *testing.T, reverseIDs, vectors bool) *recallAcc
 		require.NoError(t, err)
 		require.Equal(t, id, ingest.Evidence[0].FragmentID)
 		f.sources[id] = source
-		f.evidence[source.ID] = ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: id, Version: 1}
+		f.evidence[source.ID] = topic.SourceHandle{Kind: topic.EvidenceSource, ID: id, Version: 1}
 		f.mapping.BySourceDocID[source.ID] = evalharness.Ref{Type: "evidence", ID: id, SourceDocID: source.ID}
-		for documentIndex, ref := range []ontology.SourceHandle{f.evidence[source.ID]} {
+		for documentIndex, ref := range []topic.SourceHandle{f.evidence[source.ID]} {
 			document, err := f.search.UpsertSearchDocument(ctx, knowledge.UpsertSearchDocumentInput{
 				TeamID: f.team, OwnerProfileID: f.owners[owner], SpaceID: f.space, SpaceGeneration: f.generation,
 				SourceKind: string(ref.Kind), SourceID: ref.ID, SourceVersion: ref.Version, DocumentText: source.Text,
@@ -106,13 +106,13 @@ func newRecallAccuracyFixture(t *testing.T, reverseIDs, vectors bool) *recallAcc
 		hub.SourceIDs = append(hub.SourceIDs, c.Concept.SourceIDs...)
 	}
 	for _, concept := range concepts {
-		definition := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{
+		definition := topic.Record{ID: uuid.NewString(), Kind: topic.Topic, Definition: &topic.Definition{
 			Key: concept.Key, Label: concept.Key, Aliases: concept.Aliases}}
-		records := []ontology.Record{definition}
+		records := []topic.Record{definition}
 		seen := map[string]bool{}
 		for _, sourceID := range concept.SourceIDs {
 			handle := f.evidence[sourceID]
-			key := ontology.SourceKey(handle)
+			key := topic.SourceKey(handle)
 			if !seen[key] {
 				records = append(records, f.assignment(t, definition.ID, handle))
 				seen[key] = true
@@ -182,7 +182,7 @@ type recallAccuracyBranchHit struct {
 func (f *recallAccuracyFixture) branchTrace(t *testing.T, batch *recallcontract.RecallCandidateBatch) map[string][]recallAccuracyBranchHit {
 	t.Helper()
 	branches := map[string][]recallAccuracyBranchHit{}
-	for name, hits := range map[string][]SearchHit{"text": batch.TextHits, "vector": batch.VectorHits, "explicit": batch.ExpansionHits, "ontology": batch.OntologyHits} {
+	for name, hits := range map[string][]SearchHit{"text": batch.TextHits, "vector": batch.VectorHits, "explicit": batch.ExpansionHits, "ontology": batch.OrganizationHits} {
 		require.LessOrEqual(t, len(hits), 60)
 		branches[name] = []recallAccuracyBranchHit{}
 		for index, hit := range hits {

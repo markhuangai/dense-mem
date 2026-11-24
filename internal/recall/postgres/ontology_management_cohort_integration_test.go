@@ -5,19 +5,14 @@ package postgres
 import (
 	"context"
 	"encoding/json"
-	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
-	"github.com/markhuangai/dense-mem/internal/settings"
-	settingspg "github.com/markhuangai/dense-mem/internal/settings/postgres"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	auditapp "github.com/markhuangai/dense-mem/internal/audit"
 	auditpg "github.com/markhuangai/dense-mem/internal/audit/postgres"
-	application "github.com/markhuangai/dense-mem/internal/ontology"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	application "github.com/markhuangai/dense-mem/internal/topics"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,7 +35,7 @@ func TestRecallOntologyManagementLockedCohort(t *testing.T) {
 	for _, testCase := range lock.Cases {
 		t.Run(testCase.ID, func(t *testing.T) {
 			f := newRecallOntologyFixture(t)
-			handles := []ontology.SourceHandle{}
+			handles := []topic.SourceHandle{}
 			for i, text := range testCase.Texts {
 				owner := i
 				if testCase.SameOwner {
@@ -62,14 +57,14 @@ func TestRecallOntologyManagementLockedCohort(t *testing.T) {
 			}
 			forceDistinct := testCase.Action == "group_together"
 			organizer, calls := f.organizerWithAccounting(t, groups, forceDistinct, nil)
-			_, err := organizer.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: "initial", Sources: handles})
+			_, err := organizer.Organize(context.Background(), f.team, topic.OrganizationInput{OperationKey: "initial", Sources: handles})
 			require.NoError(t, err)
-			manager := application.NewManagementService(f.ontology, auditapp.New(auditpg.NewStore(f.app, f.rls)))
+			manager := application.NewManagementService(f.topicStore, auditapp.New(auditpg.NewStore(f.app, f.rls)))
 			actor := f.actor(0, "manager")
 			page, err := manager.Records(actor, "", "", 1)
 			require.NoError(t, err)
 			priorCalls := calls.Load()
-			draft, err := manager.SaveDraft(actor, "", ontology.SaveDraftInput{OperationKey: uuid.NewString(), ExpectedRevision: page.Revision, Reason: "Locked manager correction", Edits: []ontology.ManagementEdit{{Action: testCase.Action, Members: handles}}})
+			_, err = manager.SaveDraft(actor, "", topic.SaveDraftInput{OperationKey: uuid.NewString(), ExpectedRevision: page.Revision, Reason: "Locked manager correction", Edits: []topic.ManagementEdit{{Action: testCase.Action, Members: handles}}})
 			check := func(expected int) {
 				result, err := f.search.RecallEvidence(f.actor(2, "member"), RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, Query: "Atlas PostgreSQL MongoDB", QueryEmbedding: []float32{1, 0, 0}, Limit: 10, OrganizationEnabled: true})
 				require.NoError(t, err)
@@ -83,55 +78,17 @@ func TestRecallOntologyManagementLockedCohort(t *testing.T) {
 				}
 				require.Equal(t, gold, seen, "source or distinct-fact loss")
 			}
-			if !testCase.Reject {
-				if forceDistinct {
-					check(2)
-				} else {
-					check(1)
-				}
+			require.ErrorIs(t, err, topic.ErrInvalid)
+			if testCase.Reject || forceDistinct {
+				check(2)
+			} else {
+				check(1)
 			}
-			if testCase.Reject {
-				require.ErrorIs(t, err, ontology.ErrInvalid)
-				check(testCase.ExpectedSlots)
-				return
-			}
+			drafts, err := manager.Drafts(actor, "", 20)
 			require.NoError(t, err)
-			_, err = manager.Preview(actor, draft.ID, draft.Version)
-			require.NoError(t, err)
-			pub, err := manager.CommandDraft(actor, draft.ID, "publish", ontology.DraftCommand{OperationKey: uuid.NewString(), ExpectedVersion: draft.Version, ExpectedRevision: draft.BaseRevision, Reason: draft.Reason})
-			require.NoError(t, err)
-			require.Equal(t, priorCalls, calls.Load(), "manager operation called provider")
-			config := settings.NewAppConfigService(settingspg.NewAppConfigRepository(f.app, f.rls), nil)
-			_, err = config.UpdateOntologyMaintenanceSettings(context.Background(), map[string]string{domain.AppConfigOntologyEnabled: "true", domain.AppConfigOntologyContextWindow: "300000", domain.AppConfigOntologyModel: "fixture-model", domain.AppConfigOntologyStartTime: time.Now().UTC().Format("15:04")}, "control", "", "")
-			require.NoError(t, err)
-			_, err = config.UpdateGeneralSettings(context.Background(), map[string]string{domain.AppConfigTimezone: "UTC"}, "control", "", "")
-			require.NoError(t, err)
-			worker := application.NewMaintenanceService(application.MaintenanceDependencies{Repository: f.ontology, Config: config, Organizer: func(_ string, _ int64, accounting assessment.AttemptAccounting) *application.Service {
-				provider, _ := f.organizerWithAccounting(t, groups, forceDistinct, accounting)
-				return provider
-			}})
-			drain := func() {
-				for i := 0; i < 40; i++ {
-					progress, runErr := worker.RunTurn(context.Background())
-					require.NoError(t, runErr)
-					if !progress {
-						return
-					}
-				}
-				t.Fatal("manager cohort maintenance did not quiesce")
-			}
-			drain()
-			status, err := manager.Status(actor)
-			require.NoError(t, err)
-			require.True(t, status.CoverageComplete)
+			require.Empty(t, drafts.Drafts)
+			require.Equal(t, priorCalls, calls.Load())
 
-			check(testCase.ExpectedSlots)
-			page, err = manager.Records(actor, "", "", 1)
-			require.NoError(t, err)
-			_, err = manager.Rollback(actor, pub.Publication.ID, ontology.DraftCommand{OperationKey: uuid.NewString(), ExpectedRevision: page.Revision, Reason: "Reverse locked correction"})
-			require.NoError(t, err)
-			drain()
-			check(testCase.RollbackSlots)
 		})
 	}
 }

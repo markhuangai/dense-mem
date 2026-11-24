@@ -44,7 +44,7 @@ import { FieldRow, AuthShell, LoadingState, PortalShell, SectionHeading } from "
 const SecurityPanel = lazy(() => import("./control/SecurityPanel").then((module) => ({ default: module.SecurityPanel })));
 const SSOPanel = lazy(() => import("./control/SSOPanel").then((module) => ({ default: module.SSOPanel })));
 const ConfigPanel = lazy(() => import("./control/ConfigPanel").then((module) => ({ default: module.ConfigPanel })));
-const OntologyConfigPanel = lazy(() => import("./control/ConfigPanel").then((module) => ({ default: module.OntologyConfigPanel })));
+const TopicMaintenanceConfigPanel = lazy(() => import("./control/ConfigPanel").then((module) => ({ default: module.TopicMaintenanceConfigPanel })));
 const LogsPanel = lazy(() => import("./control/LogsPanel").then((module) => ({ default: module.LogsPanel })));
 const RecallFeedbackPanel = lazy(() => import("./control/RecallFeedbackPanel").then((module) => ({ default: module.RecallFeedbackPanel })));
 const SearchConvergencePanel = lazy(() => import("./control/SearchConvergencePanel").then((module) => ({ default: module.SearchConvergencePanel })));
@@ -295,7 +295,7 @@ function Portal({ api, theme, themeMenu, onSignOut }: { api: ControlApi; theme: 
       ["search", "Search readiness", <Search size={17} aria-hidden="true" />],
       ["recall-feedback", "Recall feedback", <MessageSquare size={17} aria-hidden="true" />],
       ["logs", "Logs", <ListFilter size={17} aria-hidden="true" />],
-      ["maintenance", "Ontology maintenance", <Activity size={17} aria-hidden="true" />],
+      ["maintenance", "Topic maintenance", <Activity size={17} aria-hidden="true" />],
       ["sso", "Identity & access", <ShieldCheck size={17} aria-hidden="true" />],
       ["security", "IP bans", <Ban size={17} aria-hidden="true" />],
       ["config", "Settings", <Settings size={17} aria-hidden="true" />],
@@ -324,7 +324,7 @@ function Portal({ api, theme, themeMenu, onSignOut }: { api: ControlApi; theme: 
       {activeTab === "security" && <SecurityPanel api={api} />}
       {activeTab === "sso" && <SSOPanel api={api} teams={teams} />}
       {activeTab === "config" && <ConfigPanel api={api} tab={parameters.get("tab") ?? undefined} onTabChange={(tab) => void navigate({ tab })} />}
-      {activeTab === "maintenance" && <OntologyConfigPanel api={api} />}
+      {activeTab === "maintenance" && <TopicMaintenanceConfigPanel api={api} />}
     </Suspense>
     <Dialog open={creatingTeam} onOpenChange={(open) => { if (open) setCreatingTeam(true); else void transition(() => setCreatingTeam(false)); }}>
       <DialogContent><DialogHeader><DialogTitle>Create team</DialogTitle><DialogDescription>Give the team a name and an optional description.</DialogDescription></DialogHeader><TeamCreateForm api={api} onCreated={(team) => { setCreatingTeam(false); setTeams((current) => [...current, team]); setTotalTeams((current) => current + 1); void openTeamWorkspace("overview", team.id); }} /></DialogContent>

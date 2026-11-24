@@ -43,8 +43,8 @@ type toolProgressConfig struct{}
 func (toolProgressConfig) RecallFeedbackRuntimeConfig(context.Context) (domain.RecallFeedbackRuntimeConfig, error) {
 	return domain.RecallFeedbackRuntimeConfig{Enabled: true, RetentionDays: 30}, nil
 }
-func (toolProgressConfig) OntologyMaintenanceRuntimeConfig(context.Context) (domain.OntologyMaintenanceConfig, error) {
-	return domain.OntologyMaintenanceConfig{Enabled: true}, nil
+func (toolProgressConfig) TopicMaintenanceRuntimeConfig(context.Context) (domain.TopicMaintenanceConfig, error) {
+	return domain.TopicMaintenanceConfig{Enabled: true}, nil
 }
 
 type toolProgressTransport struct {
@@ -166,7 +166,7 @@ func TestMCPToolProgressPostgres(t *testing.T) {
 	// The production composition accepts the full settings port; these fixed settings exercise enabled policy without changing durable configuration.
 	bundle.Recall = buildRecallApplication(recallApplicationDependencies{
 		Search:   recallpostgres.NewStore(app, rls, searchpostgres.NewStore(app, rls), recallpostgres.LoadRecallEvidenceConflictRecords),
-		Provider: embedding.NewRetryEmbeddingProvider(embedder, logger), OntologyConfig: toolProgressConfig{}, Logger: logger,
+		Provider: embedding.NewRetryEmbeddingProvider(embedder, logger), TopicMaintenanceConfig: toolProgressConfig{}, Logger: logger,
 	})
 	reg, err := registry.BuildActive(registry.Dependencies{
 		RememberBindings: registry.RememberBindings{Service: bundle.Remember}, SessionBindings: registry.SessionBindings{Service: bundle.Session},

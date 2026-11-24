@@ -14,11 +14,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	"github.com/markhuangai/dense-mem/internal/topics/contract"
 )
 
 //go:embed maintenance_snapshot.sql
 var MaintenanceSnapshotSQL string
+
+//go:embed legacy_maintenance_snapshot.sql
+var legacyMaintenanceSnapshotSQL string
 
 type Scope struct {
 	TeamID       string `json:"team_id"`
@@ -29,6 +32,7 @@ type Scope struct {
 }
 
 type Native struct {
+	legacyMaintenance   bool
 	DB                  *sql.DB
 	Scope               Scope
 	ControlURL          string
@@ -104,7 +108,7 @@ type NativeObservation struct {
 	Unreconciled       int                        `json:"unreconciled_attempts"`
 	ForeignWork        int                        `json:"foreign_work"`
 	ProviderAttempts   []NativeAttempt            `json:"provider_attempts"`
-	Ontology           ontology.MaintenanceStatus `json:"ontology"`
+	TopicMaintenance   contract.MaintenanceStatus `json:"ontology"`
 	Search             struct {
 		Status   string `json:"status"`
 		Expected int    `json:"expected_documents"`
@@ -130,8 +134,20 @@ func (n *Native) ResolveScope(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback()
-	err = tx.QueryRowContext(ctx, `SELECT a.legacy_owner_id::text,m.id::text,m.generation FROM ownership_aliases a JOIN memory_spaces m ON m.team_id=a.team_id AND m.kind='team_shared' AND m.lifecycle_state='active' WHERE a.team_id=$1::uuid AND a.credential_id=$2::uuid`, n.Scope.TeamID, n.Scope.CredentialID).Scan(&n.Scope.OwnerID, &n.Scope.SpaceID, &n.Scope.Generation)
-	return err
+	var currentLayout, legacyLayout bool
+	err = tx.QueryRowContext(ctx, `SELECT a.legacy_owner_id::text,m.id::text,m.generation,
+		to_regclass('public.topic_maintenance_batches') IS NOT NULL,
+		to_regclass('public.ontology_maintenance_batches') IS NOT NULL
+		FROM ownership_aliases a JOIN memory_spaces m ON m.team_id=a.team_id AND m.kind='team_shared' AND m.lifecycle_state='active'
+		WHERE a.team_id=$1::uuid AND a.credential_id=$2::uuid`, n.Scope.TeamID, n.Scope.CredentialID).Scan(&n.Scope.OwnerID, &n.Scope.SpaceID, &n.Scope.Generation, &currentLayout, &legacyLayout)
+	if err != nil {
+		return err
+	}
+	if currentLayout == legacyLayout {
+		return errors.New("dataset runtime maintenance layout is incompatible")
+	}
+	n.legacyMaintenance = legacyLayout
+	return nil
 }
 
 func (n *Native) systemTx(ctx context.Context) (*sql.Tx, error) {
@@ -139,7 +155,7 @@ func (n *Native) systemTx(ctx context.Context) (*sql.Tx, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err = tx.ExecContext(ctx, `SELECT set_config('app.tx_mode','system',true),set_config('app.storage_layout','feature-storage-v1',true)`); err != nil {
+	if _, err = tx.ExecContext(ctx, `SELECT set_config('app.tx_mode','system',true),set_config('app.storage_layout','feature-storage-v1',true),set_config('app.topic_layout','topic-storage-v1',true)`); err != nil {
 		tx.Rollback()
 		return nil, err
 	}
@@ -251,13 +267,17 @@ func (n *Native) Snapshot(ctx context.Context) (NativeObservation, error) {
 		return observation, err
 	}
 	var raw []byte
-	if err = tx.QueryRowContext(ctx, MaintenanceSnapshotSQL, n.Scope.TeamID, n.Scope.OwnerID, n.Scope.SpaceID, n.Scope.Generation, n.Scope.CredentialID).Scan(&raw); err != nil {
+	snapshotSQL := MaintenanceSnapshotSQL
+	if n.legacyMaintenance {
+		snapshotSQL = legacyMaintenanceSnapshotSQL
+	}
+	if err = tx.QueryRowContext(ctx, snapshotSQL, n.Scope.TeamID, n.Scope.OwnerID, n.Scope.SpaceID, n.Scope.Generation, n.Scope.CredentialID).Scan(&raw); err != nil {
 		return observation, err
 	}
 	if err = json.Unmarshal(raw, &observation); err != nil {
 		return observation, err
 	}
-	if err = n.Control(ctx, http.MethodGet, "/ontology/status", nil, &observation.Ontology); err != nil {
+	if err = n.maintenanceControl(ctx, http.MethodGet, "status", nil, &observation.TopicMaintenance); err != nil {
 		return observation, err
 	}
 	if err = n.Control(ctx, http.MethodGet, "/search/convergence", nil, &observation.Search); err != nil {
@@ -266,7 +286,7 @@ func (n *Native) Snapshot(ctx context.Context) (NativeObservation, error) {
 	return observation, nil
 }
 
-func NativeReady(observation NativeObservation, ontologyEnabled, paused bool, manifest Manifest, teamID string) error {
+func NativeReady(observation NativeObservation, topicMaintenanceEnabled, paused bool, manifest Manifest, teamID string) error {
 	if observation.ForeignSources != 0 || observation.ForeignWork != 0 {
 		return errors.New("dataset runtime contains foreign sources or work")
 	}
@@ -274,38 +294,38 @@ func NativeReady(observation NativeObservation, ontologyEnabled, paused bool, ma
 	if search.Contract == nil || search.Contract.Model != manifest.EmbeddingModel || search.Contract.Dimensions != manifest.EmbeddingDimensions || search.Status != "converged" || search.Drifted != 0 || search.Expected != search.Current {
 		return errors.New("search or embedding contract is not converged")
 	}
-	status := observation.Ontology
-	if status.Enabled != ontologyEnabled || status.Paused != paused {
-		return errors.New("unexpected native ontology state")
+	status := observation.TopicMaintenance
+	if status.Enabled != topicMaintenanceEnabled || status.Paused != paused {
+		return errors.New("unexpected native Topic maintenance state")
 	}
 	if err := nativeDrained(observation); err != nil {
 		return err
 	}
-	if !ontologyEnabled {
+	if !topicMaintenanceEnabled {
 		return nil
 	}
-	if err := fullOntologyCoverage(status); err != nil {
+	if err := fullTopicCoverage(status); err != nil {
 		return err
 	}
-	return nativeOntologyPolicy(status, manifest, teamID)
+	return nativeTopicMaintenancePolicy(status, manifest, teamID)
 }
 
-func fullOntologyCoverage(status ontology.MaintenanceStatus) error {
+func fullTopicCoverage(status contract.MaintenanceStatus) error {
 	if status.ConfigurationError != "" || !status.DiscoveryComplete || !status.CoverageComplete || status.Counts.Pending != 0 || status.Counts.Failed != 0 || status.Counts.Ambiguous != 0 || status.Counts.Eligible <= 0 || status.Counts.Eligible != status.Counts.Organized {
-		return errors.New("ontology coverage is incomplete")
+		return errors.New("topic maintenance coverage is incomplete")
 	}
 	return nil
 }
 
-func nativeOntologyPolicy(status ontology.MaintenanceStatus, manifest Manifest, teamID string) error {
+func nativeTopicMaintenancePolicy(status contract.MaintenanceStatus, manifest Manifest, teamID string) error {
 	if status.Window == nil || status.Window.Policy.Model != manifest.Model || status.Window.Policy.ContextWindowTokens != int64(manifest.ContextWindowTokens) || status.Window.Policy.MaxConcurrency != 4 || status.Window.Policy.TeamConcurrency(teamID) != 4 {
-		return errors.New("effective ontology capacity differs from campaign settings")
+		return errors.New("effective Topic maintenance capacity differs from evaluation settings")
 	}
 	return nil
 }
 
 func nativeDrained(observation NativeObservation) error {
-	if observation.ActiveBatches != 0 || observation.ActivePreparations != 0 || observation.Unreconciled != 0 || observation.Ontology.ActiveWork != 0 {
+	if observation.ActiveBatches != 0 || observation.ActivePreparations != 0 || observation.Unreconciled != 0 || observation.TopicMaintenance.ActiveWork != 0 {
 		return errors.New("native model work has not drained")
 	}
 	measurement, err := MeasureAttempts(observation.ProviderAttempts)
@@ -319,7 +339,15 @@ func nativeDrained(observation NativeObservation) error {
 }
 
 func (n *Native) Pause(ctx context.Context) error {
-	return n.Control(ctx, http.MethodPost, "/ontology/pause", map[string]string{"operation_key": uuid.NewString()}, nil)
+	return n.maintenanceControl(ctx, http.MethodPost, "pause", map[string]string{"operation_key": uuid.NewString()}, nil)
+}
+
+func (n *Native) maintenanceControl(ctx context.Context, method, action string, input, out any) error {
+	prefix := "/topic-maintenance/"
+	if n.legacyMaintenance {
+		prefix = "/ontology/"
+	}
+	return n.Control(ctx, method, prefix+action, input, out)
 }
 
 func (n *Native) VerifyMappings(ctx context.Context, corpus []CorpusItem, mapping KnowledgeMapping) (map[string]CanonicalEvidence, error) {

@@ -40,7 +40,7 @@ export async function checkControlLayout(page: Page, testInfo: TestInfo, width: 
   await expect(page.getByRole("tab", { name: "SSO runtime" })).toHaveAttribute("aria-selected", "true");
   await expectPageContained(page);
   await page.screenshot({ path: testInfo.outputPath("control-settings.png"), fullPage: true });
-  await navigate(page, "Ontology maintenance");
+  await navigate(page, "Topic maintenance");
   await expect(page.getByRole("group", { name: "Schedule", exact: true })).toBeVisible();
   await expect(page.getByRole("group", { name: "Processing", exact: true })).toBeVisible();
   await expect(page.getByRole("group", { name: "Model capacity", exact: true })).toBeVisible();
@@ -53,17 +53,17 @@ export async function checkControlLayout(page: Page, testInfo: TestInfo, width: 
   const modelWidth = (await page.getByLabel("Maintenance model", { exact: true }).boundingBox())!.width;
   const cadenceWidth = (await page.getByLabel("Cadence (hours)", { exact: true }).boundingBox())!.width;
   expect(modelWidth).toBeGreaterThan(cadenceWidth);
-  const coverage = page.getByRole("region", { name: "Ontology coverage", exact: true });
+  const coverage = page.getByRole("region", { name: "Topic assignment coverage", exact: true });
   await expect(coverage.getByRole("progressbar")).toHaveAttribute("aria-valuetext", "842 of 1,024");
   await expect(coverage).toContainText("Discovery in progress");
   await expect(coverage).toContainText("Eligible counts cover discovered records");
   await expect(page.getByRole("progressbar", { name: "Input tokens", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("region", { name: "Current ontology window", exact: true })).toContainText("144,000");
+  await expect(page.getByRole("region", { name: "Current topic window", exact: true })).toContainText("144,000");
   await page.getByLabel("Cadence (hours)", { exact: true }).fill("24");
   await page.getByRole("button", { name: "Save config", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("Changes saved");
   await expect(page.getByLabel("Cadence (hours)", { exact: true })).toHaveValue("24");
-  const historyTable = page.getByRole("region", { name: "Ontology run history", exact: true }).locator('[data-slot="table-container"]');
+  const historyTable = page.getByRole("region", { name: "Topic maintenance runs", exact: true }).locator('[data-slot="table-container"]');
   await historyTable.focus();
   await expect(historyTable).toBeFocused();
   if (width === 390) {
@@ -72,7 +72,7 @@ export async function checkControlLayout(page: Page, testInfo: TestInfo, width: 
   }
   await expectPageContained(page);
   expect((await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze()).violations).toEqual([]);
-  await page.screenshot({ path: testInfo.outputPath("control-ontology.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("control-topic.png"), fullPage: true });
   await navigate(page, "Conflicts");
   await page.getByRole("tab", { name: "Evidence", exact: true }).click();
   await expect(page.locator(".evidence-conflict-card")).toHaveCount(3);

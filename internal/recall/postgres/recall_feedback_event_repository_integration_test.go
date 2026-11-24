@@ -71,11 +71,12 @@ func TestRecallFeedbackEventRepositoryRecordsSnapshotBeforeFeedback(t *testing.T
 		ToolArgs:                  map[string]any{"input": map[string]any{"query": "postgres memory"}},
 		ContractVersion:           domain.ContractVersion,
 		RankingProfileVersion:     "ranking-v1",
+		RankingMethod:             "hybrid_rrf_one_hop",
 		EmbeddingContractVersion:  "embedding-v1",
 		SearchIndexProfileVersion: "search-v1",
 		SearchState:               string(domain.SearchProjectionCurrent),
 		Degradation:               map[string]any{"vector": "unavailable"},
-		SnapshotMetadata:          map[string]any{"result_schema": "v3.evidence_topic_refs.v1"},
+		SnapshotMetadata:          map[string]any{"result_schema": "v3.evidence_topic_refs.v1", "decision_stages": []string{"optional_failure"}},
 		ResultRefs: []domain.RecallFeedbackResultRef{{
 			Type:           domain.RecallFeedbackResultTypeEvidence,
 			ID:             "00000000-0000-0000-0000-00000000e001",
@@ -114,7 +115,20 @@ func TestRecallFeedbackEventRepositoryRecordsSnapshotBeforeFeedback(t *testing.T
 	require.Equal(t, domain.ContractVersion, got.ContractVersion)
 	require.Equal(t, string(domain.SearchProjectionCurrent), got.SearchState)
 	require.Equal(t, map[string]any{"vector": "unavailable"}, got.Degradation)
-	require.Equal(t, map[string]any{"result_schema": "v3.evidence_topic_refs.v1"}, got.SnapshotMetadata)
+	require.Equal(t, map[string]any{"result_schema": "v3.evidence_topic_refs.v1", "ranking_method": "hybrid_rrf_one_hop", "decision_stages": []any{"optional_failure"}}, got.SnapshotMetadata)
+	require.NoError(t, rls.WithSystemTx(ctx, appDB, func(tx *gorm.DB) error {
+		var method, reranker string
+		var embeddedStages bool
+		if err := tx.Raw(`SELECT outcome.method,rerank.method,jsonb_exists(feedback.snapshot_metadata,'decision_stages')
+			FROM recall_feedback_events feedback JOIN recall_outcomes outcome USING(recall_id)
+			JOIN recall_rerank_outcomes rerank USING(recall_id) WHERE recall_id=?`, recallID).Row().Scan(&method, &reranker, &embeddedStages); err != nil {
+			return err
+		}
+		require.Equal(t, "hybrid_rrf_one_hop", method)
+		require.Equal(t, "typed_decisions", reranker)
+		require.False(t, embeddedStages)
+		return nil
+	}))
 	require.Len(t, got.ResultRefs, 1)
 	require.Equal(t, domain.RecallFeedbackResultTypeEvidence, got.ResultRefs[0].Type)
 	require.Equal(t, "low", got.Quality)

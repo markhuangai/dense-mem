@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { captureRememberFailure } from "./synchronous_write/cases/diagnostics.mjs";
 import { rememberWithEmbeddingRetry } from "./synchronous_write/remember_retry.mjs";
@@ -15,15 +15,15 @@ const failureDirectory = process.env.DENSE_MEM_E2E_REMEMBER_FAILURE_DIR || `/tmp
 const credentialTeams = new Map([[apiKey, teamID]]);
 const diagnosticSince = new Date().toISOString();
 const maintenanceObservationAttempts = 300;
-const original = (await control("/config/ontology-maintenance")).data;
+const original = (await control("/config/topic-maintenance")).data;
 let paused = false;
 let failure;
 try {
-  const initial = (await control("/ontology/status")).data;
-  await control("/ontology/pause", { operation_key: randomUUID() });
+  const initial = (await control("/topic-maintenance/status")).data;
+  await control("/topic-maintenance/pause", { operation_key: randomUUID() });
   paused = true;
-  await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }, { key: "ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS", value: "300000" }] }, "PATCH");
-  assert.equal((await control("/ontology/status")).data.paused, true);
+  await control("/config/topic-maintenance", { items: [{ key: "TOPIC_MAINTENANCE_ENABLED", value: "true" }, { key: "TOPIC_MAINTENANCE_CONTEXT_WINDOW_TOKENS", value: "300000" }] }, "PATCH");
+  assert.equal((await control("/topic-maintenance/status")).data.paused, true);
   const shared = (await control(`/teams/${teamID}/credentials`, { name: "Ontology shared acceptance", scopes: ["read", "write"], rate_limit: 300 })).data;
   assert.equal(shared.credential.memory_access.team_shared.write, true);
   const second = (await control(`/teams/${teamID}/credentials`, { name: "Ontology owner B", scopes: ["read", "write"], rate_limit: 300 })).data;
@@ -45,24 +45,30 @@ try {
   const coordinationAlternativeID = await remember("Atlas uses KeyDB for coordination.", shared.api_key);
   await remember("Atlas uses SQLite for backup storage.", shared.api_key);
   await remember("Atlas uses SQLite for backup storage.", second.api_key);
-  await expectStatus("/ontology/runs", { operation_key: randomUUID(), max_batches: 101 }, 422);
-  await expectStatus("/ontology/runs", { operation_key: randomUUID(), team_id: "untrusted" }, 422);
-  await expectStatus("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }, { key: "ONTOLOGY_MAINTENANCE_CONTEXT_WINDOW_TOKENS", value: "300000" }, { key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "false" }] }, 422, "PATCH");
-  await expectStatus("/ontology/runs", { operation_key: randomUUID() }, 409);
-  const denied = await fetch(`${controlURL}/control/api/ontology/status`, { headers: { Authorization: `Bearer ${apiKey}` } });
+  const memberships = JSON.parse(postgresQuery(`SELECT to_jsonb(topic_ids) FROM topic_assignment_outcomes WHERE team_id=${sqlLiteral(teamID)}::uuid AND evidence_id=${sqlLiteral(sourceIDs[2])}::uuid ORDER BY created_at DESC LIMIT 1`));
+  assert.equal(memberships.length, 2, "enabled, paused Remember must publish both PostgreSQL and backup memberships");
+  for (const id of memberships) {
+    const result = await mcp("recall_memory", { topic_ids: [id], limit: 50 }, reader.api_key);
+    assert(result.results.some((hit) => hit.evidence_id === sourceIDs[2]), "direct Topic lookup must work before background admission");
+  }
+  await expectStatus("/topic-maintenance/runs", { operation_key: randomUUID(), max_batches: 101 }, 422);
+  await expectStatus("/topic-maintenance/runs", { operation_key: randomUUID(), team_id: "untrusted" }, 422);
+  await expectStatus("/config/topic-maintenance", { items: [{ key: "TOPIC_MAINTENANCE_ENABLED", value: "true" }, { key: "TOPIC_MAINTENANCE_CONTEXT_WINDOW_TOKENS", value: "300000" }, { key: "TOPIC_MAINTENANCE_ENABLED", value: "false" }] }, 422, "PATCH");
+  await expectStatus("/topic-maintenance/runs", { operation_key: randomUUID() }, 409);
+  const denied = await fetch(`${controlURL}/control/api/topic-maintenance/status`, { headers: { Authorization: `Bearer ${apiKey}` } });
   assert.equal(denied.status, 401, "MCP credentials must not authorize policy controls");
-  await control("/ontology/resume", { operation_key: randomUUID() });
+  await control("/topic-maintenance/resume", { operation_key: randomUUID() });
   paused = false;
   const key = randomUUID();
-  const command = (await control("/ontology/runs", { operation_key: key, max_batches: 1 })).data;
-  const replay = (await control("/ontology/runs", { operation_key: key, max_batches: 1 })).data;
+  const command = (await control("/topic-maintenance/runs", { operation_key: key, max_batches: 1 })).data;
+  const replay = (await control("/topic-maintenance/runs", { operation_key: key, max_batches: 1 })).data;
   assert.equal(command.id, replay.id);
   assert.equal(command.window_id, replay.window_id);
-  await expectStatus("/ontology/runs", { operation_key: key, max_batches: 2 }, 409);
+  await expectStatus("/topic-maintenance/runs", { operation_key: key, max_batches: 2 }, 409);
   let status;
   for (let index = 0; index < maintenanceObservationAttempts; index++) {
-    status = (await control("/ontology/status")).data;
-    if (status.discovery_complete && status.counts.pending === 0 && status.counts.organized > initial.counts.organized) break;
+    status = (await control("/topic-maintenance/status")).data;
+    if (status.coverage_complete && status.counts.organized > initial.counts.organized) break;
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   assert.equal(status.discovery_complete, true);
@@ -71,21 +77,37 @@ try {
   assert(status.counts.organized > initial.counts.organized);
   assert(status.usage.attempts > 0, "provider dispatches must have durable attempt identities");
   assert.equal(status.usage.unreconciled_attempts, 0);
-  const currentReceipts = JSON.parse(postgresQuery(`SELECT COALESCE(jsonb_agg(jsonb_build_object('source',source.source_id,'status',source.status,'assessment',source.assessment_id,'failure',assessment.body->'result'->>'failure_code')),'[]')
-    FROM ontology_maintenance_sources AS source JOIN LATERAL (SELECT body FROM ontology_assessments WHERE team_id=source.team_id AND shared_space_id=source.shared_space_id AND space_generation=source.space_generation AND assessment_id=source.assessment_id LIMIT 1) AS assessment ON true
-    WHERE source.team_id=${sqlLiteral(teamID)}::uuid AND source.source_kind='evidence' AND source.source_id IN (${sourceIDs.map(sqlLiteral).join(",")})`));
-  assert.equal(currentReceipts.length, sourceIDs.length, "completed sources must reference durable assessments in their own scope");
-  for (const receipt of currentReceipts) { assert.equal(receipt.status, "organized"); assert(receipt.assessment); assert(!receipt.failure); }
-  assertCompletionTimestamps();
+  assert.equal(status.active_work, 0);
+  assert.equal(status.coverage_complete, true, "Topic assignment and Community placement must both converge");
+  const currentReceipts = JSON.parse(postgresQuery(`SELECT COALESCE(jsonb_agg(row_to_json(retained)),'[]') FROM (
+    SELECT DISTINCT ON(evidence_id) evidence_id, status, method, input_hash FROM topic_assignment_outcomes
+    WHERE team_id=${sqlLiteral(teamID)}::uuid AND evidence_id=ANY(ARRAY[${sourceIDs.map(sqlLiteral).join(",")}]::uuid[])
+    ORDER BY evidence_id,created_at DESC,outcome_id DESC) AS retained`));
+  assert.equal(currentReceipts.length, sourceIDs.length);
+  assert(currentReceipts.every((row) => row.status === "assigned" && row.input_hash && row.method));
+  await pollFinalization(() => Number(postgresQuery(`SELECT count(DISTINCT placed.topic_id) FROM community_placement_outcomes AS placed JOIN topic_record_heads AS head
+    ON head.team_id=placed.team_id AND head.shared_space_id=placed.shared_space_id AND head.space_generation=placed.space_generation
+      AND head.record_id=placed.topic_id AND head.version=placed.topic_version
+    WHERE placed.team_id=${sqlLiteral(teamID)}::uuid AND placed.status IN ('placed','standalone')`)) >= 3, "terminal community placement for all three Topics");
+  const placements = JSON.parse(postgresQuery(`SELECT jsonb_agg(jsonb_build_array(child.body->'definition'->>'label',parent.body->'definition'->>'label'))
+    FROM community_placement_outcomes AS placement
+    JOIN topic_revision_records AS child ON child.team_id=placement.team_id AND child.shared_space_id=placement.shared_space_id AND child.space_generation=placement.space_generation
+      AND child.record_id=placement.topic_id AND child.version=placement.topic_version
+    JOIN topic_record_heads AS head ON head.team_id=placement.team_id AND head.shared_space_id=placement.shared_space_id AND head.space_generation=placement.space_generation
+      AND head.record_id=placement.parent_topic_id AND NOT head.retired
+    JOIN topic_revision_records AS parent ON parent.team_id=head.team_id AND parent.shared_space_id=head.shared_space_id AND parent.space_generation=head.space_generation
+      AND parent.record_id=head.record_id AND parent.version=head.version
+    WHERE placement.team_id=${sqlLiteral(teamID)}::uuid AND placement.status='placed'`) || "[]");
+  assert(placements.some(([child,parent]) => child === "storage-backups" && parent === "memory-storage"), "the backup topic must join the broader storage community");
 
-  const runs = (await control("/ontology/runs?limit=1")).data;
+  const runs = (await control("/topic-maintenance/runs?limit=1")).data;
   assert.equal(runs.runs.length, 1);
   assert(runs.next_cursor, "run inspection must paginate");
-  const all = (await control("/ontology/runs?limit=100")).data;
+  const all = (await control("/topic-maintenance/runs?limit=100")).data;
   assert(all.runs.find((run) => run.id === command.id).completed_batches <= 1);
-  await control("/ontology/pause", { operation_key: randomUUID() });
+  await control("/topic-maintenance/pause", { operation_key: randomUUID() });
   paused = true;
-  const accountingBefore = (await control("/ontology/status")).data.window;
+  const accountingBefore = (await control("/topic-maintenance/status")).data.window;
   const args = { query: "Atlas PostgreSQL", limit: 20 };
   const grouped = await mcp("recall_memory", args, reader.api_key);
   const relevant = grouped.results.filter((item) => sourceIDs.includes(item.evidence_id));
@@ -113,7 +135,7 @@ try {
   assert(discovered.results.some((item) => sourceIDs.includes(item.evidence_id)), "published alias must discover its source evidence");
   await assertOntologyQueryScoring(reader.api_key, coordinationID, sourceIDs);
   const topicRecall = await mcp("recall_memory", { query: "Atlas", limit: 20, topic_limit: 10 }, reader.api_key);
-  assert.equal(topicRecall.related_topics.length, 2, "shared Evidence must expose both direct topics");
+  assert.equal(topicRecall.related_topics.length, 3, "shared Evidence must expose all three direct topics");
   const topicIDs = topicRecall.related_topics.map((topic) => topic.topic_id);
   for (const [index, topic] of topicRecall.related_topics.entries()) {
     assert.equal(topic.rank, index + 1);
@@ -172,7 +194,7 @@ try {
     assert(temporal.results.some((item) => sourceIDs.includes(item.evidence_id)), "temporal Evidence must use current direct topic membership");
     assert(temporal.related_topics.length > 0);
   }
-  await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "false" }] }, "PATCH");
+  await control("/config/topic-maintenance", { items: [{ key: "TOPIC_MAINTENANCE_ENABLED", value: "false" }] }, "PATCH");
   try {
     const unavailable = await rpc("recall_memory", { topic_ids: topicIDs }, reader.api_key);
     assert(unavailable.result?.isError && unavailable.result.structuredContent.reason_code === "topic_unavailable");
@@ -180,88 +202,30 @@ try {
     assert(ordinary.results.length > 0 && ordinary.related_topics.length === 0, "disabled organization must preserve ordinary retrieval");
     assert(!ordinary.degradations.some((item) => item.frontier === "topics"), "intentional disablement is not a topic failure");
   } finally {
-    await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }] }, "PATCH");
+    await control("/config/topic-maintenance", { items: [{ key: "TOPIC_MAINTENANCE_ENABLED", value: "true" }] }, "PATCH");
   }
-  const accountingAfter = (await control("/ontology/status")).data.window;
+  const accountingAfter = (await control("/topic-maintenance/status")).data.window;
   assert.equal(accountingAfter.usage.reported_input_tokens, accountingBefore.usage.reported_input_tokens, "Recall added organization provider input tokens");
   assert.equal(accountingAfter.usage.reported_output_tokens, accountingBefore.usage.reported_output_tokens, "Recall added organization provider output tokens");
-  await control("/ontology/pause", { operation_key: randomUUID() });
+  await control("/topic-maintenance/pause", { operation_key: randomUUID() });
   paused = true;
   await fixtureMode("ambiguous");
-  await rememberFixture(shared.api_key, "Atlas uses PostgreSQL for ontology status acceptance.");
-  await control("/ontology/resume", { operation_key: randomUUID() });
-  paused = false;
-  const ambiguousCommand = (await control("/ontology/runs", { operation_key: randomUUID(), max_batches: 1 })).data;
-  const ambiguousRun = await terminalRun(ambiguousCommand.id);
-  assert.equal(ambiguousRun.status, "incomplete");
-  assert.equal(ambiguousRun.completed_batches, 1);
-  assert.equal(ambiguousRun.failure_code || "", "");
-  assert.equal(ambiguousRun.retryable, false);
-  await fixtureMode("normal");
-
-  await control("/ontology/pause", { operation_key: randomUUID() });
-  paused = true;
+  const unclearID = await remember("Subject unclear in this note.", shared.api_key);
+  assert.equal(postgresQuery(`SELECT status FROM topic_assignment_outcomes WHERE evidence_id=${sqlLiteral(unclearID)}::uuid ORDER BY created_at DESC LIMIT 1`), "uncategorized");
   await fixtureMode("fail-three-then-success");
-  await rememberFixture(shared.api_key, "Atlas uses PostgreSQL for ontology retry acceptance.");
-  await control("/ontology/resume", { operation_key: randomUUID() });
-  paused = false;
-  const failedCommand = (await control("/ontology/runs", { operation_key: randomUUID(), max_batches: 1 })).data;
-  const failedRun = await terminalRun(failedCommand.id);
-  assert.equal(failedRun.status, "incomplete");
-  assert(failedRun.failure_code, "required failure remains visible");
-  assert.equal(failedRun.retryable, true);
-  const failedAssessments = JSON.parse(postgresQuery(`SELECT COALESCE(jsonb_agg(assessment.body->'result'),'[]')::text
-    FROM ontology_maintenance_batches AS batch JOIN ontology_assessments AS assessment
-      ON assessment.team_id=batch.team_id AND assessment.shared_space_id=batch.shared_space_id
-      AND assessment.space_generation=batch.space_generation AND assessment.operation_key='maintenance:'||batch.batch_id::text
-    WHERE batch.team_id=${sqlLiteral(teamID)}::uuid AND batch.run_id=${sqlLiteral(failedRun.id)}::uuid`));
-  assert.equal(failedAssessments.length, 1);
-  const rejected = failedAssessments[0];
-  assert.equal(rejected.failure_code, "provider_response_invalid");
-  assert(!rejected.publication, "exhausted validation must publish no subset");
-  assert(rejected.outcomes.every((outcome) => outcome.status === "failed" && !outcome.record_ids?.length));
-  assert.equal(rejected.attempts.length, 3);
-  for (const attempt of rejected.attempts) {
-    assert.equal(attempt.failure_code, "response_invalid");
-    assert.deepEqual(Object.keys(attempt.validation).sort(), ["actual_count", "code", "expected_count", "field_family", "stage"]);
-    assert.equal(attempt.validation.stage, "validate");
-    assert.equal(attempt.validation.code, "item_count_mismatch");
-    assert.equal(attempt.validation.field_family, "items");
-    assert(Number.isInteger(attempt.validation.expected_count) && attempt.validation.expected_count > 0);
-    assert.equal(attempt.validation.actual_count, 0);
-  }
+  const baseline = canonicalFingerprints();
+  const failed = await rpcAttempt("remember", { target_space:"team_shared", idempotency_key:randomUUID(), evidence:[{content:"Atlas PostgreSQL foreground assignment failure.",source_type:"document",force_insert:true}] }, shared.api_key);
+  const terminal = JSON.parse(failed.result.content[0].text);
+  assert.equal(terminal.processing_state, "failed");
+  assert(terminal.errors.some((error) => error.code === "provider_response_invalid"));
+  assert.equal(canonicalFingerprints(), baseline, "a required foreground assignment failure must roll back canonical intake");
   await fixtureMode("normal");
-  const history = (await control("/ontology/runs?limit=200")).data;
-  for (const run of history.runs) {
-    if (run.status === "completed") assert.equal(run.failure_code || "", "", "completed runs must have no current failure reason");
-  }
   await finalizationRecovery(shared.api_key);
-  await finalizationRecovery(shared.api_key, "provider_response_invalid");
-  const diagnosticAttempts = JSON.parse(postgresQuery(`SELECT COALESCE(jsonb_agg(attempt),'[]')::text FROM ontology_assessments AS assessment CROSS JOIN LATERAL jsonb_array_elements(assessment.body->'result'->'attempts') AS attempt WHERE assessment.team_id=${sqlLiteral(teamID)}::uuid`));
-  assert(diagnosticAttempts.length > 0, "ontology must retain actual provider attempt diagnostics");
-  assert(diagnosticAttempts.some((attempt) => attempt.failure_code === "response_invalid"), "the adverse path must retain validation failure diagnostics");
-  for (const attempt of diagnosticAttempts) {
-    const diagnostics = attempt.diagnostics;
-    assert(diagnostics, "every actual transport attempt must retain diagnostics");
-    const beforeAdmission = ["queue", "prepare"].includes(diagnostics.failure_phase);
-    const beforeHTTP = beforeAdmission || diagnostics.failure_phase === "admission";
-    for (const phase of ["queue_ms", "admission_ms", "http_ms", "reconciliation_ms"]) {
-      if ((phase === "admission_ms" && beforeAdmission) || (phase === "http_ms" && beforeHTTP)) {
-        assert(!Object.hasOwn(diagnostics, phase), `unreached ${phase} must remain absent`);
-      } else {
-        assert(Number.isInteger(diagnostics[phase]) && diagnostics[phase] >= 0, `missing measured ${phase}`);
-      }
-    }
-    if (attempt.failure_code === "response_invalid") {
-      assert.equal(attempt.diagnostics.failure_phase, "validation");
-      assert(attempt.validation, "rejected responses must retain validation details");
-    } else {
-      assert(!Object.hasOwn(attempt, "validation"), "successful and transport-failed attempts must omit validation rejection details");
-    }
-  }
+  const staleAssignment = await staleAssignmentRevision(shared.api_key, topicManager.api_key);
   const topicWindow = captureSemanticAssessmentWindow({ project: required("DENSE_MEM_E2E_COMPOSE_PROJECT"), composeFile: required("DENSE_MEM_E2E_COMPOSE_FILE"), since: diagnosticSince, directory: failureDirectory+"/topic-selection" });
   const topicRecords=topicWindow.split(/\r?\n/).filter(Boolean).map((line)=>JSON.parse(line)).filter((row)=>row.team_id===teamID);
   for (const credential of [controlToken, ...credentialTeams.keys()]) assert(!topicWindow.includes(credential),"topic diagnostic capture exposed credentials");
+  verifyTopicProcessLogs(topicRecords, staleAssignment);
   const topicChunks = new Map();
   for (const row of topicRecords.filter((row) => ["recall_topic_filter_payload", "recall_topic_selection_payload"].includes(row.msg))) {
     assert(row.diagnostic_capture_id, "topic payload must identify its summary");
@@ -289,26 +253,73 @@ try {
     const rejectedLog = topicRecords.find((row) => row.msg === "recall_topic_degraded" && row.requested_ids?.includes(id) && topicPayloads.get(row.diagnostic_capture_id)?.Rejected?.[id] === "unavailable");
     assert(rejectedLog && rejectedLog.level === "WARN" && rejectedLog.reason, "missing, foreign, and retired topic reasons must be diagnosable from stdout");
   }
-  console.log(JSON.stringify({ status: "ok", scenario: "ontology_organization", window_id: status.window.id, counts: status.counts, durable_command_replay: true, operator_isolation: true, grouped_recall: true, original_sources_retained: true, private_and_foreign_isolation: true, stale_group_fallback: true, recall_organization_provider_tokens: 0, bounded_ambiguity_run: ambiguousRun.id, retryable_failure_run: failedRun.id }));
+  console.log(JSON.stringify({ status: "ok", scenario: "ontology_organization", window_id: status.window.id, counts: status.counts, durable_command_replay: true, operator_isolation: true, grouped_recall: true, original_sources_retained: true, private_and_foreign_isolation: true, foreground_multi_membership: true, community_parent_verified: true, recall_organization_provider_tokens: 0, foreground_abstention: true, atomic_retry: true }));
 } catch (error) {
   failure = error;
   try {
     const window = captureSemanticAssessmentWindow({ project: required("DENSE_MEM_E2E_COMPOSE_PROJECT"), composeFile: required("DENSE_MEM_E2E_COMPOSE_FILE"), since: diagnosticSince,
       directory: `${failureDirectory}/ontology-organization` });
     const diagnosticTeams = new Set(credentialTeams.values());
-    for (const record of assessmentRecords(window).filter((record) => diagnosticTeams.has(record.team_id))) console.log(`ontology_semantic_diagnostic_record ${JSON.stringify(record)}`);
+    for (const record of assessmentRecords(window).filter((record) => diagnosticTeams.has(record.team_id))) console.log(`topic_semantic_diagnostic_record ${JSON.stringify(record)}`);
   } catch (captureError) { failure = new AggregateError([error, captureError], "ontology organization failure capture is incomplete"); }
 } finally {
   const failures = failure ? [failure] : [];
   for (const restore of [
     () => fixtureMode("normal"),
-    async () => { if (paused) await control("/ontology/resume", { operation_key: randomUUID() }); },
-    () => control("/config/ontology-maintenance", { items: original.items.map(({ key, value }) => ({ key, value })) }, "PATCH"),
+    async () => { if (paused) await control("/topic-maintenance/resume", { operation_key: randomUUID() }); },
+    () => control("/config/topic-maintenance", { items: original.items.map(({ key, value }) => ({ key, value })) }, "PATCH"),
   ]) {
     try { await restore(); } catch (error) { failures.push(error); }
   }
   if (failures.length === 1) throw failures[0];
   if (failures.length > 1) throw new AggregateError(failures, "ontology UAT and restoration failed", { cause: failure });
+}
+
+function verifyTopicProcessLogs(records, stale) {
+  const prepared = records.find((row) => row.msg === "topic_assignment.prepared" && row.matched_topics > 0 && row.proposed_topics > 0);
+  assert(prepared?.assessment_id && prepared.operation_id && prepared.correlation_id, "mixed Topic assignment needs an assessment and Remember correlation");
+  const shortlist = records.find((row) => row.msg === "topic_assignment.candidates" && row.assessment_id === prepared.assessment_id);
+  assert(shortlist?.candidates.length && shortlist.operation_id === prepared.operation_id && shortlist.correlation_id === prepared.correlation_id);
+  const successful = records.find((row) => row.msg === "structured_ai.completed" && row.assessment_id === prepared.assessment_id && row.capability === "topic_assignment");
+  assert(successful && successful.outcome === "validated");
+  const request = topicProviderExchange(records, successful, "request");
+  const response = topicProviderExchange(records, successful, "response");
+  assert(request.messages.some((message) => message.content.includes("encrypts its backups")));
+  const assignment = JSON.parse(response.choices[0].message.content);
+  assert(assignment.matches.length && assignment.proposals.length);
+
+  const exhausted = records.find((row) => row.msg === "structured_ai.validation.exhausted" && row.capability === "topic_assignment");
+  assert(exhausted?.assessment_id && exhausted.validation_stage && exhausted.issues?.length);
+  const failed = records.find((row) => row.msg === "structured_ai.failed" && row.assessment_id === exhausted.assessment_id);
+  assert.equal(failed?.attempt_count, 3);
+  assert(failed.attempts.every((attempt) => attempt.exchange_id && attempt.transport?.queue_ms >= 0 && attempt.transport?.http_ms >= 0));
+  topicProviderExchange(records, exhausted, "response");
+
+  const placement = records.find((row) => row.msg === "community_placement.outcome" && row.status === "placed");
+  assert(placement?.job_id && placement.run_id && placement.topic_version > 0 && placement.parent_topic_id);
+  const selected = records.find((row) => row.msg === "community_placement.candidates" && row.job_id === placement.job_id);
+  assert(selected?.candidates.some((ref) => ref.startsWith(placement.parent_topic_id + "@")));
+  const completed = records.find((row) => row.msg === "structured_ai.completed" && row.batch_id === placement.job_id);
+  assert(completed && completed.run_id === placement.run_id);
+  const placed = topicProviderExchange(records, completed, "response");
+  assert.equal(JSON.parse(placed.choices[0].message.content).parent_id, placement.parent_topic_id);
+
+  const staleLogs = records.filter((row) => row.correlation_id === stale.correlationID);
+  const oldShortlist = staleLogs.find((row) => row.msg === "topic_assignment.candidates" && row.candidates?.includes(stale.topicRef));
+  const staleAssessment = staleLogs.find((row) => row.msg === "structured_ai.completed" && row.assessment_id === oldShortlist?.assessment_id);
+  const trace = staleLogs.find((row) => row.msg === "structured_ai.attempt.completed" && row.exchange_id === staleAssessment?.exchange_id);
+  const rejected = staleLogs.find((row) => row.msg === "remember_invocation_completed");
+  assert(rejected?.level === "ERROR" && rejected.phase === "commit" && rejected.error_code === "stale_input");
+  assert(oldShortlist?.operation_id === rejected.invocation_id && staleAssessment?.outcome === "validated" && trace?.level === "TRACE");
+  const staleReply = topicProviderExchange(staleLogs, staleAssessment, "response");
+  assert(JSON.parse(staleReply.choices[0].message.content).matches.some((match) => match.id === stale.topicID));
+}
+
+function topicProviderExchange(records, stage, direction) {
+  const chunks = records.filter((row) => row.msg === "ai_exchange_payload" && row.exchange_id === stage.exchange_id
+    && row.assessment_id === stage.assessment_id && row.direction === direction && row.payload_chunk);
+  assert(chunks.every((row) => row.transport_capture_state === "captured"));
+  return reconstructDiagnosticBody(chunks.sort((left, right) => left.payload_chunk.index - right.payload_chunk.index));
 }
 
 function required(name) { assert(process.env[name], `${name} is required`); return process.env[name]; }
@@ -323,7 +334,7 @@ async function control(path, body, method) {
 async function expectStatus(path, body, status, method) { assert.equal((await request(path, body, method)).status, status); }
 
 async function organization(path, key, body) {
-  const response = await fetch(`${userURL}/ui/api/ontology${path}`, { method: body ? "POST" : "GET", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  const response = await fetch(`${userURL}/ui/api/topics${path}`, { method: body ? "POST" : "GET", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
   assert(response.ok, `organization ${path} returned ${response.status}: ${(await response.clone().text()).slice(0, 500)}`);
   return (await response.json()).data;
 }
@@ -382,10 +393,10 @@ async function assertOntologyQueryScoring(readerKey, ordinaryID, ontologyIDs) {
   const request = { query: "database platform [fixture-ranking:ontology]", limit: 1 };
   try {
     rankFirst(ordinaryID);
-    await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "false" }] }, "PATCH");
+    await control("/config/topic-maintenance", { items: [{ key: "TOPIC_MAINTENANCE_ENABLED", value: "false" }] }, "PATCH");
     const ordinary = await mcp("recall_memory", request, readerKey);
     assert.equal(ordinary.results[0]?.evidence_id, ordinaryID);
-    await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }] }, "PATCH");
+    await control("/config/topic-maintenance", { items: [{ key: "TOPIC_MAINTENANCE_ENABLED", value: "true" }] }, "PATCH");
     const unrelatedMembership = await mcp("recall_memory", request, readerKey);
     assert.equal(unrelatedMembership.results[0]?.evidence_id, ordinaryID, "ontology membership must not promote a less relevant vector candidate");
     rankFirst(ontologyIDs[0]);
@@ -394,13 +405,13 @@ async function assertOntologyQueryScoring(readerKey, ordinaryID, ontologyIDs) {
     console.log(JSON.stringify({ scenario: "ontology_query_scoring", membership_adds_no_vote: true, relevant_discovery_ranked_first: true }));
   } finally {
     postgresQuery(`UPDATE search_documents AS document SET embedding=original.embedding::vector FROM (VALUES ${rows.map((row) => `(${sqlLiteral(row.id)}::uuid,${sqlLiteral(row.embedding)})`).join(",")}) AS original(id,embedding) WHERE document.search_document_id=original.id`);
-    await control("/config/ontology-maintenance", { items: [{ key: "ONTOLOGY_MAINTENANCE_ENABLED", value: "true" }] }, "PATCH");
+    await control("/config/topic-maintenance", { items: [{ key: "TOPIC_MAINTENANCE_ENABLED", value: "true" }] }, "PATCH");
   }
 }
 
 function postgresQuery(sql) {
   const scopedSQL = ["BEGIN", "SET LOCAL app.tx_mode='system'", "SET LOCAL app.current_team_id=''", "SET LOCAL app.current_profile_id=''", "SET LOCAL app.allowed_space_ids=''", sql, "COMMIT"].join(";\n");
-  const result = spawnSync("docker", ["compose", "-p", required("DENSE_MEM_E2E_COMPOSE_PROJECT"), "-f", required("DENSE_MEM_E2E_COMPOSE_FILE"), "exec", "-T", "-e", "PGOPTIONS=-c app.storage_layout=feature-storage-v1", "postgres", "sh", "-ec", 'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"', "ontology-evidence-e2e", scopedSQL], { cwd: fileURLToPath(new URL("../..", import.meta.url)), encoding: "utf8" });
+  const result = spawnSync("docker", ["compose", "-p", required("DENSE_MEM_E2E_COMPOSE_PROJECT"), "-f", required("DENSE_MEM_E2E_COMPOSE_FILE"), "exec", "-T", "-e", "PGOPTIONS=-c app.storage_layout=feature-storage-v1 -c app.topic_layout=topic-storage-v1", "postgres", "sh", "-ec", 'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"', "ontology-evidence-e2e", scopedSQL], { cwd: fileURLToPath(new URL("../..", import.meta.url)), encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   return result.stdout.trim();
 }
@@ -410,123 +421,88 @@ async function fixtureMode(mode) {
   const response = await fetch(`${required("DENSE_MEM_E2E_PROVIDER_URL")}/ontology-fixture`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode }) });
   assert.equal(response.status, 200);
 }
-async function rememberFixture(key, content) {
-  const result = await mcp("remember", { target_space: "team_shared", idempotency_key: randomUUID(), evidence: [{ content, source_type: "document", source: "ontology-followups", source_group: randomUUID() }] }, key);
-  assert.equal(result.processing_state, "completed");
-}
-async function terminalRun(id) {
-  const started = Date.now();
-  console.log(JSON.stringify({ scenario: "ontology_organization", phase: "maintenance_run_wait", run_id: id }));
-  for (let index = 0; index < maintenanceObservationAttempts; index++) {
-    const page = (await control("/ontology/runs?limit=200")).data;
-    const run = page.runs.find((run) => run.id === id);
-    if (run && ["completed", "incomplete"].includes(run.status)) {
-      console.log(JSON.stringify({ scenario: "ontology_organization", phase: "maintenance_run_terminal", run_id: id, status: run.status, failure_code: run.failure_code, elapsed_ms: Date.now() - started }));
-      return run;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-  }
-  assert.fail(`maintenance run ${id} did not finish`);
+
+async function staleAssignmentRevision(writer, manager) {
+  const { records } = await organization("/records?kind=topic&limit=200", manager);
+  const topic = records.find((record) => record.definition?.label === "memory-storage");
+  assert(topic, "a revision fence requires an existing Topic");
+  const { revision } = await organization("/status", manager);
+  const before = canonicalFingerprints();
+  const reason = "Update storage vocabulary during an in-flight assignment";
+  await fixtureMode("hold");
+  const [intake, edited] = await Promise.allSettled([
+    rpcAttempt("remember", { target_space: "team_shared", idempotency_key: randomUUID(), evidence: [
+      { content: "PostgreSQL writes a new audit checkpoint.", source_type: "document", force_insert: true },
+    ] }, writer),
+    (async () => {
+      try {
+        await pollFinalization(async () => {
+          const health = await fetch(`${required("DENSE_MEM_E2E_PROVIDER_URL")}/health`);
+          assert.equal(health.status, 200);
+          return (await health.json()).active_ontology_requests === 1;
+        }, "foreground Topic provider hold", 12);
+        const draft = await organization("/drafts", manager, { operation_key: randomUUID(), expected_version: 0,
+          expected_revision: revision, reason, edits: [{ action: "define", kind: "topic", record_id: topic.id,
+            expected_version: topic.version, definition: { ...topic.definition, description: reason } }] });
+        await organization(`/drafts/${draft.id}/publish`, manager, {
+          operation_key: randomUUID(), expected_version: draft.version, expected_revision: revision, reason,
+        });
+      } finally {
+        await fixtureMode("normal");
+      }
+    })(),
+  ]);
+  if (edited.status === "rejected") throw edited.reason;
+  if (intake.status === "rejected") throw intake.reason;
+  const receipt = JSON.parse(intake.value.result.content[0].text);
+  assert.equal(receipt.processing_state, "failed");
+  assert.equal(receipt.errors[0].code, "stale_input");
+  assert.equal(canonicalFingerprints(), before, "stale Topic input must roll back the full Evidence write");
+  return { correlationID: receipt.correlation_id, topicID: topic.id, topicRef: `${topic.id}@${topic.version}` };
 }
 
-async function finalizationRecovery(key, failureCode = "") {
-  await control("/ontology/pause", { operation_key: randomUUID() });
-  paused = true;
-  await pollFinalization(() => postgresQuery(`SELECT count(*) FROM ontology_maintenance_batches WHERE team_id=${sqlLiteral(teamID)}::uuid AND status='running'`) === "0", "drain before finalization fixture");
-  await remember(`Atlas uses PostgreSQL for finalization recovery ${randomUUID()}.`, key);
-  await fixtureMode(failureCode ? "fail-three-then-success" : "normal");
-  const canonicalBefore = canonicalFingerprints();
-  const release = await finalizationBlocker();
+async function finalizationRecovery(key) {
+  const configure = (value) => control("/config/topic-maintenance", { items: [{ key: "TOPIC_MAINTENANCE_ENABLED", value }] }, "PATCH");
+  await configure("false");
+  const id = await remember(`PostgreSQL restore processing ${randomUUID()}.`, key);
+  const filter = `team_id=${sqlLiteral(teamID)}::uuid AND evidence_id=${sqlLiteral(id)}::uuid`;
+  const assigned = () => Number(postgresQuery(`SELECT count(*) FROM topic_assignment_outcomes WHERE ${filter} AND status='assigned'`));
+  const memberships = () => Number(postgresQuery(`SELECT count(*) FROM topic_record_heads WHERE ${filter} AND kind='assignment' AND NOT retired`));
+  assert.equal(assigned(), 0);
+  await configure("true");
   try {
-    postgresQuery(`CREATE FUNCTION ontology_e2e_finalization_barrier() RETURNS trigger LANGUAGE plpgsql AS $$
-      BEGIN IF NEW.team_id=${sqlLiteral(teamID)}::uuid AND NEW.assessment_id IS NOT NULL AND NEW.assessment_id IS DISTINCT FROM OLD.assessment_id AND EXISTS(
-        SELECT 1 FROM ontology_assessments AS assessment WHERE assessment.team_id=NEW.team_id
-        AND assessment.shared_space_id=NEW.shared_space_id AND assessment.space_generation=NEW.space_generation AND assessment.assessment_id=NEW.assessment_id
-        AND COALESCE(assessment.body->'result'->>'failure_code','')=${sqlLiteral(failureCode)}
-        AND assessment.body->'result'->>'current'=${sqlLiteral(String(!failureCode))})
-        THEN PERFORM pg_advisory_xact_lock(603002); END IF; RETURN NEW; END $$;
-      CREATE TRIGGER ontology_e2e_finalization_barrier BEFORE UPDATE OF status ON ontology_maintenance_sources FOR EACH ROW EXECUTE FUNCTION ontology_e2e_finalization_barrier()`);
-    await control("/ontology/resume", { operation_key: randomUUID() });
+    postgresQuery(`CREATE FUNCTION topic_e2e_finalization_failure() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.team_id=${sqlLiteral(teamID)}::uuid AND NEW.source_id=${sqlLiteral(id)} AND NEW.status='organized' THEN
+        RAISE EXCEPTION 'fixture finalization rejection'; END IF; RETURN NEW; END $$;
+      CREATE TRIGGER topic_e2e_finalization_failure BEFORE UPDATE OF status ON topic_maintenance_sources FOR EACH ROW EXECUTE FUNCTION topic_e2e_finalization_failure()`);
+    await control("/topic-maintenance/resume", { operation_key: randomUUID() });
     paused = false;
-    let receipt;
+    await control("/topic-maintenance/runs", { operation_key: randomUUID(), max_batches: 100 });
+    let failedRun;
     await pollFinalization(() => {
-      const body = postgresQuery(`SELECT jsonb_build_object('id',batch.batch_id,'run_id',batch.run_id,'lease_until',batch.lease_until,
-        'backend',activity.pid,'query_started_at',activity.query_start)::text
-        FROM ontology_maintenance_batches AS batch JOIN ontology_assessments AS assessment
-        ON assessment.team_id=batch.team_id AND assessment.shared_space_id=batch.shared_space_id AND assessment.space_generation=batch.space_generation AND assessment.operation_key='maintenance:'||batch.batch_id::text
-        JOIN pg_stat_activity AS activity ON activity.datname=current_database() AND activity.wait_event='advisory' AND activity.query LIKE '%UPDATE ontology_maintenance_sources SET status=%'
-        WHERE batch.team_id=${sqlLiteral(teamID)}::uuid AND batch.status='running'
-        AND COALESCE(assessment.body->'result'->>'failure_code','')=${sqlLiteral(failureCode)} AND assessment.body->'result'->>'current'=${sqlLiteral(String(!failureCode))} LIMIT 1`);
-      if (body) receipt = JSON.parse(body);
-      return Boolean(receipt);
-    }, "durable receipt followed by blocked completion");
-    await pollFinalization(() => postgresQuery(`SELECT count(*) FROM pg_stat_activity WHERE pid=${Number(receipt.backend)} AND query_start=${sqlLiteral(receipt.query_started_at)}::timestamptz AND wait_event='advisory'`) === "0", "five-second finalization cancellation", 20);
-    const cancellationMS = Date.now() - Date.parse(receipt.query_started_at);
-    assert(cancellationMS >= 4000, "the adverse case must exercise the finalization deadline");
-    assert.equal(postgresQuery(`SELECT status FROM ontology_maintenance_batches WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`), "running");
-    // Stop later batches from changing recovered rows before inspection.
-    await control("/ontology/pause", { operation_key: randomUUID() });
-    paused = true;
-    const frozenStatus = (await control("/ontology/status")).data;
-    assert.equal(frozenStatus.enabled, true, "pause must preserve ontology enablement for capture");
-    assert.equal(frozenStatus.paused, true);
-    assert(frozenStatus.active_work > 0, "reconciled receipts must not hide unfinished batch finalization");
-    const attempts = postgresQuery(`SELECT COALESCE(jsonb_agg(to_jsonb(attempt_record) ORDER BY assessment_id,attempt)::text,'[]') FROM ontology_maintenance_attempts AS attempt_record WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`);
-    const admitted = JSON.parse(attempts);
-    assert(admitted.every((attempt) => attempt.reconciled_at), "active attempts cannot be recovered");
-    if (failureCode) assert.equal(admitted.length, 3, "the failed receipt must exhaust complete-response regeneration");
-    const completedBefore = Number(postgresQuery(`SELECT completed_batches FROM ontology_maintenance_runs WHERE run_id=${sqlLiteral(receipt.run_id)}::uuid`));
-    const receiptBody = postgresQuery(`SELECT md5(body::text) FROM ontology_assessments WHERE operation_key=${sqlLiteral(`maintenance:${receipt.id}`)}`);
-    let recoveryBoundary;
-    await pollFinalization(() => {
-      recoveryBoundary = postgresQuery(`SELECT clock_timestamp()::text FROM pg_stat_activity
-        WHERE datname=current_database() AND wait_event='advisory' AND query LIKE '%UPDATE ontology_maintenance_sources SET status=%'
-        AND query_start>${sqlLiteral(receipt.query_started_at)}::timestamptz LIMIT 1`);
-      return Boolean(recoveryBoundary);
-    }, "recovery blocked after the canceled finalization");
-    const started = Date.now();
-    await release();
-    await pollFinalization(() => postgresQuery(`SELECT status FROM ontology_maintenance_batches WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`) === "completed", "automatic receipt recovery");
-    assert(Date.now() < Date.parse(receipt.lease_until), "recovery must precede native lease expiry");
-    assert.equal(postgresQuery(`SELECT failure_code FROM ontology_maintenance_batches WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`), failureCode);
-    assertCompletionTimestamps(receipt.id, recoveryBoundary);
-    assert(Number(postgresQuery(`SELECT completed_batches FROM ontology_maintenance_runs WHERE run_id=${sqlLiteral(receipt.run_id)}::uuid`)) > completedBefore, "recovery must count the completed batch");
-    if (failureCode) {
-      const outcomes = JSON.parse(postgresQuery(`SELECT jsonb_agg(jsonb_build_object('status',status,'reason',reason))::text FROM ontology_maintenance_sources WHERE team_id=${sqlLiteral(teamID)}::uuid AND assessment_id=(SELECT assessment_id FROM ontology_assessments WHERE operation_key=${sqlLiteral(`maintenance:${receipt.id}`)})`));
-      assert(outcomes?.length > 0, "failed receipt must finalize its unchanged sources");
-      assert(outcomes.every((outcome) => outcome.status === "failed" && outcome.reason === failureCode));
-      const failedStatus = (await control("/ontology/status")).data;
-      assert.equal(failedStatus.coverage_complete, false, "drained terminal failure is incomplete coverage");
-      assert(failedStatus.counts.failed > 0);
-    }
-    assert.equal(postgresQuery(`SELECT count(*) FROM ontology_assessments WHERE operation_key=${sqlLiteral(`maintenance:${receipt.id}`)}`), "1");
-    assert.equal(postgresQuery(`SELECT md5(body::text) FROM ontology_assessments WHERE operation_key=${sqlLiteral(`maintenance:${receipt.id}`)}`), receiptBody);
-    assert.equal(postgresQuery(`SELECT COALESCE(jsonb_agg(to_jsonb(attempt_record) ORDER BY assessment_id,attempt)::text,'[]') FROM ontology_maintenance_attempts AS attempt_record WHERE batch_id=${sqlLiteral(receipt.id)}::uuid`), attempts, "recovery must not dispatch or alter provider attempts");
-    assert.equal(canonicalFingerprints(), canonicalBefore, "ontology recovery changed canonical Knowledge");
-    console.log(JSON.stringify({ scenario: "ontology_finalization_recovery", batch_id: receipt.id, failure_code: failureCode, cancellation_ms: cancellationMS, recovery_ms: Date.now() - started, recovered_before_expiry: true, receipt_and_attempts_preserved: true, canonical_preserved: true }));
+      failedRun = postgresQuery(`SELECT work.last_run_id::text FROM topic_maintenance_sources AS work
+        JOIN topic_maintenance_runs AS run ON run.run_id=work.last_run_id
+        WHERE work.team_id=${sqlLiteral(teamID)}::uuid AND work.source_kind='evidence' AND work.source_id=${sqlLiteral(id)}
+          AND work.eligible AND work.status='failed' AND run.failure_code<>''`);
+      return Boolean(failedRun);
+    }, "retryable failed finalization for the imported evidence");
+    assert.equal(assigned(), 0, "failed finalization must roll back its assignment outcome");
+    assert.equal(memberships(), 0, "failed finalization must roll back direct membership");
+    postgresQuery("DROP TRIGGER topic_e2e_finalization_failure ON topic_maintenance_sources");
+    await control(`/topic-maintenance/runs/${failedRun}/retry`, { operation_key: randomUUID(), max_batches: 100 });
+    await pollFinalization(() => assigned() > 0, "retried assignment publication");
+    assert.equal(assigned(), 1, "one successful publication must survive retry");
+    assert.equal(memberships(), 1);
   } finally {
-    await release();
-    postgresQuery("DROP TRIGGER IF EXISTS ontology_e2e_finalization_barrier ON ontology_maintenance_sources; DROP FUNCTION IF EXISTS ontology_e2e_finalization_barrier()");
+    postgresQuery("DROP TRIGGER IF EXISTS topic_e2e_finalization_failure ON topic_maintenance_sources; DROP FUNCTION IF EXISTS topic_e2e_finalization_failure()");
+    await control("/topic-maintenance/pause", { operation_key: randomUUID() });
+    paused = true;
   }
-}
-
-function assertCompletionTimestamps(batchID, earliest) {
-  const selected = batchID ? `AND batch.batch_id=${sqlLiteral(batchID)}::uuid` : "";
-  const boundary = earliest ? `OR batch.completed_at<${sqlLiteral(earliest)}::timestamptz` : "";
-  const counts = JSON.parse(postgresQuery(`SELECT jsonb_build_object('completed',count(*),'invalid',count(*) FILTER(
-    WHERE batch.completed_at IS NULL OR batch.completed_at<batch.created_at OR batch.completed_at<assessment.created_at
-    OR run.updated_at<batch.completed_at ${boundary}))::text
-    FROM ontology_maintenance_batches AS batch JOIN ontology_maintenance_runs AS run USING(run_id)
-    JOIN ontology_assessments AS assessment ON assessment.team_id=batch.team_id AND assessment.shared_space_id=batch.shared_space_id
-      AND assessment.space_generation=batch.space_generation AND assessment.operation_key='maintenance:'||batch.batch_id::text
-    WHERE batch.team_id=${sqlLiteral(teamID)}::uuid AND batch.status='completed' ${selected}`));
-  assert(counts.completed > 0, "timestamp checks must observe completed native batches");
-  assert.equal(counts.invalid, 0, "native completion timestamps must follow creation, receipt, and barrier time");
 }
 
 async function pollFinalization(check, label, seconds = maintenanceObservationAttempts) {
   for (let index = 0; index < seconds; index++) {
-    if (check()) return;
+    if (await check()) return;
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   assert.fail(`timed out waiting for ${label}`);
@@ -535,37 +511,4 @@ async function pollFinalization(check, label, seconds = maintenanceObservationAt
 function canonicalFingerprints(scopeTeam = teamID) {
   const tables = ["evidence_fragments", "evidence_occurrences", "evidence_sources", "evidence_source_revisions", "evidence_lifecycle_events", "evidence_quarantines"];
   return postgresQuery(tables.map((table) => `SELECT '${table}',md5(COALESCE(jsonb_agg(to_jsonb(record) ORDER BY to_jsonb(record)::text)::text,'[]')) FROM ${table} AS record WHERE team_id=${sqlLiteral(scopeTeam)}::uuid`).join(";\n"));
-}
-
-async function finalizationBlocker() {
-  const child = spawn("docker", ["compose", "-p", required("DENSE_MEM_E2E_COMPOSE_PROJECT"), "-f", required("DENSE_MEM_E2E_COMPOSE_FILE"), "exec", "-T", "-e", "PGOPTIONS=-c app.storage_layout=feature-storage-v1", "postgres", "sh", "-ec", 'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At'], { cwd: fileURLToPath(new URL("../..", import.meta.url)), stdio: ["pipe", "pipe", "pipe"], timeout: 240000 });
-  let output = "";
-  let stderr = "";
-  child.stdout.on("data", (data) => { output += data; });
-  child.stderr.on("data", (data) => { stderr += data; });
-  let exitCode;
-  const closed = new Promise((resolve, reject) => {
-    child.on("error", reject);
-    child.on("close", (code) => { exitCode = code; resolve(); });
-  });
-  child.stdin.write("SELECT pg_advisory_lock(603002); SELECT 'densemem-finalization-locked';\n");
-  let released = false;
-  const release = async () => {
-    if (!released) {
-      released = true;
-      child.stdin.end("SELECT pg_advisory_unlock(603002);\n\\q\n");
-    }
-    await closed;
-    assert.equal(exitCode, 0, stderr);
-  };
-  try {
-    await pollFinalization(() => {
-      assert.equal(exitCode, undefined, stderr);
-      return output.includes("densemem-finalization-locked");
-    }, "finalization barrier", 10);
-    return release;
-  } catch (error) {
-    await release();
-    throw error;
-  }
 }

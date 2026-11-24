@@ -12,8 +12,8 @@ import (
 	access "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -22,7 +22,7 @@ func TestRecallOntologyMigratedAliasRemainsIneligibleWithCurrentProjection(t *te
 	f := newRecallOntologyFixture(t)
 	ctx := context.Background()
 	text := "Atlas stores data in PostgreSQL."
-	handles := []ontology.SourceHandle{}
+	handles := []topic.SourceHandle{}
 	for owner := range 2 {
 		ingest, err := f.knowledge.CreateIngestForTest(ctx, knowledge.CreateIngestInput{
 			TeamID: f.team, OwnerProfileID: f.owners[owner],
@@ -30,7 +30,7 @@ func TestRecallOntologyMigratedAliasRemainsIneligibleWithCurrentProjection(t *te
 			Evidence: []knowledge.EvidenceInput{{Content: text}},
 		})
 		require.NoError(t, err)
-		handle := ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: ingest.Evidence[0].FragmentID, Version: 1}
+		handle := topic.SourceHandle{Kind: topic.EvidenceSource, ID: ingest.Evidence[0].FragmentID, Version: 1}
 		document, err := f.search.UpsertSearchDocument(ctx, knowledge.UpsertSearchDocumentInput{
 			TeamID: f.team, OwnerProfileID: f.owners[owner], SourceKind: "evidence",
 			SourceID: handle.ID, SourceVersion: 1, DocumentText: text,
@@ -56,7 +56,7 @@ func TestRecallOntologyMigratedAliasRemainsIneligibleWithCurrentProjection(t *te
 	}))
 	require.Equal(t, "current", state)
 	producer, calls := f.organizer(t, map[string]string{text: "same", alternateText: "same"})
-	_, err := producer.Organize(ctx, f.team, ontology.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
+	_, err := producer.Organize(ctx, f.team, topic.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
 	require.NoError(t, err)
 	beforeCalls := calls.Load()
 	input := RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, Query: "database", Limit: 10, OrganizationEnabled: true}
@@ -91,7 +91,7 @@ func TestRecallOntologyMigratedAliasRemainsIneligibleWithCurrentProjection(t *te
 func TestRecallOntologyPrefetchedGroupsReadNewEvidenceAndReauthorize(t *testing.T) {
 	f := newRecallOntologyFixture(t)
 	texts := []string{"Atlas uses PostgreSQL.", "PostgreSQL stores Atlas data.", "Boreal uses PostgreSQL.", "PostgreSQL stores Boreal data."}
-	handles, ids := []ontology.SourceHandle{}, []string{}
+	handles, ids := []topic.SourceHandle{}, []string{}
 	meanings := map[string]string{}
 	for index, text := range texts {
 		handle := f.evidence(t, index%2, text, nil)
@@ -99,14 +99,14 @@ func TestRecallOntologyPrefetchedGroupsReadNewEvidenceAndReauthorize(t *testing.
 		meanings[text] = []string{"atlas", "boreal"}[index/2]
 	}
 	producer, _ := f.organizer(t, meanings)
-	_, err := producer.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
+	_, err := producer.Organize(context.Background(), f.team, topic.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
 	require.NoError(t, err)
-	reader, ctx := f.ontology.NewRecallReader(), f.actor(2, "member")
+	reader, ctx := f.topicStore.NewRecallReader(), f.actor(2, "member")
 	require.NoError(t, f.rls.WithTeamReadOnlyRepeatableTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
-		initial, err := reader(ctx, tx, f.team, ontology.RecallReadInput{SpaceID: f.space, Query: "unmatched", CandidateEvidenceIDs: ids[:2], Limit: 60})
+		initial, err := reader(ctx, tx, f.team, topic.RecallReadInput{SpaceID: f.space, Query: "unmatched", CandidateEvidenceIDs: ids[:2], Limit: 60})
 		require.NoError(t, err)
 		require.Empty(t, initial.Sources)
-		result, err := reader(ctx, tx, f.team, ontology.RecallReadInput{SpaceID: f.space, EvidenceIDs: ids, Limit: 60})
+		result, err := reader(ctx, tx, f.team, topic.RecallReadInput{SpaceID: f.space, EvidenceIDs: ids, Limit: 60})
 		require.NoError(t, err)
 		require.Len(t, result.Groups, 2)
 		members := []string{}
@@ -119,12 +119,12 @@ func TestRecallOntologyPrefetchedGroupsReadNewEvidenceAndReauthorize(t *testing.
 		require.True(t, ok)
 		actor.AllowedSpaces = nil
 		restricted := requestctx.WithActor(context.Background(), actor)
-		result, err = reader(restricted, tx, f.team, ontology.RecallReadInput{SpaceID: f.space, EvidenceIDs: ids, Limit: 60})
-		require.ErrorIs(t, err, ontology.ErrUnauthorized)
+		result, err = reader(restricted, tx, f.team, topic.RecallReadInput{SpaceID: f.space, EvidenceIDs: ids, Limit: 60})
+		require.ErrorIs(t, err, topic.ErrUnauthorized)
 		require.Empty(t, result.Groups)
 		canceled, cancel := context.WithCancel(ctx)
 		cancel()
-		_, err = reader(canceled, tx, f.team, ontology.RecallReadInput{SpaceID: f.space, EvidenceIDs: ids, Limit: 60})
+		_, err = reader(canceled, tx, f.team, topic.RecallReadInput{SpaceID: f.space, EvidenceIDs: ids, Limit: 60})
 		require.ErrorIs(t, err, context.Canceled)
 		return nil
 	}))
@@ -133,9 +133,9 @@ func TestRecallOntologyPrefetchedGroupsReadNewEvidenceAndReauthorize(t *testing.
 func TestRecallOntologyPrivateForeignAndOldGenerationSources(t *testing.T) {
 	f := newRecallOntologyFixture(t)
 	texts := []string{"Atlas stores data in PostgreSQL.", "PostgreSQL stores Atlas's data."}
-	handles := []ontology.SourceHandle{f.evidence(t, 0, texts[0], nil), f.evidence(t, 1, texts[1], nil)}
+	handles := []topic.SourceHandle{f.evidence(t, 0, texts[0], nil), f.evidence(t, 1, texts[1], nil)}
 	producer, _ := f.organizer(t, map[string]string{texts[0]: "same", texts[1]: "same"})
-	_, err := producer.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
+	_, err := producer.Organize(context.Background(), f.team, topic.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
 	require.NoError(t, err)
 	private := &domain.Credential{ID: uuid.New(), TeamID: uuid.MustParse(f.team), Name: "private source", KeyHash: "synthetic-" + uuid.NewString(), KeyPrefix: uuid.NewString()[:24], KeySuffix: "test", Scopes: []string{"read", "write"}}
 	require.NoError(t, access.NewCredentialRepository(f.admin, f.rls, nil).CreateCredential(context.Background(), private))
@@ -177,15 +177,15 @@ func TestRecallOntologyPrivateForeignAndOldGenerationSources(t *testing.T) {
 func TestRecallOntologyHydrationUsesOneSnapshotAcrossRetraction(t *testing.T) {
 	f := newRecallOntologyFixture(t)
 	texts := []string{"Atlas stores data in PostgreSQL.", "PostgreSQL stores Atlas's data."}
-	handles := []ontology.SourceHandle{f.evidence(t, 0, texts[0], nil), f.evidence(t, 1, texts[1], nil)}
+	handles := []topic.SourceHandle{f.evidence(t, 0, texts[0], nil), f.evidence(t, 1, texts[1], nil)}
 	producer, _ := f.organizer(t, map[string]string{texts[0]: "same", texts[1]: "same"})
-	_, err := producer.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
+	_, err := producer.Organize(context.Background(), f.team, topic.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
 	require.NoError(t, err)
-	reader := f.search.recall.ontology
+	reader := f.search.recall.organizationReader
 	var once sync.Once
-	f.search.recall.WithOntology(func() OntologyReader {
+	f.search.recall.WithOrganizationReader(func() OrganizationReader {
 		read := reader()
-		return func(ctx context.Context, tx *gorm.DB, team string, input ontology.RecallReadInput) (ontology.RecallOrganization, error) {
+		return func(ctx context.Context, tx *gorm.DB, team string, input topic.RecallReadInput) (topic.RecallOrganization, error) {
 			result, err := read(ctx, tx, team, input)
 			if err == nil && len(input.EvidenceIDs) > 0 {
 				once.Do(func() {
@@ -212,25 +212,25 @@ func TestRecallOntologyHydrationUsesOneSnapshotAcrossRetraction(t *testing.T) {
 func TestRecallOntologySourceRevisionCorrectionAndDefinitionStaleness(t *testing.T) {
 	f := newRecallOntologyFixture(t)
 	key := "source-" + uuid.NewString()
-	createRevision := func(token, previous, text string) ontology.SourceHandle {
+	createRevision := func(token, previous, text string) topic.SourceHandle {
 		result, err := f.knowledge.CreateIngestForTest(context.Background(), knowledge.CreateIngestInput{TeamID: f.team, OwnerProfileID: f.owners[0], IdempotencyKey: uuid.NewString(), RequestHash: sha256Hex(token), Evidence: []knowledge.EvidenceInput{{Content: text, ForceInsert: true, SourceKey: key, SourceRevisionToken: token, ExpectedPreviousRevisionToken: previous}}})
 		require.NoError(t, err)
 		fragment := result.Evidence[0]
 		_, err = f.search.UpsertSearchDocument(context.Background(), knowledge.UpsertSearchDocumentInput{TeamID: f.team, OwnerProfileID: f.owners[0], SourceKind: "evidence", SourceID: fragment.FragmentID, SourceVersion: 1, DocumentText: text})
 		require.NoError(t, err)
-		return ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: fragment.FragmentID, Version: 1}
+		return topic.SourceHandle{Kind: topic.EvidenceSource, ID: fragment.FragmentID, Version: 1}
 	}
 	old := createRevision("1", "", "Atlas stores data in PostgreSQL.")
 	other := f.evidence(t, 1, "PostgreSQL stores Atlas's data.", nil)
 	producer, _ := f.organizer(t, map[string]string{"Atlas stores data in PostgreSQL.": "same", "PostgreSQL stores Atlas's data.": "same"})
-	_, err := producer.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: uuid.NewString(), Sources: []ontology.SourceHandle{old, other}})
+	_, err := producer.Organize(context.Background(), f.team, topic.OrganizationInput{OperationKey: uuid.NewString(), Sources: []topic.SourceHandle{old, other}})
 	require.NoError(t, err)
-	reader := f.search.recall.ontology
+	reader := f.search.recall.organizationReader
 	var once sync.Once
-	var current ontology.SourceHandle
-	f.search.recall.WithOntology(func() OntologyReader {
+	var current topic.SourceHandle
+	f.search.recall.WithOrganizationReader(func() OrganizationReader {
 		read := reader()
-		return func(ctx context.Context, tx *gorm.DB, team string, input ontology.RecallReadInput) (ontology.RecallOrganization, error) {
+		return func(ctx context.Context, tx *gorm.DB, team string, input topic.RecallReadInput) (topic.RecallOrganization, error) {
 			result, err := read(ctx, tx, team, input)
 			if err == nil && len(input.EvidenceIDs) > 0 {
 				once.Do(func() {
@@ -258,7 +258,7 @@ func TestRecallOntologySourceRevisionCorrectionAndDefinitionStaleness(t *testing
 	}
 	require.ElementsMatch(t, []string{current.ID, other.ID}, ids)
 	require.Contains(t, degradationCodes(result.Degradations), "ontology_stale")
-	page, err := f.ontology.ListRecords(context.Background(), f.team, ontology.Topic, "", 20)
+	page, err := f.topicStore.ListRecords(context.Background(), f.team, topic.Topic, "", 20)
 	require.NoError(t, err)
 	require.NotEmpty(t, page.Records)
 	definition := page.Records[0].Record
@@ -273,21 +273,21 @@ func TestRecallOntologySourceRevisionCorrectionAndDefinitionStaleness(t *testing
 func TestRecallOntologyReaderResetsBetweenTransactions(t *testing.T) {
 	f := newRecallOntologyFixture(t)
 	texts := []string{"Atlas stores data in PostgreSQL.", "PostgreSQL stores Atlas's data."}
-	handles := []ontology.SourceHandle{f.evidence(t, 0, texts[0], nil), f.evidence(t, 1, texts[1], nil)}
+	handles := []topic.SourceHandle{f.evidence(t, 0, texts[0], nil), f.evidence(t, 1, texts[1], nil)}
 	producer, _ := f.organizer(t, map[string]string{texts[0]: "same", texts[1]: "same"})
-	_, err := producer.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
+	_, err := producer.Organize(context.Background(), f.team, topic.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
 	require.NoError(t, err)
-	reader := f.ontology.NewRecallReader()
-	read := func() ontology.RecallOrganization {
+	reader := f.topicStore.NewRecallReader()
+	read := func() topic.RecallOrganization {
 		t.Helper()
-		var result ontology.RecallOrganization
+		var result topic.RecallOrganization
 		ctx := f.actor(2, "member")
 		require.NoError(t, f.rls.WithTeamReadOnlyRepeatableTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
-			_, err := reader(ctx, tx, f.team, ontology.RecallReadInput{SpaceID: f.space, Query: "database", Limit: 60})
+			_, err := reader(ctx, tx, f.team, topic.RecallReadInput{SpaceID: f.space, Query: "database", Limit: 60})
 			if err != nil {
 				return err
 			}
-			result, err = reader(ctx, tx, f.team, ontology.RecallReadInput{SpaceID: f.space, EvidenceIDs: []string{handles[0].ID, handles[1].ID}, Limit: 60})
+			result, err = reader(ctx, tx, f.team, topic.RecallReadInput{SpaceID: f.space, EvidenceIDs: []string{handles[0].ID, handles[1].ID}, Limit: 60})
 			return err
 		}))
 		return result
@@ -300,8 +300,8 @@ func TestRecallOntologyReaderResetsBetweenTransactions(t *testing.T) {
 	require.Equal(t, "ontology_stale", after.Degradation)
 	foreign := createLedgerTeam(t, f.admin, f.rls, "foreign reused reader")
 	require.NoError(t, f.rls.WithTeamReadOnlyRepeatableTx(f.actor(2, "member"), f.app, f.team, func(tx *gorm.DB) error {
-		result, err := reader(f.actor(2, "member"), tx, foreign, ontology.RecallReadInput{Query: "database", Limit: 60})
-		require.ErrorIs(t, err, ontology.ErrUnauthorized)
+		result, err := reader(f.actor(2, "member"), tx, foreign, topic.RecallReadInput{Query: "database", Limit: 60})
+		require.ErrorIs(t, err, topic.ErrUnauthorized)
 		require.Empty(t, result.Sources)
 		require.Empty(t, result.Groups)
 		return nil
@@ -321,10 +321,10 @@ func TestRecallOntologyDiscoveryHydrationEnforcesEligibilityAndState(t *testing.
 		TeamID: f.team, OwnerProfileID: f.owners[1], Evidence: []knowledge.EvidenceInput{{Content: "Atlas source without a search projection."}},
 	})
 	require.NoError(t, err)
-	missingHandle := ontology.SourceHandle{Kind: ontology.EvidenceSource, ID: missing.Evidence[0].FragmentID, Version: 1}
-	definition := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "database", Label: "Database"}}
-	records := []ontology.Record{definition}
-	for _, handle := range []ontology.SourceHandle{active, pending, failed, retracted, deletionOnly, missingHandle} {
+	missingHandle := topic.SourceHandle{Kind: topic.EvidenceSource, ID: missing.Evidence[0].FragmentID, Version: 1}
+	definition := topic.Record{ID: uuid.NewString(), Kind: topic.Topic, Definition: &topic.Definition{Key: "database", Label: "Database"}}
+	records := []topic.Record{definition}
+	for _, handle := range []topic.SourceHandle{active, pending, failed, retracted, deletionOnly, missingHandle} {
 		records = append(records, f.assignment(t, definition.ID, handle))
 	}
 	f.publication(t, records...)

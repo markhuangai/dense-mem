@@ -4,15 +4,22 @@ import (
 	"github.com/markhuangai/dense-mem/internal/conflict/evidence"
 	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/http/handler"
-	"github.com/markhuangai/dense-mem/internal/ontology"
 	operations "github.com/markhuangai/dense-mem/internal/operations"
 	"github.com/markhuangai/dense-mem/internal/recall"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 	searchapp "github.com/markhuangai/dense-mem/internal/search"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	settings "github.com/markhuangai/dense-mem/internal/settings"
+	topics "github.com/markhuangai/dense-mem/internal/topics"
 	nethttp "net/http"
+	"time"
 )
+
+type PostgresPoolMetrics struct {
+	ProcessStartedAt time.Time `json:"process_started_at"`
+	WaitCount        int64     `json:"wait_count"`
+	WaitDurationNS   int64     `json:"wait_duration_ns"`
+}
 
 type ControlPortalTelemetry struct {
 	AuditExport         AuditExportReader
@@ -28,12 +35,13 @@ type ControlPortalTelemetry struct {
 	Decisions           settings.DecisionConfigService
 	Logs                operations.OperationLogReader
 	RecallFeedback      recall.RecallFeedbackEventReader
-	Ontology            *ontology.MaintenanceService
+	TopicMaintenance    *topics.MaintenanceService
 	EvidenceConflicts   evidenceconflict.Reader
 	Convergence         searchapp.SearchConvergenceReader
 	RememberAttempts    rememberapp.RememberAttemptDiagnosticsReader
 	RememberInvocations rememberapp.RememberInvocationDiagnosticsReader
 	PrivateMemory       PrivateMemoryServiceInterface
+	PostgresPool        func() PostgresPoolMetrics
 }
 
 type controlPortalHandler struct {
@@ -43,10 +51,11 @@ type controlPortalHandler struct {
 	credentials         handler.CredentialServiceInterface
 	security            settings.SecurityService
 	metrics             operations.UsageMetricsReader
+	postgresPool        func() PostgresPoolMetrics
 	telemetry           operations.TelemetryReader
 	operationLogs       operations.OperationLogReader
 	recallFeedback      recall.RecallFeedbackEventReader
-	ontology            *ontology.MaintenanceService
+	topicMaintenance    *topics.MaintenanceService
 	evidenceConflicts   evidenceconflict.Reader
 	convergence         searchapp.SearchConvergenceReader
 	rememberAttempts    rememberapp.RememberAttemptDiagnosticsReader

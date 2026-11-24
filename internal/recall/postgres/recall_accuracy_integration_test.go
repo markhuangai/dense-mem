@@ -12,10 +12,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	evalharness "github.com/markhuangai/dense-mem/internal/testfixture/evaluation"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -119,13 +119,13 @@ func flattenedAccuracySources(observation recallAccuracyObservation) []string {
 func (f *recallAccuracyFixture) groupAccuracySources(t *testing.T, sources []evalharness.RecallAccuracySource) {
 	t.Helper()
 	meanings := map[string]string{}
-	var handles []ontology.SourceHandle
+	var handles []topic.SourceHandle
 	for _, source := range sources {
 		meanings[source.Text] = "paraphrase"
 		handles = append(handles, f.evidence[source.ID])
 	}
 	organizer, calls := f.organizer(t, meanings)
-	result, err := organizer.Organize(context.Background(), f.team, ontology.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
+	result, err := organizer.Organize(context.Background(), f.team, topic.OrganizationInput{OperationKey: uuid.NewString(), Sources: handles})
 	require.NoError(t, err)
 	require.Empty(t, result.FailureCode)
 	require.NotNil(t, result.Publication)
@@ -133,11 +133,12 @@ func (f *recallAccuracyFixture) groupAccuracySources(t *testing.T, sources []eva
 }
 
 func TestRecallAccuracyIsolation(t *testing.T) {
+	t.Run("bounded_one_hop", testScopedEvidenceExpansion)
 	accuracyFrozenLock(t)
 	f := newRecallOntologyFixture(t)
 	source := evalharness.RecallAccuracyCohort()[0].Sources[0]
 	shared := f.evidence(t, 0, source.Text, nil)
-	definition := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: "accuracy isolation", Label: "Accuracy isolation"}}
+	definition := topic.Record{ID: uuid.NewString(), Kind: topic.Topic, Definition: &topic.Definition{Key: "accuracy isolation", Label: "Accuracy isolation"}}
 	f.publication(t, definition, f.assignment(t, definition.ID, shared))
 	privateIDs := []string{}
 	privateContexts := []context.Context{}
@@ -160,7 +161,7 @@ func TestRecallAccuracyIsolation(t *testing.T) {
 		require.NoError(t, err)
 	}
 	for owner, credential := range f.credentials {
-		result, err := f.search.RecallEvidence(privateContexts[owner], RecallEvidenceInput{TeamID: f.team, SpaceID: credential.MemorySpaceID.String(), SpaceKind: "private", Query: "Atlas PostgreSQL", Limit: 10, OrganizationEnabled: true})
+		result, err := f.search.RecallEvidence(privateContexts[owner], RecallEvidenceInput{TeamID: f.team, SpaceID: credential.MemorySpaceID.String(), SpaceKind: "private", Query: "Atlas PostgreSQL", Limit: 10, OrganizationEnabled: true, ExpansionEnabled: true})
 		require.NoError(t, err)
 		require.Len(t, result.Results, 1)
 		require.Equal(t, privateIDs[owner], result.Results[0].EvidenceID)
@@ -178,7 +179,7 @@ func TestRecallAccuracyIsolation(t *testing.T) {
 	for owner := range f.owners {
 		for _, known := range append(privateIDs, foreignID) {
 			result, err := f.search.RecallEvidence(f.actor(owner, "member"), RecallEvidenceInput{TeamID: f.team, SpaceID: f.space,
-				Query: "accuracy isolation", QueryEmbedding: []float32{1, 0, 0}, Limit: 10, OrganizationEnabled: true, KnownEvidenceIDs: []string{known}})
+				Query: "accuracy isolation", QueryEmbedding: []float32{1, 0, 0}, Limit: 10, OrganizationEnabled: true, ExpansionEnabled: true, KnownEvidenceIDs: []string{known}})
 			require.NoError(t, err)
 			require.Len(t, result.Results, 1)
 			require.Equal(t, shared.ID, result.Results[0].EvidenceID)

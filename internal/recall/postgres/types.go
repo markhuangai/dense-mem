@@ -8,10 +8,10 @@ import (
 	"gorm.io/gorm"
 
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	ontologycontract "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
 	searchcontract "github.com/markhuangai/dense-mem/internal/search/contract"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 )
 
 type (
@@ -42,8 +42,8 @@ type Store struct {
 	rls                 storagepostgres.RLSHelper
 	search              searchcontract.SearchRepository
 	evidenceConflicts   EvidenceConflictReader
-	topics              func(context.Context, *gorm.DB, string, ontologycontract.TopicReadInput) (ontologycontract.TopicReadResult, error)
-	ontology            func() OntologyReader
+	topics              func(context.Context, *gorm.DB, string, topic.TopicReadInput) (topic.TopicReadResult, error)
+	organizationReader  func() OrganizationReader
 	snapshot            *gorm.DB
 	snapshotTeam        string
 	organizationFailure string
@@ -56,10 +56,10 @@ func (r *Store) WithTopicDiagnostics(logger observability.LogProvider, protector
 	return r
 }
 
-type OntologyReader func(context.Context, *gorm.DB, string, ontologycontract.RecallReadInput) (ontologycontract.RecallOrganization, error)
+type OrganizationReader func(context.Context, *gorm.DB, string, topic.RecallReadInput) (topic.RecallOrganization, error)
 
-func (r *Store) WithOntology(reader func() OntologyReader) *Store {
-	r.ontology = reader
+func (r *Store) WithOrganizationReader(reader func() OrganizationReader) *Store {
+	r.organizationReader = reader
 	return r
 }
 
@@ -88,7 +88,7 @@ func (r *Store) withTeamTx(ctx context.Context, teamID string, fn func(*gorm.DB)
 	}
 	if r.snapshot != nil {
 		if teamID != r.snapshotTeam {
-			return ontologycontract.ErrUnauthorized
+			return topic.ErrUnauthorized
 		}
 		return fn(r.snapshot.WithContext(ctx))
 	}
@@ -104,7 +104,7 @@ func (r *Store) database() (*gorm.DB, error) {
 
 var _ recallcontract.Repository = (*Store)(nil)
 
-func (r *Store) WithTopics(reader func(context.Context, *gorm.DB, string, ontologycontract.TopicReadInput) (ontologycontract.TopicReadResult, error)) *Store {
+func (r *Store) WithTopics(reader func(context.Context, *gorm.DB, string, topic.TopicReadInput) (topic.TopicReadResult, error)) *Store {
 	r.topics = reader
 	return r
 }

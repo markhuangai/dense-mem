@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	assessmentfixture "github.com/markhuangai/dense-mem/internal/testfixture/assessment"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -28,10 +27,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	knowledgepg "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
-	organization "github.com/markhuangai/dense-mem/internal/ontology"
-	"github.com/markhuangai/dense-mem/internal/ontology/assessment"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
-	ontologypg "github.com/markhuangai/dense-mem/internal/ontology/postgres"
 	"github.com/markhuangai/dense-mem/internal/provider/structured"
 	"github.com/markhuangai/dense-mem/internal/recall"
 	recallpg "github.com/markhuangai/dense-mem/internal/recall/postgres"
@@ -43,7 +38,13 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	"github.com/markhuangai/dense-mem/internal/settings"
 	settingspg "github.com/markhuangai/dense-mem/internal/settings/postgres"
+	assessmentfixture "github.com/markhuangai/dense-mem/internal/testfixture/assessment"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
+	"github.com/markhuangai/dense-mem/internal/topicassignment"
+	organization "github.com/markhuangai/dense-mem/internal/topics"
+	"github.com/markhuangai/dense-mem/internal/topics/assessment"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
+	topicpg "github.com/markhuangai/dense-mem/internal/topics/postgres"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -55,7 +56,7 @@ type runnerServiceFixture struct {
 	mcp            *httptest.Server
 	control        *httptest.Server
 	maintenance    *organization.MaintenanceService
-	ontology       *ontologypg.Store
+	topicStore     *topicpg.Store
 	provider       *runnerRememberAssessor
 	reconciliation searchapp.SearchReconciliationService
 }
@@ -80,44 +81,44 @@ func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
 	search := searchpg.NewStore(app, rls)
 	audit := auditapp.New(auditpg.NewStore(app, rls))
 	configuration := settings.NewAppConfigService(settingspg.NewAppConfigRepository(app, rls), nil)
-	_, err := configuration.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyEnabled: "true", domain.AppConfigOntologyModel: "runner-ontology", domain.AppConfigOntologyContextWindow: "300000", domain.AppConfigOntologyConcurrency: "4", domain.AppConfigOntologyTeamConcurrency: "4"}, "control", "", "")
+	_, err := configuration.UpdateTopicMaintenanceSettings(ctx, map[string]string{domain.AppConfigTopicMaintenanceEnabled: "true", domain.AppConfigTopicMaintenanceModel: "runner-ontology", domain.AppConfigTopicMaintenanceContextWindow: "300000", domain.AppConfigTopicMaintenanceConcurrency: "4", domain.AppConfigTopicMaintenanceTeamConcurrency: "4"}, "control", "", "")
 	require.NoError(t, err)
-	ontologyStore := ontologypg.NewStore(app, rls)
-	policy, err := configuration.OntologyMaintenanceRuntimeConfig(ctx)
+	topicStore := topicpg.NewStore(app, rls)
+	policy, err := configuration.TopicMaintenanceRuntimeConfig(ctx)
 	require.NoError(t, err)
-	_, err = ontologyStore.EnsureMaintenanceWindow(ctx, policy, time.Now())
+	_, err = topicStore.EnsureMaintenanceWindow(ctx, policy, time.Now())
 	require.NoError(t, err)
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var envelope struct {
 			Messages []modelprovider.Message `json:"messages"`
+			Format   struct {
+				Schema struct{ Name string } `json:"json_schema"`
+			} `json:"response_format"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&envelope); err != nil || len(envelope.Messages) < 2 {
 			http.Error(w, "invalid provider request", 400)
 			return
 		}
-		var input assessment.Request
-		if err := json.Unmarshal([]byte(envelope.Messages[1].Content), &input); err != nil {
-			http.Error(w, "invalid organization request", 400)
-			return
-		}
-		body, err := json.Marshal(runnerOrganizationResponse(input))
+		body, err := runnerTopicProcessResponse(envelope.Format.Schema.Name, []byte(envelope.Messages[1].Content))
 		if err != nil {
-			http.Error(w, "invalid fixture result", 500)
+			t.Error(err)
+			http.Error(w, "invalid topic fixture request", http.StatusBadRequest)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": string(body)}}}})
 	}))
 	t.Cleanup(upstream.Close)
 	transport := structured.NewOpenAI(&config.Config{AIVerifierAPIURL: upstream.URL, AIVerifierAPIKey: "synthetic", AIVerifierModel: "runner-ontology"}, upstream.Client())
-	maintenance := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: ontologyStore, Config: configuration, Audit: audit, DefaultModel: "runner-ontology", Organizer: func(model string, tokens int64, accounting assessment.AttemptAccounting) *organization.Service {
-		return organization.NewService(ontologyStore, assessment.NewProviderWithAccounting(transport, model, assessor.DefaultSemanticAssessmentLimits(), accounting, int(tokens)))
-	}})
-	_, err = maintenance.Command(ctx, domain.OntologyMaintenanceCommand{Action: "pause", OperationKey: uuid.NewString()}, "", "")
+	limits := assessor.DefaultSemanticAssessmentLimits()
+	maintenance := buildTopicMaintenance(topicStore, configuration, transport, limits, "runner-ontology", 0, 0, audit, nil, organization.MaintenanceDiagnosticCapture{})
+	assignment := topicassignment.NewService(topicStore, configuration, transport, nil, limits, "runner-ontology", nil)
+	maintenance.WithTopicProcessing(assignment, topicStore, topicStore, organization.CommunityAssessor{Transport: transport, Limits: limits})
+	_, err = maintenance.Command(ctx, domain.TopicMaintenanceCommand{Action: "pause", OperationKey: uuid.NewString()}, "", "")
 	require.NoError(t, err)
 	recallStore := recallpg.NewStore(app, rls, search, recallpg.LoadRecallEvidenceConflictRecords).
-		WithOntology(func() recallpg.OntologyReader { return ontologyStore.NewRecallReader() }).
-		WithTopics(ontologyStore.NewTopicReader())
-	reader := recall.NewRecallService(recall.RecallDependencies{Search: recallStore, Provider: embedder, OntologyConfig: configuration})
+		WithOrganizationReader(func() recallpg.OrganizationReader { return topicStore.NewRecallReader() }).
+		WithTopics(topicStore.NewTopicReader())
+	reader := recall.NewRecallService(recall.RecallDependencies{Search: recallStore, Provider: embedder, TopicMaintenanceConfig: configuration})
 	reg, err := registry.BuildActive(registry.Dependencies{RememberBindings: registry.RememberBindings{Service: writer}, RecallBindings: registry.RecallBindings{Service: reader}})
 	require.NoError(t, err)
 	e := echo.New()
@@ -137,13 +138,13 @@ func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
 	require.NoError(t, native.ResolveScope(ctx))
 	manifest := evalharness.Manifest{ImportWorkers: 10, Model: "runner-ontology", ContextWindowTokens: 300000, EmbeddingModel: model, EmbeddingDimensions: dimensions}
 	return &runnerServiceFixture{admin: admin, native: native, manifest: manifest, mcp: mcp, control: control, maintenance: maintenance,
-		ontology: ontologyStore, provider: provider, reconciliation: searchapp.NewSearchReconciliationService(searchapp.SearchReconciliationDependencies{Repository: search, Projection: store, Executor: semanticwrite.NewProviderExecutor(embedder)})}
+		topicStore: topicStore, provider: provider, reconciliation: searchapp.NewSearchReconciliationService(searchapp.SearchReconciliationDependencies{Repository: search, Projection: store, Executor: semanticwrite.NewProviderExecutor(embedder)})}
 }
 
 func runnerControlServer(t *testing.T, maintenance *organization.MaintenanceService, configuration settings.AppConfigService, convergence searchapp.SearchConvergenceReader) *httptest.Server {
 	t.Helper()
 	bindings := densehttp.ControlPortalBindings{Telemetry: densehttp.ControlPortalTelemetry{
-		Ontology: maintenance, Config: configuration, Convergence: convergence,
+		TopicMaintenance: maintenance, Config: configuration, Convergence: convergence,
 	}}
 	portal, err := densehttp.NewControlPortalServerWithCapabilityBindings(&config.Config{ControlPortalToken: "runner-control"}, nil, nil, nil, bindings, densehttp.HealthConfig{}, nil)
 	require.NoError(t, err)
@@ -199,14 +200,47 @@ func pairArgumentString(arguments map[string]any, key string) string {
 	return value
 }
 
+func runnerTopicProcessResponse(schema string, content []byte) ([]byte, error) {
+	switch schema {
+	case "topic_assignment_v1":
+		var input struct {
+			RequestID string                  `json:"request_id"`
+			Text      string                  `json:"evidence"`
+			Topics    []topicassignment.Topic `json:"topics"`
+		}
+		if err := json.Unmarshal(content, &input); err != nil {
+			return nil, err
+		}
+		matches, proposals := []map[string]string{}, []map[string]string{}
+		if len(input.Topics) > 0 {
+			matches = append(matches, map[string]string{"id": input.Topics[0].ID, "quote": input.Text})
+		} else {
+			proposals = append(proposals, map[string]string{
+				"label": "runner-storage", "description": "Runner fixture classification", "quote": input.Text,
+			})
+		}
+		return json.Marshal(map[string]any{"request_id": input.RequestID, "status": "assigned", "matches": matches, "proposals": proposals})
+	case "community_placement_v1":
+		return []byte(`{"parent_id":""}`), nil
+	case assessment.EquivalenceSchemaName:
+		var input assessment.Request
+		if err := json.Unmarshal(content, &input); err != nil {
+			return nil, err
+		}
+		return json.Marshal(runnerOrganizationResponse(input))
+	default:
+		return nil, fmt.Errorf("unexpected runner fixture provider schema %q", schema)
+	}
+}
+
 func runnerOrganizationResponse(request assessment.Request) assessment.Response {
 	response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
 	created := map[string]string{}
 	for _, item := range request.Items {
-		if item.LockedDefinitionRef != "" {
+		if request.EquivalenceOnly || item.LockedDefinitionRef != "" {
 			continue
 		}
-		kind, key := ontology.Topic, "runner-storage"
+		kind, key := topic.Topic, "runner-storage"
 		ref := item.PreferredDefinitionRef
 		if ref == "" {
 			for _, definition := range request.Definitions {
@@ -221,7 +255,7 @@ func runnerOrganizationResponse(request assessment.Request) assessment.Response 
 			if ref == "" {
 				ref = "new-" + key
 				created[key] = ref
-				response.Definitions = append(response.Definitions, assessment.Definition{Ref: ref, Kind: kind, Key: key, Label: key, Description: "Paired fixture classification", Aliases: []string{}})
+				response.Definitions = append(response.Definitions, assessment.Definition{Ref: ref, Kind: kind, Key: key, Label: key, Description: "Runner fixture classification", Aliases: []string{}})
 			}
 		}
 		response.Items = append(response.Items, assessment.Decision{Ref: item.Ref, Status: "classified", DefinitionRef: ref})

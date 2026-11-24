@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -14,7 +14,7 @@ func TestEvidenceOnlyUnitRecallOntologySelectionPreservesRanksEvidenceAndKnownGr
 		"E1": {EvidenceID: "E1", Context: "Atlas uses PostgreSQL."},
 		"E2": {EvidenceID: "E2", Context: "PostgreSQL is Atlas's datastore."},
 		"E3": {EvidenceID: "E3", Context: "Atlas uses PostgreSQL and Redis."},
-	}, Groups: []ontology.RecallEvidenceGroup{{ID: "G1", Members: []string{"E1", "E2", "ineligible"}}}}
+	}, Groups: []topic.RecallEvidenceGroup{{ID: "G1", Members: []string{"E1", "E2", "ineligible"}}}}
 	candidates := []recallCandidate{{ID: "E2", Score: 0.9}, {ID: "E1", Score: 0.8}, {ID: "E3", Score: 0.7}}
 	results, sources, code := selectRecallEvidence(candidates, hydrated, recallcontract.RecallEvidenceInput{Limit: 2, SpaceKind: "team_shared"})
 	require.Empty(t, code)
@@ -34,7 +34,7 @@ func TestEvidenceOnlyUnitRecallOntologySelectionPreservesRanksEvidenceAndKnownGr
 }
 
 func TestRecallOntologySelectionRejectsOverlappingGroups(t *testing.T) {
-	hydrated := &recallcontract.EvidenceHydration{Hits: map[string]recallcontract.RecallEvidenceHit{}, Groups: []ontology.RecallEvidenceGroup{
+	hydrated := &recallcontract.EvidenceHydration{Hits: map[string]recallcontract.RecallEvidenceHit{}, Groups: []topic.RecallEvidenceGroup{
 		{ID: "G1", Members: []string{"E1", "E2"}}, {ID: "G2", Members: []string{"E2", "E3"}},
 	}}
 	candidates := []recallCandidate{}
@@ -52,13 +52,13 @@ func TestRecallOntologySelectionRejectsOverlappingGroups(t *testing.T) {
 
 func TestRecallOntologyEquivalentEvidenceBoundAndProvenance(t *testing.T) {
 	hydrated := &recallcontract.EvidenceHydration{Hits: map[string]recallcontract.RecallEvidenceHit{}}
-	group := ontology.RecallEvidenceGroup{ID: "G1"}
+	group := topic.RecallEvidenceGroup{ID: "G1"}
 	for i := range 24 {
 		id := fmt.Sprintf("E%02d", i)
 		group.Members = append(group.Members, id)
 		hydrated.Hits[id] = recallcontract.RecallEvidenceHit{EvidenceID: id}
 	}
-	hydrated.Groups = []ontology.RecallEvidenceGroup{group}
+	hydrated.Groups = []topic.RecallEvidenceGroup{group}
 	results, _, _ := selectRecallEvidence([]recallCandidate{{ID: "E00"}}, hydrated, recallcontract.RecallEvidenceInput{Limit: 1})
 	require.Len(t, results[0].EquivalentEvidenceIDs, 20)
 	require.True(t, results[0].EquivalentsTruncated)

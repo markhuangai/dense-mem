@@ -104,6 +104,12 @@ func TestOTLPPreservesBoundedProducerLabelVocabularies(t *testing.T) {
 		}
 		metrics.IncReadSQLStatement(operation, ReadStageTotal)
 	}
+	for _, operation := range []string{AIOperationTopicAssignment, AIOperationCommunityPlacement, AIOperationEvidenceEquivalence} {
+		ctx := WithAIOperation(context.Background(), operation, 1)
+		metrics.ObserveAIOperationUsage(ctx, AIOperationUsage{
+			Component: AIComponentVerifier, Model: "safe-model", InputTokens: 1, Source: AITokenSourceProvider,
+		})
+	}
 	signature := func(metric *dto.Metric) string {
 		labels := make(map[string]string)
 		for _, label := range metric.GetLabel() {

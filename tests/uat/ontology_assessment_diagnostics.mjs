@@ -8,7 +8,7 @@ export function assessmentRecords(window) {
   return window.split(/\r?\n/).flatMap((line) => {
     const offset = line.indexOf("{");
     if (offset < 0) return [];
-    try { const record = JSON.parse(line.slice(offset)); return /^(ontology_semantic_assessment|ai_exchange_payload)/.test(record.msg) ? [record] : []; }
+    try { const record = JSON.parse(line.slice(offset)); return /^(topic_semantic_assessment|ai_exchange_payload)/.test(record.msg) ? [record] : []; }
     catch { return []; }
   });
 }
@@ -45,15 +45,15 @@ export function verifySemanticAssessment(window, expected) {
   const serialized = JSON.stringify(records);
   for (const secret of expected.credentials ?? []) assert(!serialized.includes(secret), "assessment capture exposed operational credentials");
   const stages = new Map();
-  for (const manifest of records.filter((record) => record.msg === "ontology_semantic_assessment" && !record.payload_chunk)) {
+  for (const manifest of records.filter((record) => record.msg === "topic_semantic_assessment" && !record.payload_chunk)) {
     assert.equal(manifest.capture_state, "captured");
     const chunks = records.filter((record) => record.msg === manifest.msg && record.stage === manifest.stage && record.attempt === manifest.attempt && record.payload_chunk);
     assert.equal(chunks.length, manifest.chunk_count);
     stages.set(`${manifest.stage}:${manifest.attempt}`, reconstructDiagnosticBody(chunks));
   }
-  const terminal = records.filter((record) => ["ontology_semantic_assessment_completed", "ontology_semantic_assessment_failed"].includes(record.msg));
+  const terminal = records.filter((record) => ["topic_semantic_assessment_completed", "topic_semantic_assessment_failed"].includes(record.msg));
   assert.equal(terminal.length, 1);
-  assert.equal(terminal[0].msg, expected.failure ? "ontology_semantic_assessment_failed" : "ontology_semantic_assessment_completed");
+  assert.equal(terminal[0].msg, expected.failure ? "topic_semantic_assessment_failed" : "topic_semantic_assessment_completed");
   assert.equal(terminal[0].level, expected.failure ? "ERROR" : "INFO");
   assert.equal(terminal[0].failure_code, expected.failure ?? "");
   const completed = stages.get("completed:0");
@@ -62,7 +62,7 @@ export function verifySemanticAssessment(window, expected) {
   if (expected.sourceID) assert(completed.request.items.some((item) => JSON.stringify(item).includes(expected.sourceCanary)), "admitted source context was lost");
   if (expected.failure === "stale_input") {
     assert(completed.result.freshness_rejection?.expected && completed.result.freshness_rejection?.observed);
-    assert(records.some((record) => record.msg === "ontology_semantic_assessment_rejected" && record.reason === expected.failure));
+    assert(records.some((record) => record.msg === "topic_semantic_assessment_rejected" && record.reason === expected.failure));
     assert(!completed.result.publication, "stale assessment partially published");
   }
   const exchanges = new Map();
@@ -81,7 +81,7 @@ export function verifySemanticAssessment(window, expected) {
     }
   }
   if (expected.regeneration) {
-    assert(records.some((record) => record.msg === "ontology_semantic_assessment_rejected" && record.attempt === 1));
+    assert(records.some((record) => record.msg === "topic_semantic_assessment_rejected" && record.attempt === 1));
     assert(Object.values(bodies).some((body) => body.messages?.some((message) => message.content.includes('"validation_errors"'))), "complete regeneration feedback is missing");
   }
   return { records, stages: Object.fromEntries(stages), exchanges: bodies };
@@ -100,7 +100,7 @@ export function collectSemanticAssessmentProof({ project, composeFile, since, di
   const proofs = assessments.map((expected) => {
     const proof = verifySemanticAssessment(window, expected);
     writeFileSync(join(directory, `${expected.assessmentID}.private.json`), JSON.stringify({ ...proof, retain_until: new Date(Date.now()+7*86400000).toISOString() }), { mode: 0o600 });
-    for (const record of proof.records) console.log(`ontology_semantic_diagnostic_record ${JSON.stringify(record)}`);
+    for (const record of proof.records) console.log(`topic_semantic_diagnostic_record ${JSON.stringify(record)}`);
     return proof;
   });
   return proofs;

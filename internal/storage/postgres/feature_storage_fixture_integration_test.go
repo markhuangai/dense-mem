@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,11 +32,11 @@ func featureStorageFixture(t *testing.T, count int) (*sql.DB, evidenceOnlyMigrat
 		if _, err := tx.ExecContext(ctx, `INSERT INTO ontology_publications(team_id,shared_space_id,space_generation,publication_id,revision,operation_key,request_hash,origin,reason,result) VALUES($1::uuid,$2::uuid,$3,$4::uuid,1,'feature-storage-fixture',$5,'automatic','exact fixture','{}')`, fixture.team, fixture.space, fixture.generation, publication, "sha256:"+strings.Repeat("a", 64)); err != nil {
 			return err
 		}
-		var first ontology.Record
+		var first topic.Record
 		for i := 0; i < count; i++ {
-			record := ontology.Record{ID: uuid.NewString(), Version: 1, Kind: ontology.Topic, Definition: &ontology.Definition{Key: fmt.Sprintf("fixture_%d", i), Label: fmt.Sprintf("Exact café 🧭 %d", i)}}
+			record := topic.Record{ID: uuid.NewString(), Version: 1, Kind: topic.Topic, Definition: &topic.Definition{Key: fmt.Sprintf("fixture_%d", i), Label: fmt.Sprintf("Exact café 🧭 %d", i)}}
 			var err error
-			record.Fingerprint, err = ontology.RecordFingerprintWithAcceptedSources(record, nil)
+			record.Fingerprint, err = topic.RecordFingerprintWithAcceptedSources(record, nil)
 			if err != nil {
 				return err
 			}

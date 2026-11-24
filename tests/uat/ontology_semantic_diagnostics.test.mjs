@@ -13,10 +13,10 @@ function fixture() {
     const body = JSON.stringify(value);
     const parts = body.match(/.{1,2048}/gs);
     const sha256 = createHash("sha256").update(body).digest("hex");
-    parts.forEach((body, index) => records.push({ ...base, msg: "ontology_semantic_publication", level: "DEBUG", payload_kind: kind, record_id: "", payload_chunk: { state: "captured", index, count: parts.length, body, sha256 } }));
+    parts.forEach((body, index) => records.push({ ...base, msg: "topic_semantic_publication", level: "DEBUG", payload_kind: kind, record_id: "", payload_chunk: { state: "captured", index, count: parts.length, body, sha256 } }));
   }
-  records.push({ ...base, msg: "ontology_semantic_publication", level: "DEBUG", capture_state: "captured", payload_count: 2, chunk_count: records.length });
-  records.push({ ...base, msg: "ontology_semantic_publication_rejected", level: "WARN", reason: "hierarchy_cycle", transaction_outcome: "not_committed" });
+  records.push({ ...base, msg: "topic_semantic_publication", level: "DEBUG", capture_state: "captured", payload_count: 2, chunk_count: records.length });
+  records.push({ ...base, msg: "topic_semantic_publication_rejected", level: "WARN", reason: "hierarchy_cycle", transaction_outcome: "not_committed" });
   return { input, records };
 }
 
@@ -29,10 +29,10 @@ function assessmentFixture() {
     return parts.length;
   };
   const request = { request_id: "assessment", items: [{ ref: "s0", preferred_definition_ref: "d0", context: { token: "exact admitted token", password: "exact admitted password" } }] };
-  const count = chunks({ msg: "ontology_semantic_assessment", stage: "completed" }, { request, source_context: { Sources: [{ OwnerID: "owner", State: { content: "exact admitted content" } }] }, result: { assessment_id: "assessment", failure_code: "provider_response_invalid" } });
-  records.push({ ...base, msg: "ontology_semantic_assessment", stage: "completed", capture_state: "captured", chunk_count: count });
-  records.push({ ...base, level: "WARN", msg: "ontology_semantic_assessment_rejected", stage: "rejected", attempt: 1 });
-  records.push({ ...base, level: "ERROR", msg: "ontology_semantic_assessment_failed", failure_code: "provider_response_invalid" });
+  const count = chunks({ msg: "topic_semantic_assessment", stage: "completed" }, { request, source_context: { Sources: [{ OwnerID: "owner", State: { content: "exact admitted content" } }] }, result: { assessment_id: "assessment", failure_code: "provider_response_invalid" } });
+  records.push({ ...base, msg: "topic_semantic_assessment", stage: "completed", capture_state: "captured", chunk_count: count });
+  records.push({ ...base, level: "WARN", msg: "topic_semantic_assessment_rejected", stage: "rejected", attempt: 1 });
+  records.push({ ...base, level: "ERROR", msg: "topic_semantic_assessment_failed", failure_code: "provider_response_invalid" });
   chunks({ msg: "ai_exchange_payload", attempt: 2, exchange_id: "exchange", direction: "request", transport_capture_state: "captured" }, { messages: [{ content: JSON.stringify(request) }, { content: JSON.stringify({ validation_errors: [{ field: "hierarchy_updates[0].parent_ref", message: "outside allowlist" }] }) }] });
   chunks({ msg: "ai_exchange_payload", attempt: 2, exchange_id: "exchange", direction: "response", transport_capture_state: "captured" }, { choices: [{ message: { content: "invalid complete response" } }] });
   return records;
@@ -53,7 +53,7 @@ for (const [name, mutate] of [
   ["over-bound marker", (records) => { records[0].payload_chunk.state = "unavailable"; records[0].payload_chunk.reason_code = "body_bytes_exceeded"; return records; }],
   ["credential leak", (records) => { records[0].canary = "operational-credential"; return records; }],
   ["cross-team", (records) => { records[0].team_id = "foreign"; return records; }],
-  ["misleading completion", (records) => { records.find((record) => record.msg.endsWith("_failed")).msg = "ontology_semantic_assessment_completed"; return records; }],
+  ["misleading completion", (records) => { records.find((record) => record.msg.endsWith("_failed")).msg = "topic_semantic_assessment_completed"; return records; }],
 ]) test(`assessment parser rejects ${name}`, () => assert.throws(() => verifySemanticAssessment(window(mutate(assessmentFixture())), assessmentExpected)));
 const window = (records) => records.map((record) => `server-1 | ${JSON.stringify(record)}`).join("\n");
 
@@ -66,7 +66,7 @@ test("semantic parser reconstructs complete protected stdout without relying on 
 });
 
 test("manager parser requires content-free authorization rejection", () => {
-  const record = { operation_id: "00000000-0000-4000-8000-000000000001", team_id: "team", profile_id: "profile", correlation_id: "correlation", msg: "ontology_semantic_manager_rejected", level: "WARN", reason: "unauthorized", transaction_outcome: "not_committed" };
+  const record = { operation_id: "00000000-0000-4000-8000-000000000001", team_id: "team", profile_id: "profile", correlation_id: "correlation", msg: "topic_semantic_manager_rejected", level: "WARN", reason: "unauthorized", transaction_outcome: "not_committed" };
   const denied = { ...expected, operationKey: undefined, contentFree: true, reason: "unauthorized", outcomeEvent: record.msg };
   verifySemanticPublication(window([record]), denied);
   assert.throws(() => verifySemanticPublication(window([{ ...record, draft_id: "foreign-draft" }]), denied));
@@ -75,9 +75,9 @@ test("manager parser requires content-free authorization rejection", () => {
 
 test("manager parser retains precise stale-draft rejection", () => {
   const { records } = fixture();
-  records.at(-1).msg = "ontology_semantic_manager_rejected";
+  records.at(-1).msg = "topic_semantic_manager_rejected";
   for (const record of records) record.draft_id = "draft";
-  verifySemanticPublication(window(records), { ...expected, outcomeEvent: "ontology_semantic_manager_rejected" });
+  verifySemanticPublication(window(records), { ...expected, outcomeEvent: "topic_semantic_manager_rejected" });
 });
 
 for (const [name, mutate] of [
@@ -89,7 +89,7 @@ for (const [name, mutate] of [
   ["credential leak", (records) => { records[0].canary = "credential-canary"; return records; }],
   ["unavailable capture", (records) => { records[0].payload_chunk.state = "unavailable"; return records; }],
   ["truncated manifest", (records) => { records.at(-2).capture_state = "truncated"; return records; }],
-  ["misleading commit", (records) => { records.at(-1).msg = "ontology_semantic_publication_committed"; return records; }],
+  ["misleading commit", (records) => { records.at(-1).msg = "topic_semantic_publication_committed"; return records; }],
 ]) {
   test(`semantic parser rejects ${name}`, () => assert.throws(() => verifySemanticPublication(window(mutate(fixture().records)), expected)));
 }

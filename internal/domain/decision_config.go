@@ -3,17 +3,21 @@ package domain
 import "time"
 
 const (
-	AppConfigDecisionDeduplication = "DECISION_DEDUPLICATION_ENABLED"
-	AppConfigDecisionSecurity      = "DECISION_SECURITY_REVIEW_ENABLED"
-	AppConfigDecisionConflict      = "DECISION_CONFLICT_REVIEW_ENABLED"
-	AppConfigDecisionReranking     = "DECISION_RECALL_RERANKING_ENABLED"
+	AppConfigDecisionDeduplication      = "DECISION_DEDUPLICATION_ENABLED"
+	AppConfigDecisionSecurity           = "DECISION_SECURITY_REVIEW_ENABLED"
+	AppConfigDecisionConflict           = "DECISION_CONFLICT_REVIEW_ENABLED"
+	AppConfigDecisionReranking          = "DECISION_RECALL_RERANKING_ENABLED"
+	AppConfigDecisionTopicAssignment    = "DECISION_TOPIC_ASSIGNMENT_ENABLED"
+	AppConfigDecisionCommunityPlacement = "DECISION_COMMUNITY_PLACEMENT_ENABLED"
 )
 
 type DecisionTasks struct {
-	Deduplication   bool `json:"deduplication"`
-	SecurityReview  bool `json:"security_review"`
-	ConflictReview  bool `json:"conflict_review"`
-	RecallReranking bool `json:"recall_reranking"`
+	Deduplication      bool `json:"deduplication"`
+	SecurityReview     bool `json:"security_review"`
+	ConflictReview     bool `json:"conflict_review"`
+	RecallReranking    bool `json:"recall_reranking"`
+	TopicAssignment    bool `json:"topic_assignment"`
+	CommunityPlacement bool `json:"community_placement"`
 }
 
 type DecisionProviderStatus struct {

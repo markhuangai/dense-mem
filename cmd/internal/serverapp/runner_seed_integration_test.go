@@ -25,13 +25,13 @@ import (
 	"github.com/markhuangai/dense-mem/internal/evalharness"
 	knowledgepg "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	organization "github.com/markhuangai/dense-mem/internal/ontology"
-	ontologypg "github.com/markhuangai/dense-mem/internal/ontology/postgres"
 	searchapp "github.com/markhuangai/dense-mem/internal/search"
 	searchpg "github.com/markhuangai/dense-mem/internal/search/postgres"
 	"github.com/markhuangai/dense-mem/internal/settings"
 	settingspg "github.com/markhuangai/dense-mem/internal/settings/postgres"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
+	organization "github.com/markhuangai/dense-mem/internal/topics"
+	topicpg "github.com/markhuangai/dense-mem/internal/topics/postgres"
 	containerapi "github.com/moby/moby/api/types/container"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -46,7 +46,7 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	f := newRunnerServiceFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
-	require.NoError(t, f.native.Control(ctx, http.MethodPatch, "/config/ontology-maintenance", map[string]any{"items": []map[string]string{{"key": domain.AppConfigOntologyEnabled, "value": "false"}}}, nil))
+	require.NoError(t, f.native.Control(ctx, http.MethodPatch, "/config/topic-maintenance", map[string]any{"items": []map[string]string{{"key": domain.AppConfigTopicMaintenanceEnabled, "value": "false"}}}, nil))
 	key := "dm_seed_fixed_credential_identity_canary_782"
 	hash, err := crypto.HashKey(key)
 	require.NoError(t, err)
@@ -110,14 +110,14 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	require.Equal(t, 2, f.provider.calls, "a completed checkpoint can export without Remember calls")
 	manifest.ResumeScope = nil
 	migrator := storagepostgres.NewMigratorWithDB(f.native.DB)
-	var newest int64
-	require.NoError(t, f.native.DB.QueryRowContext(ctx, "SELECT version_id FROM goose_db_version ORDER BY id DESC LIMIT 1").Scan(&newest))
-	require.EqualValues(t, 20261114010000, newest, "the fixture rolls back only the verified no-op constraint-validation migration")
+	const validationVersion = int64(20261124010004)
+	require.Equal(t, validationVersion, seed.SchemaVersion, "the fixture rolls back only the no-op Down of the check validation")
 	require.NoError(t, migrator.RunDown(ctx))
 	var applied bool
-	require.NoError(t, f.native.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=$1 AND is_applied)", newest).Scan(&applied))
+	require.NoError(t, f.native.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=$1 AND is_applied)", validationVersion).Scan(&applied))
 	require.False(t, applied)
-	seed.SchemaVersion = 20261113020000
+	require.NoError(t, f.native.DB.QueryRowContext(ctx, "SELECT COALESCE(max(version_id),0) FROM (SELECT DISTINCT ON (version_id) version_id,is_applied FROM goose_db_version ORDER BY version_id,id DESC) latest WHERE is_applied").Scan(&seed.SchemaVersion))
+	require.Less(t, seed.SchemaVersion, validationVersion)
 	_, err = f.native.DB.ExecContext(ctx, "INSERT INTO operation_logs(severity,severity_rank,message) VALUES ('DEBUG',10,$1)", "seed-provider-credential-canary-782")
 	require.NoError(t, err)
 	config, err := pgx.ParseConfig(f.admin.Dialector.(*gormpostgres.Dialector).Config.DSN)
@@ -200,7 +200,7 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	var restoredDatabase string
 	require.NoError(t, restoredDB.QueryRowContext(ctx, "SELECT current_database()").Scan(&restoredDatabase))
 	require.Equal(t, target, restoredDatabase)
-	require.NoError(t, restoredDB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=$1 AND is_applied)", newest).Scan(&applied))
+	require.NoError(t, restoredDB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=$1 AND is_applied)", validationVersion).Scan(&applied))
 	require.False(t, applied, "the restored seed must require the supported startup migration")
 	require.NoError(t, storagepostgres.NewMigratorWithDB(restoredDB).RunUp(ctx))
 	for _, table := range []string{"operation_logs", "remember_attempt_diagnostics", "remember_invocation_diagnostics", "remember_failure_artifacts"} {
@@ -208,7 +208,7 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 		require.NoError(t, restoredDB.QueryRowContext(ctx, "SELECT count(*) FROM "+table).Scan(&count))
 		require.Zero(t, count)
 	}
-	require.NoError(t, restoredDB.QueryRowContext(ctx, "SELECT is_applied FROM goose_db_version WHERE version_id=$1 ORDER BY id DESC LIMIT 1", newest).Scan(&applied))
+	require.NoError(t, restoredDB.QueryRowContext(ctx, "SELECT is_applied FROM goose_db_version WHERE version_id=$1 ORDER BY id DESC LIMIT 1", validationVersion).Scan(&applied))
 	require.True(t, applied)
 	loaded, err := accesspostgres.NewCredentialRepository(restored, storagepostgres.NewRLS(), nil).GetActiveByPrefix(ctx, crypto.GetKeyPrefix(key))
 	require.NoError(t, err)
@@ -220,8 +220,8 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	require.False(t, crypto.VerifyKey("wrong-seed-key", loaded.KeyHash))
 	rls := storagepostgres.NewRLS()
 	restoredSettings := settings.NewAppConfigService(settingspg.NewAppConfigRepository(restored, rls), nil)
-	restoredMaintenance := buildOntologyMaintenance(ontologypg.NewStore(restored, rls), restoredSettings, nil,
-		assessor.DefaultSemanticAssessmentLimits(), manifest.Model, 0, nil, nil, organization.MaintenanceDiagnosticCapture{})
+	restoredMaintenance := buildTopicMaintenance(topicpg.NewStore(restored, rls), restoredSettings, nil,
+		assessor.DefaultSemanticAssessmentLimits(), manifest.Model, 0, 0, nil, nil, organization.MaintenanceDiagnosticCapture{})
 	restoredControl := runnerControlServer(t, restoredMaintenance, restoredSettings, searchapp.NewSearchConvergenceService(
 		searchpg.NewStore(restored, rls), knowledgepg.NewStore(restored, rls),
 	))
@@ -230,21 +230,21 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	beforeCalls := f.provider.calls
 	_, _, _, cleanObservation, err := evalharness.VerifySeed(ctx, manifest, corpus, f.native.Client, &native)
 	require.NoError(t, err)
-	require.Empty(t, cleanObservation.Ontology.ConfigurationError)
+	require.Empty(t, cleanObservation.TopicMaintenance.ConfigurationError)
 	require.Equal(t, beforeCalls, f.provider.calls, "restoring and verifying a seed performs no Remember provider work")
 	require.Equal(t, seed.Scope, native.Scope)
 	setRestoredOntology := func(value string) {
 		t.Helper()
-		_, err := restoredSettings.UpdateOntologyMaintenanceSettings(ctx, map[string]string{domain.AppConfigOntologyEnabled: value}, "control", "", "")
+		_, err := restoredSettings.UpdateTopicMaintenanceSettings(ctx, map[string]string{domain.AppConfigTopicMaintenanceEnabled: value}, "control", "", "")
 		require.NoError(t, err)
 	}
 	setRestoredOntology("true")
 	_, _, _, restoredObservation, err := evalharness.VerifySeed(ctx, manifest, corpus, f.native.Client, &native)
-	require.ErrorContains(t, err, "unexpected native ontology state")
-	require.True(t, restoredObservation.Ontology.Enabled)
+	require.ErrorContains(t, err, "unexpected native Topic maintenance state")
+	require.True(t, restoredObservation.TopicMaintenance.Enabled)
 	_, _, _, sourceObservation, err := evalharness.VerifySeed(ctx, manifest, corpus, f.native.Client, f.native)
 	require.NoError(t, err)
-	require.False(t, sourceObservation.Ontology.Enabled)
+	require.False(t, sourceObservation.TopicMaintenance.Enabled)
 	setRestoredOntology("false")
 	claimedSkip := seed
 	claimedSkip.AISecurityReview = "skipped"

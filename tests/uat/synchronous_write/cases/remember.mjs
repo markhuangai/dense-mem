@@ -949,7 +949,7 @@ export function postgresExec(sql, label) {
   const composeArgs = ["compose", "-p", composeProject, "-f", composeFile];
   composeArgs.push("-f", composeOverlay);
   composeArgs.push(
-    "exec", "-T", "-e", "PGOPTIONS=-c app.storage_layout=feature-storage-v1", "postgres", "sh", "-ec",
+    "exec", "-T", "-e", "PGOPTIONS=-c app.storage_layout=feature-storage-v1 -c app.topic_layout=topic-storage-v1", "postgres", "sh", "-ec",
     'psql -X -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At -c "$1"',
     label,
     scopedSQL,

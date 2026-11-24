@@ -15,7 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	ontology "github.com/markhuangai/dense-mem/internal/ontology/contract"
+	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,8 +49,8 @@ func TestRunnerGuardRejectsLocalExecutionAndReruns(t *testing.T) {
 func TestNativeReadinessRejectsUndrainedWorkAndCapacityDrift(t *testing.T) {
 	manifest := Manifest{Model: "synthetic", ContextWindowTokens: 500000, EmbeddingModel: "text-embedding-3-small", EmbeddingDimensions: 1536}
 	now := time.Now()
-	observation := NativeObservation{Ontology: ontology.MaintenanceStatus{Enabled: true, Paused: true, DiscoveryComplete: true, CoverageComplete: true, Counts: ontology.MaintenanceCounts{Eligible: 1, Organized: 1},
-		Window: &ontology.MaintenanceWindow{Policy: domain.OntologyMaintenanceConfig{Model: manifest.Model, ContextWindowTokens: 500000, MaxConcurrency: 4, TeamMaxConcurrency: 4}}},
+	observation := NativeObservation{TopicMaintenance: topic.MaintenanceStatus{Enabled: true, Paused: true, DiscoveryComplete: true, CoverageComplete: true, Counts: topic.MaintenanceCounts{Eligible: 1, Organized: 1},
+		Window: &topic.MaintenanceWindow{Policy: domain.TopicMaintenanceConfig{Model: manifest.Model, ContextWindowTokens: 500000, MaxConcurrency: 4, TeamMaxConcurrency: 4}}},
 		ProviderAttempts: []NativeAttempt{{OperationKey: "operation", AssessmentID: "assessment", Number: 1, Terminal: true, ReconciledAt: &now, UsageAvailable: true, Input: 2, Output: 3, Total: 5}}}
 	require.NoError(t, json.Unmarshal([]byte(`{"search":{"status":"converged","expected_documents":1,"current_documents":1,"contract":{"model":"text-embedding-3-small","dimensions":1536}}}`), &observation))
 	require.NoError(t, NativeReady(observation, true, true, manifest, "team"))
@@ -63,13 +63,13 @@ func TestNativeReadinessRejectsUndrainedWorkAndCapacityDrift(t *testing.T) {
 		"active batch":         func(o *NativeObservation) { o.ActiveBatches = 1 },
 		"unreconciled":         func(o *NativeObservation) { o.ProviderAttempts[0].ReconciledAt = nil },
 		"negative usage":       func(o *NativeObservation) { o.ProviderAttempts[0].Input = -1 },
-		"ontology state":       func(o *NativeObservation) { o.Ontology.Paused = false },
-		"coverage incomplete":  func(o *NativeObservation) { o.Ontology.CoverageComplete = false },
-		"empty ontology":       func(o *NativeObservation) { o.Ontology.Counts = ontology.MaintenanceCounts{} },
-		"model drift":          func(o *NativeObservation) { o.Ontology.Window.Policy.Model = "different" },
-		"context drift":        func(o *NativeObservation) { o.Ontology.Window.Policy.ContextWindowTokens-- },
+		"ontology state":       func(o *NativeObservation) { o.TopicMaintenance.Paused = false },
+		"coverage incomplete":  func(o *NativeObservation) { o.TopicMaintenance.CoverageComplete = false },
+		"empty ontology":       func(o *NativeObservation) { o.TopicMaintenance.Counts = topic.MaintenanceCounts{} },
+		"model drift":          func(o *NativeObservation) { o.TopicMaintenance.Window.Policy.Model = "different" },
+		"context drift":        func(o *NativeObservation) { o.TopicMaintenance.Window.Policy.ContextWindowTokens-- },
 		"team override": func(o *NativeObservation) {
-			o.Ontology.Window.Policy.TeamConcurrencyOverrides = []domain.OntologyTeamConcurrencyOverride{{TeamID: "team", MaxConcurrency: 1}}
+			o.TopicMaintenance.Window.Policy.TeamConcurrencyOverrides = []domain.TopicTeamConcurrencyOverride{{TeamID: "team", MaxConcurrency: 1}}
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -99,7 +99,7 @@ func TestRunnerStartupFailureStillDrainsAndCapturesCompleteDenominators(t *testi
 	var pauses atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		pauses.Add(1)
-		require.Equal(t, "/control/api/ontology/pause", r.URL.Path)
+		require.Equal(t, "/control/api/topic-maintenance/pause", r.URL.Path)
 		require.Equal(t, "Bearer "+key, r.Header.Get("Authorization"))
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
