@@ -119,22 +119,15 @@ func TestCrossOwnerRelativeTimeRequiresResolvedCalendarContext(t *testing.T) {
 	}
 }
 
-func TestOrganizationClassificationPreservesOverrideAndAssignmentPrecedence(t *testing.T) {
-	for _, kind := range []SourceKind{EvidenceSource} {
-		t.Run(string(kind), func(t *testing.T) {
-			source := policySnapshot("fixed-source", kind, "fixed meaning")
-			assignment := RecordView{Record: Record{ID: policyID("assignment"), Assignment: &Assignment{Source: source.SourceHandle, DefinitionID: policyID("assigned")}}, Current: true}
-			override := RecordView{Record: Record{ID: policyID("override"), Override: &Override{Action: SetClassification, DefinitionID: policyID("chosen"), Members: []SourceHandle{source.SourceHandle}}}}
-			locked, preferred := OrganizationClassification(source, []RecordView{assignment, override}, nil)
-			require.Equal(t, override.Override.DefinitionID, locked)
-			require.Empty(t, preferred)
-			locked, preferred = OrganizationClassification(source, []RecordView{assignment}, nil)
-			require.Equal(t, assignment.Assignment.DefinitionID, locked)
-			require.Empty(t, preferred)
-			assignment.Current = false
-			locked, preferred = OrganizationClassification(source, []RecordView{assignment}, nil)
-			require.Empty(t, locked)
-			require.Empty(t, preferred)
-		})
-	}
+func TestOrganizationClassificationUsesCurrentAssignmentDespiteHistoricalOverride(t *testing.T) {
+	source := policySnapshot("fixed-source", EvidenceSource, "fixed meaning")
+	assignment := RecordView{Record: Record{ID: policyID("assignment"), Kind: AssignmentKind, Assignment: &Assignment{Source: source.SourceHandle, DefinitionID: policyID("assigned")}}, Current: true}
+	override := RecordView{Record: Record{ID: policyID("override"), Kind: OverrideKind, Override: &Override{Action: SetClassification, DefinitionID: policyID("chosen"), Members: []SourceHandle{source.SourceHandle}}}, Current: true}
+	locked, preferred := OrganizationClassification(source, []RecordView{override, assignment}, nil)
+	require.Equal(t, assignment.Assignment.DefinitionID, locked)
+	require.Empty(t, preferred)
+	assignment.Current = false
+	locked, preferred = OrganizationClassification(source, []RecordView{override, assignment}, nil)
+	require.Empty(t, locked)
+	require.Empty(t, preferred)
 }

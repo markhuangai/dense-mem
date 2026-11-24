@@ -109,11 +109,6 @@ func (s *Store) commitPublication(tx *gorm.DB, fence scope, input ontology.Publi
 		records = append(records, change.Record)
 		if change.Record.Definition != nil {
 			changedDefinitions = append(changedDefinitions, change.Record.ID)
-			if parent := change.Record.Definition.ParentID; parent != "" && !change.Record.Retired {
-				if err := checkCommunityAncestry(tx, fence, change.Record.ID, parent); err != nil {
-					return ontology.PublicationResult{}, err
-				}
-			}
 		}
 	}
 	catalog, err := validationCatalog(tx, fence, records, changedDefinitions)
@@ -185,6 +180,21 @@ func (s *Store) commitPublication(tx *gorm.DB, fence scope, input ontology.Publi
 		}
 		if updated.RowsAffected != 1 {
 			return ontology.PublicationResult{}, ontology.ErrConflict
+		}
+	}
+	// Community placements are version-bound, so inspect the proposed heads after the entire publication has been written.
+	for _, record := range prepared {
+		if record.Retired || record.Definition == nil || record.Definition.ParentID == "" {
+			continue
+		}
+		parent := record.Definition.ParentID
+		if err := checkCommunityAncestry(tx, fence, record.ID, parent); err != nil {
+			if errors.Is(err, ontology.ErrConflict) {
+				return ontology.PublicationResult{}, &ontology.PublicationRejection{
+					Cause: err, Reason: "community_hierarchy_conflict", RecordID: record.ID, ParentID: parent,
+				}
+			}
+			return ontology.PublicationResult{}, err
 		}
 	}
 	updated := tx.Exec(`UPDATE topic_catalog_heads SET revision=? WHERE team_id=?::uuid

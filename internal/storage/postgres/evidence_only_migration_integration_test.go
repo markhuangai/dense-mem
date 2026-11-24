@@ -110,7 +110,10 @@ func evidenceOnlyFingerprints(t *testing.T, ctx context.Context, db *sql.DB) map
 
 func assertEvidenceOnlyCatalog(t *testing.T, ctx context.Context, db *sql.DB) {
 	t.Helper()
-	rows, err := db.QueryContext(ctx, `SELECT relname FROM pg_class WHERE relnamespace='public'::regnamespace AND relname ~ '^(entity_|value_|relationship_|predicate_|team_predicate_|hypothes|dream_|community_)' ORDER BY relname`)
+	rows, err := db.QueryContext(ctx, `SELECT relname FROM pg_class WHERE relnamespace='public'::regnamespace
+ AND relname ~ '^(entity_|value_|relationship_|predicate_|team_predicate_|hypothes|dream_|community_)'
+ AND relname NOT IN ('community_placement_outcomes','community_placement_outcomes_pkey','community_placement_operation_idx','community_placement_topic_idx')
+ ORDER BY relname`)
 	require.NoError(t, err)
 	var remaining []string
 	for rows.Next() {
@@ -167,7 +170,7 @@ func TestEvidenceOnlyPostgresFreshInstall(t *testing.T) {
 	require.NoError(t, NewMigratorWithDB(db).RunUp(replayCtx), "an applied migration must not analyze the holds table again")
 	require.NoError(t, blocker.Rollback())
 
-	require.ErrorContains(t, migrationDownTo(ctx, db, FeatureStorageDataVersion), "recovery rolls forward")
+	require.ErrorContains(t, migrationDownTo(ctx, db, topicStorageCutoverVersion), "requires forward recovery")
 	_, err = db.ExecContext(ctx, `CREATE ROLE evidence_only_marker_writer NOSUPERUSER NOBYPASSRLS;
  GRANT USAGE ON SCHEMA public TO evidence_only_marker_writer;
  GRANT INSERT ON v2_compatibility_markers TO evidence_only_marker_writer;
@@ -311,8 +314,11 @@ func TestEvidenceOnlyPostgresPopulatedUpgradePreservesEvidenceAndLegacyIdentity(
 	}))
 	seedEvidenceOnlyOntology(t, ctx, db, fixture)
 	rebuilt := evidenceOnlyOntologySnapshot(t, ctx, db)
-	require.NoError(t, NewMigratorWithDB(db).RunUp(ctx))
+	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, 20261114010000))
 	require.Equal(t, rebuilt, evidenceOnlyOntologySnapshot(t, ctx, db), "an applied cutover must preserve new organization")
+	beforeTopicStorage := evidenceOnlyFingerprints(t, ctx, db)
+	require.NoError(t, NewMigratorWithDB(db).RunUp(ctx))
+	require.Equal(t, beforeTopicStorage, evidenceOnlyFingerprints(t, ctx, db))
 	require.Error(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `UPDATE evidence_fragments SET content='forbidden rewrite' WHERE team_id=$1::uuid AND fragment_id=$2::uuid`, fixture.team, fixture.evidence)
 		return err
@@ -570,17 +576,12 @@ func TestEvidenceOnlyPostgresMixedOntologyReceiptsAndDrafts(t *testing.T) {
 	legacyOverride := ontology.Record{ID: overrideID, Version: 1, Kind: ontology.OverrideKind,
 		Override: &ontology.Override{Action: ontology.SetClassification, DefinitionID: retiredID, Members: []ontology.SourceHandle{{Kind: "entity", ID: retiredID, Version: 1}}},
 		Sources:  []ontology.SourceDependency{{SourceHandle: ontology.SourceHandle{Kind: "entity", ID: retiredID, Version: 1}, Fingerprint: digest}}, Dependencies: []ontology.RevisionRef{{ID: retiredID, Version: 1}}, Fingerprint: digest}
-	compiled, err := ontology.CompileManagementEdits(ontology.SaveDraftInput{OperationKey: "evidence-override", ExpectedRevision: 2, Reason: "Replace old graph classification with an Evidence group", Edits: []ontology.ManagementEdit{{Action: "group_together", RecordID: overrideID, ExpectedVersion: 1, Members: []ontology.SourceHandle{evidence, other}}}},
-		ontology.ManagementContext{DraftID: uuid.NewString(), Revision: 2, Records: map[string]ontology.Record{overrideID: legacyOverride}, Sources: map[string]ontology.SourceSnapshot{
-			ontology.SourceKey(evidence): {SourceHandle: evidence, TeamID: fixture.team, SpaceID: fixture.space, Generation: fixture.generation, Eligible: true, MeaningKey: "migration-override-context"},
-			ontology.SourceKey(other):    {SourceHandle: other, TeamID: fixture.team, SpaceID: fixture.space, Generation: fixture.generation, Eligible: true, MeaningKey: "migration-override-context"},
-		}})
+	retainedOverride := ontology.Record{ID: overrideID, Version: 2, Kind: ontology.OverrideKind,
+		Override: &ontology.Override{Action: ontology.GroupTogether, Members: []ontology.SourceHandle{evidence, other}},
+		Sources:  group.Sources[:2]}
+	fingerprint, err := ontology.RecordFingerprintWithAcceptedSources(retainedOverride, map[string]ontology.Record{overrideID: retainedOverride})
 	require.NoError(t, err)
-	require.Len(t, compiled.Changes, 1)
-	retainedOverride := compiled.Changes[0].Record
-	retainedOverride.Version = 2
-	retainedOverride.Fingerprint, err = ontology.RecordFingerprintWithAcceptedSources(retainedOverride, map[string]ontology.Record{overrideID: retainedOverride})
-	require.NoError(t, err)
+	retainedOverride.Fingerprint = fingerprint
 	receipt := ontology.OrganizationReceipt{ID: assessmentID, OperationKey: "mixed-receipt", InputHash: digest, BatchHash: digest, ContextHash: digest, ProviderIdentity: "original-provider",
 		Sources: group.Sources, Dependencies: group.Dependencies, Result: ontology.OrganizationResult{AssessmentID: assessmentID, Current: true,
 			Outcomes:    []ontology.OrganizationOutcome{{Source: evidence, Status: "organized", RecordIDs: []string{groupID, retiredID}}, {Source: other, Status: "organized", RecordIDs: []string{groupID}}, {Source: group.Sources[2].SourceHandle, Status: "organized", RecordIDs: []string{retiredID}}},

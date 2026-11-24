@@ -179,8 +179,10 @@ func (s *MaintenanceService) placeCommunity(ctx context.Context, work maintenanc
 	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer finishCancel()
 	var persistErr error
+	var committed bool
 	if !errors.Is(err, contract.ErrMaintenancePaused) && !errors.Is(err, contract.ErrMaintenanceDisabled) && !errors.Is(err, contract.ErrWindowClosed) {
 		persistErr = s.deps.Communities.CompleteCommunity(finishCtx, claim, input, outcome, failure, s.deps.Now())
+		committed = persistErr == nil
 	}
 	if persistErr != nil || errors.Is(err, contract.ErrMaintenancePaused) || errors.Is(err, contract.ErrMaintenanceDisabled) || errors.Is(err, contract.ErrWindowClosed) {
 		if failure == "" {
@@ -193,12 +195,24 @@ func (s *MaintenanceService) placeCommunity(ctx context.Context, work maintenanc
 		level = slog.LevelError
 	}
 	if s.deps.Logger != nil {
-		s.deps.Logger.LogAttrs(finishCtx, level, "community_placement.outcome",
+		status := outcome.Status
+		if !committed {
+			status = "not_committed"
+		}
+		if errors.Is(persistErr, contract.ErrSourceStale) {
+			failure = "stale_input"
+		}
+		fields := []slog.Attr{
 			slog.String("team_id", claim.TeamID), slog.String("run_id", claim.RunID),
 			slog.String("job_id", claim.ID), slog.String("topic_id", input.Topic.ID),
 			slog.Int64("topic_version", input.Topic.Version), slog.String("parent_topic_id", outcome.ParentID),
-			slog.String("method", outcome.Method), slog.String("status", outcome.Status), slog.String("failure_code", failure),
-			slog.Any("error", errors.Join(err, persistErr)))
+			slog.String("method", outcome.Method), slog.String("status", status), slog.String("failure_code", failure),
+			slog.Any("error", errors.Join(err, persistErr)),
+		}
+		if !committed && (outcome.Status == "placed" || outcome.Status == "standalone") {
+			fields = append(fields, slog.String("proposed_status", outcome.Status))
+		}
+		s.deps.Logger.LogAttrs(finishCtx, level, "community_placement.outcome", fields...)
 	}
 	return errors.Join(err, persistErr)
 }

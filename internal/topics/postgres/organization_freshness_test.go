@@ -136,61 +136,39 @@ func testOrganizationFreshnessComparisons(t *testing.T) {
 }
 
 func testOrganizationFreshnessBounds(t *testing.T) {
-	for _, check := range []string{"dependency_catalog_bound", "dependency_context_bound", "context_bound"} {
-		t.Run(check, func(t *testing.T) {
-			f := newOrganizationFixture(t)
-			source := f.organizationEvidence(t, 1, "Atlas uses PostgreSQL.", nil)
-			topic, parent := testTopic("postgresql"), testTopic("unrelated-root")
-			var revision int64
-			if check != "context_bound" {
-				changes := []ontology.Change{{Record: topic}}
-				if check == "dependency_context_bound" {
-					topic.Definition.ParentID = parent.ID
-					changes = []ontology.Change{{Record: parent}, {Record: topic}}
-				}
-				published, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("initial-definitions", revision, changes...))
-				require.NoError(t, err)
-				revision = published.Revision
+	f := newOrganizationFixture(t)
+	source := f.organizationEvidence(t, 1, "Atlas uses PostgreSQL.", nil)
+	dependency := f.source(t, source)
+	before := f.canonicalSnapshot(t)
+	service, calls := organizationFixtureService(t, f, nil, func(_ assessment.Request, response *assessment.Response) {
+		response.Definitions = []assessment.Definition{}
+		response.Items[0].Status, response.Items[0].DefinitionRef, response.Items[0].Reason = "ambiguous", "", "The topic is uncertain."
+		var revision int64
+		const topics = ontology.MaxDependencyRecords + 1
+		for offset := 0; offset < topics; offset += ontology.MaxChanges {
+			var changes []ontology.Change
+			for i := offset; i < min(offset+ontology.MaxChanges, topics); i++ {
+				topic := testTopic(fmt.Sprintf("context-%d", i))
+				topic.Sources = []ontology.SourceDependency{dependency}
+				changes = append(changes, ontology.Change{Record: topic})
 			}
-			before := f.canonicalSnapshot(t)
-			service, calls := organizationFixtureService(t, f, nil, func(_ assessment.Request, response *assessment.Response) {
-				target := topic.ID
-				if check == "dependency_context_bound" {
-					target = parent.ID
-				}
-				if check == "context_bound" {
-					response.Definitions = []assessment.Definition{}
-					response.Items[0].Status, response.Items[0].DefinitionRef, response.Items[0].Reason = "ambiguous", "", "The topic is uncertain."
-					topic.Sources = []ontology.SourceDependency{f.source(t, source)}
-					published, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("new-source-context", revision, ontology.Change{Record: topic}))
-					require.NoError(t, err)
-					revision = published.Revision
-				}
-				for offset := 0; offset < ontology.MaxDependencyRecords; offset += ontology.MaxChanges {
-					var changes []ontology.Change
-					for range min(ontology.MaxChanges, ontology.MaxDependencyRecords-offset) {
-						changes = append(changes, ontology.Change{Record: ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind,
-							Override: &ontology.Override{Action: ontology.PinDefinition, TargetID: target}}})
-					}
-					published, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication(fmt.Sprintf("concurrent-pins-%d", offset), revision, changes...))
-					require.NoError(t, err)
-					revision = published.Revision
-				}
-			})
-			input := ontology.OrganizationInput{OperationKey: "bounded-publication", Sources: []ontology.SourceHandle{source}}
-			result, err := service.Organize(context.Background(), f.team, input)
-			require.ErrorIs(t, err, ontology.ErrSourceStale)
-			require.Equal(t, int32(1), calls.Load())
-			require.Nil(t, result.Publication)
-			require.NotNil(t, result.FreshnessRejection)
-			require.Equal(t, check, result.FreshnessRejection.Check)
-			require.True(t, result.FreshnessRejection.Valid())
-			replay, err := service.Organize(context.Background(), f.team, input)
-			require.Error(t, err)
-			require.True(t, replay.Existing)
-			require.Equal(t, result.FreshnessRejection, replay.FreshnessRejection)
-			require.Equal(t, int32(1), calls.Load())
-			require.Equal(t, before, f.canonicalSnapshot(t))
-		})
-	}
+			published, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication(fmt.Sprintf("concurrent-topics-%d", offset), revision, changes...))
+			require.NoError(t, err)
+			revision = published.Revision
+		}
+	})
+	input := ontology.OrganizationInput{OperationKey: "bounded-publication", Sources: []ontology.SourceHandle{source}}
+	result, err := service.Organize(context.Background(), f.team, input)
+	require.ErrorIs(t, err, ontology.ErrSourceStale)
+	require.Equal(t, int32(1), calls.Load())
+	require.Nil(t, result.Publication)
+	require.NotNil(t, result.FreshnessRejection)
+	require.Equal(t, "context_bound", result.FreshnessRejection.Check)
+	require.True(t, result.FreshnessRejection.Valid())
+	replay, err := service.Organize(context.Background(), f.team, input)
+	require.Error(t, err)
+	require.True(t, replay.Existing)
+	require.Equal(t, result.FreshnessRejection, replay.FreshnessRejection)
+	require.Equal(t, int32(1), calls.Load())
+	require.Equal(t, before, f.canonicalSnapshot(t))
 }

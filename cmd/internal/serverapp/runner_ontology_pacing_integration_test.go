@@ -71,8 +71,10 @@ func measureOntologyPacing(t *testing.T, mode string, tick time.Duration) ontolo
 	defer cancel()
 	client := f.native.Client
 	drain := func() {
+		var status ontology.MaintenanceStatus
 		for range 8 {
-			status, err := f.maintenance.Status(ctx)
+			var err error
+			status, err = f.maintenance.Status(ctx)
 			require.NoError(t, err)
 			if status.CoverageComplete {
 				return
@@ -80,12 +82,12 @@ func measureOntologyPacing(t *testing.T, mode string, tick time.Duration) ontolo
 			_, err = f.maintenance.RunTurn(ctx)
 			require.NoError(t, err)
 		}
-		t.Fatal("ontology fixture did not reach complete coverage")
+		t.Fatalf("fixture did not reach complete Topic coverage: assignment=%+v placement=%+v", status.Counts, status.Communities)
 	}
 	batchCount := func() int {
 		var count int
 		require.NoError(t, f.native.DB.QueryRowContext(ctx,
-			`SELECT count(*) FROM topic_maintenance_batches WHERE team_id=$1::uuid AND status='completed'`,
+			`SELECT count(*) FROM topic_maintenance_batches WHERE team_id=$1::uuid AND status='completed' AND community_topic_id IS NULL`,
 			f.native.Scope.TeamID).Scan(&count))
 		return count
 	}
@@ -113,7 +115,8 @@ func measureOntologyPacing(t *testing.T, mode string, tick time.Duration) ontolo
 		releaseErr := f.ontology.ReleaseMaintenanceTurn(ctx, *turn)
 		require.NoError(t, errors.Join(err, releaseErr))
 	}
-	for _, text := range []string{"Celandine blossoms.", "Tamarind ripens."} {
+	for index := range (pacingBatches - 1) * ontology.MaxOrganizationSources {
+		text := fmt.Sprintf("Botanical entry %d describes Celandine blossoms.", index+1)
 		_, err := rememberPacingEvidence(ctx, client, "team_shared", text, "", "", "")
 		require.NoError(t, err)
 		discover()

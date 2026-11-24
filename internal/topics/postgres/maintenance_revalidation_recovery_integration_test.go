@@ -40,9 +40,9 @@ func TestOntologyMaintenanceRevalidationRecovery(t *testing.T) {
 			case "override":
 				other := testTopic("manager-recovery-replacement")
 				override := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.SetClassification, DefinitionID: other.ID, Members: []ontology.SourceHandle{source}}, Sources: []ontology.SourceDependency{f.source(t, source)}}
-				revalidationPublish(t, f, ontology.Change{Record: other}, ontology.Change{Record: override})
+				require.ErrorIs(t, revalidationPublishChanges(f, ontology.Change{Record: other}, ontology.Change{Record: override}), ontology.ErrOverride)
 			}
-			if change == "definition" || change == "source" || change == "override" {
+			if change == "definition" || change == "source" {
 				revalidationRefresh(t, f, source)
 			}
 			before := revalidationQueue(t, f, source)
@@ -70,7 +70,7 @@ func TestOntologyMaintenanceRevalidationRecovery(t *testing.T) {
 			require.Equal(t, "completed", x.batchStatus(t))
 			after := revalidationQueue(t, f, source)
 			require.Equal(t, before.Revision, after.Revision)
-			if change == "unchanged" || change == "busy_catalog" || change == "busy_source" {
+			if change == "unchanged" || change == "override" || change == "busy_catalog" || change == "busy_source" {
 				require.Equal(t, "organized", after.Status)
 				require.Equal(t, x.result.AssessmentID, after.AssessmentID)
 			} else {

@@ -1,6 +1,7 @@
 package contract
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -27,20 +28,31 @@ func TestOntologyRejectsMismatchedMemberVersions(t *testing.T) {
 
 func TestOntologyEnrichedDependenciesAreBounded(t *testing.T) {
 	snapshot := policySnapshot("evidence", EvidenceSource, "")
-	class := Record{ID: uuid.NewString(), Version: 1, Kind: Topic, Definition: &Definition{Key: "people", Label: "People"}}
-	catalog := policyCatalog(t, class)
+	topic := topicRecord("people")
+	topic.Version = 1
 	snapshots := map[string]SourceSnapshot{SourceKey(snapshot.SourceHandle): snapshot}
-	for i := 0; i < MaxMembers+1; i++ {
-		override := Record{ID: uuid.NewString(), Version: 1, Kind: OverrideKind, Override: &Override{Action: SetClassification, DefinitionID: class.ID, Members: []SourceHandle{snapshot.SourceHandle}}, Sources: []SourceDependency{sourceDependency(t, snapshot)}}
-		override.Dependencies = dependenciesFor(override, catalog)
-		fingerprint, err := RecordFingerprint(override, snapshots, catalog)
-		require.NoError(t, err)
-		override.Fingerprint = fingerprint
-		catalog[override.ID] = override
+	assignment := Record{ID: uuid.NewString(), Kind: AssignmentKind, Assignment: &Assignment{Source: snapshot.SourceHandle, DefinitionID: topic.ID}, Sources: []SourceDependency{sourceDependency(t, snapshot)}}
+	topics := []Record{topic}
+	var dependencies []RevisionRef
+	for i := range MaxMembers {
+		dependency := topicRecord(fmt.Sprintf("related-%d", i))
+		dependency.Version = 1
+		topics = append(topics, dependency)
+		dependencies = append(dependencies, RevisionRef{ID: dependency.ID, Version: dependency.Version})
 	}
-	assignment := Record{ID: uuid.NewString(), Kind: AssignmentKind, Assignment: &Assignment{Source: snapshot.SourceHandle, DefinitionID: class.ID}, Sources: []SourceDependency{sourceDependency(t, snapshot)}}
-	_, err := PreparePublication(catalog, snapshots, publicationFor(assignment), true)
+	catalog := policyCatalog(t, topics...)
+	assignment.Dependencies = dependencies[:MaxMembers-1]
+	prepared, err := PreparePublication(catalog, snapshots, publicationFor(assignment), true)
+	require.NoError(t, err)
+	require.Len(t, prepared[0].Dependencies, MaxMembers)
+	require.Contains(t, prepared[0].Dependencies, RevisionRef{ID: topic.ID, Version: topic.Version})
+
+	assignment.Dependencies = dependencies
+	input := publicationFor(assignment)
+	require.NoError(t, ValidatePublication(input))
+	prepared, err = PreparePublication(catalog, snapshots, input, true)
 	require.ErrorIs(t, err, ErrInvalid)
+	require.Nil(t, prepared)
 }
 
 func TestOntologyDependencyTraversalRejectsCyclesAndMissingSources(t *testing.T) {

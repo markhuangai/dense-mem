@@ -25,8 +25,8 @@ func TestOntologyMaintenanceCurrentReceiptCompletion(t *testing.T) {
 		{"definition support withdrawn after receipt", "support", "pending"},
 		{"required definition revised after receipt", "definition", "pending"},
 		{"required definition retired after receipt", "retired", "pending"},
-		{"classification override after receipt", "override", "pending"},
-		{"grouping override after receipt", "grouping", "pending"},
+		{"rejected classification override leaves receipt current", "override", "organized"},
+		{"rejected grouping override leaves receipt current", "grouping", "organized"},
 		{"expired worker cannot complete", "expired", "pending"},
 		{"different receipt identity cannot complete", "identity", "pending"},
 		{"receipt from another operation cannot complete", "operation", "pending"},
@@ -92,10 +92,10 @@ func TestOntologyMaintenanceCurrentReceiptCompletion(t *testing.T) {
 			case "override":
 				other := testTopic("manager-replacement")
 				override := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.SetClassification, DefinitionID: other.ID, Members: []ontology.SourceHandle{a}}, Sources: []ontology.SourceDependency{f.source(t, a)}}
-				revalidationPublish(t, f, ontology.Change{Record: other}, ontology.Change{Record: override})
+				require.ErrorIs(t, revalidationPublishChanges(f, ontology.Change{Record: other}, ontology.Change{Record: override}), ontology.ErrOverride)
 			case "grouping":
 				override := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: ontology.KeepSeparate, Members: []ontology.SourceHandle{a, b}}, Sources: []ontology.SourceDependency{f.source(t, a), f.source(t, b)}}
-				revalidationPublish(t, f, ontology.Change{Record: override})
+				require.ErrorIs(t, revalidationPublishChanges(f, ontology.Change{Record: override}), ontology.ErrOverride)
 			case "expired":
 				require.NoError(t, f.admin.Exec(`UPDATE topic_maintenance_batches SET lease_until=clock_timestamp()-interval '1 second' WHERE batch_id=?::uuid`, claim.ID).Error)
 			case "identity":
@@ -108,7 +108,7 @@ func TestOntologyMaintenanceCurrentReceiptCompletion(t *testing.T) {
 					return tx.Exec(`UPDATE memory_spaces SET generation=generation+1 WHERE id=?::uuid AND team_id=?::uuid`, f.space, f.team).Error
 				}))
 			}
-			if testCase.change == "source" || testCase.change == "support" || testCase.change == "definition" || testCase.change == "retired" || testCase.change == "override" || testCase.change == "grouping" {
+			if testCase.change == "source" || testCase.change == "support" || testCase.change == "definition" || testCase.change == "retired" {
 				for _, source := range claim.Sources {
 					revalidationRefresh(t, f, source)
 				}
@@ -162,6 +162,11 @@ func TestOntologyMaintenanceCurrentReceiptCompletion(t *testing.T) {
 				err := f.admin.Raw(`SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%SELECT revision FROM topic_catalog_heads%' AND pid<>pg_backend_pid())`).Row().Scan(&blocked)
 				return err == nil && blocked
 			}, 3*time.Second, 10*time.Millisecond)
+			if err := f.rls.WithSystemTx(context.Background(), f.app, func(tx *gorm.DB) error {
+				return appendMaintenanceOccurrence(tx, f, source)
+			}); err != nil {
+				return err
+			}
 			revalidationRefresh(t, f, source)
 			return nil
 		}))

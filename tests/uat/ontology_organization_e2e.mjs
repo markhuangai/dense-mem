@@ -219,10 +219,11 @@ try {
   assert.equal(canonicalFingerprints(), baseline, "a required foreground assignment failure must roll back canonical intake");
   await fixtureMode("normal");
   await finalizationRecovery(shared.api_key);
+  const staleAssignment = await staleAssignmentRevision(shared.api_key, topicManager.api_key);
   const topicWindow = captureSemanticAssessmentWindow({ project: required("DENSE_MEM_E2E_COMPOSE_PROJECT"), composeFile: required("DENSE_MEM_E2E_COMPOSE_FILE"), since: diagnosticSince, directory: failureDirectory+"/topic-selection" });
   const topicRecords=topicWindow.split(/\r?\n/).filter(Boolean).map((line)=>JSON.parse(line)).filter((row)=>row.team_id===teamID);
   for (const credential of [controlToken, ...credentialTeams.keys()]) assert(!topicWindow.includes(credential),"topic diagnostic capture exposed credentials");
-  verifyTopicProcessLogs(topicRecords);
+  verifyTopicProcessLogs(topicRecords, staleAssignment);
   const topicChunks = new Map();
   for (const row of topicRecords.filter((row) => ["recall_topic_filter_payload", "recall_topic_selection_payload"].includes(row.msg))) {
     assert(row.diagnostic_capture_id, "topic payload must identify its summary");
@@ -272,7 +273,7 @@ try {
   if (failures.length > 1) throw new AggregateError(failures, "ontology UAT and restoration failed", { cause: failure });
 }
 
-function verifyTopicProcessLogs(records) {
+function verifyTopicProcessLogs(records, stale) {
   const prepared = records.find((row) => row.msg === "topic_assignment.prepared" && row.matched_topics > 0 && row.proposed_topics > 0);
   assert(prepared?.assessment_id && prepared.operation_id && prepared.correlation_id, "mixed Topic assignment needs an assessment and Remember correlation");
   const shortlist = records.find((row) => row.msg === "topic_assignment.candidates" && row.assessment_id === prepared.assessment_id);
@@ -300,6 +301,16 @@ function verifyTopicProcessLogs(records) {
   assert(completed && completed.run_id === placement.run_id);
   const placed = topicProviderExchange(records, completed, "response");
   assert.equal(JSON.parse(placed.choices[0].message.content).parent_id, placement.parent_topic_id);
+
+  const staleLogs = records.filter((row) => row.correlation_id === stale.correlationID);
+  const oldShortlist = staleLogs.find((row) => row.msg === "topic_assignment.candidates" && row.candidates?.includes(stale.topicRef));
+  const staleAssessment = staleLogs.find((row) => row.msg === "structured_ai.completed" && row.assessment_id === oldShortlist?.assessment_id);
+  const trace = staleLogs.find((row) => row.msg === "structured_ai.attempt.completed" && row.exchange_id === staleAssessment?.exchange_id);
+  const rejected = staleLogs.find((row) => row.msg === "remember_invocation_completed");
+  assert(rejected?.level === "ERROR" && rejected.phase === "commit" && rejected.error_code === "stale_input");
+  assert(oldShortlist?.operation_id === rejected.invocation_id && staleAssessment?.outcome === "validated" && trace?.level === "TRACE");
+  const staleReply = topicProviderExchange(staleLogs, staleAssessment, "response");
+  assert(JSON.parse(staleReply.choices[0].message.content).matches.some((match) => match.id === stale.topicID));
 }
 
 function topicProviderExchange(records, stage, direction) {
@@ -408,6 +419,46 @@ async function fixtureMode(mode) {
   const response = await fetch(`${required("DENSE_MEM_E2E_PROVIDER_URL")}/ontology-fixture`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode }) });
   assert.equal(response.status, 200);
 }
+
+async function staleAssignmentRevision(writer, manager) {
+  const { records } = await organization("/records?kind=topic&limit=200", manager);
+  const topic = records.find((record) => record.definition?.label === "memory-storage");
+  assert(topic, "a revision fence requires an existing Topic");
+  const { revision } = await organization("/status", manager);
+  const before = canonicalFingerprints();
+  const reason = "Update storage vocabulary during an in-flight assignment";
+  await fixtureMode("hold");
+  const [intake, edited] = await Promise.allSettled([
+    rpcAttempt("remember", { target_space: "team_shared", idempotency_key: randomUUID(), evidence: [
+      { content: "PostgreSQL writes a new audit checkpoint.", source_type: "document", force_insert: true },
+    ] }, writer),
+    (async () => {
+      try {
+        await pollFinalization(async () => {
+          const health = await fetch(`${required("DENSE_MEM_E2E_PROVIDER_URL")}/health`);
+          assert.equal(health.status, 200);
+          return (await health.json()).active_ontology_requests === 1;
+        }, "foreground Topic provider hold", 12);
+        const draft = await organization("/drafts", manager, { operation_key: randomUUID(), expected_version: 0,
+          expected_revision: revision, reason, edits: [{ action: "define", kind: "topic", record_id: topic.id,
+            expected_version: topic.version, definition: { ...topic.definition, description: reason } }] });
+        await organization(`/drafts/${draft.id}/publish`, manager, {
+          operation_key: randomUUID(), expected_version: draft.version, expected_revision: revision, reason,
+        });
+      } finally {
+        await fixtureMode("normal");
+      }
+    })(),
+  ]);
+  if (edited.status === "rejected") throw edited.reason;
+  if (intake.status === "rejected") throw intake.reason;
+  const receipt = JSON.parse(intake.value.result.content[0].text);
+  assert.equal(receipt.processing_state, "failed");
+  assert.equal(receipt.errors[0].code, "stale_input");
+  assert.equal(canonicalFingerprints(), before, "stale Topic input must roll back the full Evidence write");
+  return { correlationID: receipt.correlation_id, topicID: topic.id, topicRef: `${topic.id}@${topic.version}` };
+}
+
 async function finalizationRecovery(key) {
   const configure = (value) => control("/config/topic-maintenance", { items: [{ key: "TOPIC_MAINTENANCE_ENABLED", value }] }, "PATCH");
   await configure("false");
@@ -449,7 +500,7 @@ async function finalizationRecovery(key) {
 
 async function pollFinalization(check, label, seconds = maintenanceObservationAttempts) {
   for (let index = 0; index < seconds; index++) {
-    if (check()) return;
+    if (await check()) return;
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   assert.fail(`timed out waiting for ${label}`);

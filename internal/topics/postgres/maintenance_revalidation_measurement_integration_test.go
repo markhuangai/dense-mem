@@ -17,10 +17,16 @@ import (
 
 func revalidationPublish(t *testing.T, f *ontologyFixture, changes ...ontology.Change) {
 	t.Helper()
+	require.NoError(t, revalidationPublishChanges(f, changes...))
+}
+
+func revalidationPublishChanges(f *ontologyFixture, changes ...ontology.Change) error {
 	page, err := f.store.ListRecords(context.Background(), f.team, "", "", 1)
-	require.NoError(t, err)
+	if err != nil {
+		return err
+	}
 	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication(uuid.NewString(), page.Revision, changes...))
-	require.NoError(t, err)
+	return err
 }
 
 func revalidationDiscover(t *testing.T, f *ontologyFixture, window *ontology.MaintenanceWindow) {

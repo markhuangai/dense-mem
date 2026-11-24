@@ -142,12 +142,12 @@ func incrementalDiscovery(t *testing.T, count int, supported bool) *discoveryFix
 		input := assignment.Scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation, OperationID: uuid.NewString()}
 		item := assignment.Publication{EvidenceID: handle.ID, Outcome: assignment.Outcome{Method: "generation", InputHash: testHash(text), Text: text,
 			Matches: []assignment.Match{{ID: x.topic.ID, Version: 1, Quote: text}}}}
-		require.NoError(t, f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
+		require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
 			return f.store.PublishAssignmentsTx(ctx, tx, input, []assignment.Publication{item})
 		}))
 	}
 	x.drain(t)
-	require.NoError(t, f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
+	require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
 		result := tx.Exec(`UPDATE topic_maintenance_sources s SET status='organized', last_assignment_input_hash=o.input_hash
 			FROM topic_assignment_outcomes o WHERE s.team_id=? AND s.shared_space_id=? AND s.space_generation=?
 			AND (s.team_id,s.shared_space_id,s.space_generation,s.source_id)=(o.team_id,o.shared_space_id,o.space_generation,o.evidence_id::text)

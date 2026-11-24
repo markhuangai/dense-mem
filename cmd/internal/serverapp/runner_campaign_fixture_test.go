@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	assessmentfixture "github.com/markhuangai/dense-mem/internal/testfixture/assessment"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -39,7 +38,9 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	"github.com/markhuangai/dense-mem/internal/settings"
 	settingspg "github.com/markhuangai/dense-mem/internal/settings/postgres"
+	assessmentfixture "github.com/markhuangai/dense-mem/internal/testfixture/assessment"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
+	"github.com/markhuangai/dense-mem/internal/topicassignment"
 	organization "github.com/markhuangai/dense-mem/internal/topics"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
@@ -90,28 +91,28 @@ func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var envelope struct {
 			Messages []modelprovider.Message `json:"messages"`
+			Format   struct {
+				Schema struct{ Name string } `json:"json_schema"`
+			} `json:"response_format"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&envelope); err != nil || len(envelope.Messages) < 2 {
 			http.Error(w, "invalid provider request", 400)
 			return
 		}
-		var input assessment.Request
-		if err := json.Unmarshal([]byte(envelope.Messages[1].Content), &input); err != nil {
-			http.Error(w, "invalid organization request", 400)
-			return
-		}
-		body, err := json.Marshal(runnerOrganizationResponse(input))
+		body, err := runnerTopicProcessResponse(envelope.Format.Schema.Name, []byte(envelope.Messages[1].Content))
 		if err != nil {
-			http.Error(w, "invalid fixture result", 500)
+			t.Error(err)
+			http.Error(w, "invalid topic fixture request", http.StatusBadRequest)
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"choices": []any{map[string]any{"message": map[string]any{"content": string(body)}}}})
 	}))
 	t.Cleanup(upstream.Close)
 	transport := structured.NewOpenAI(&config.Config{AIVerifierAPIURL: upstream.URL, AIVerifierAPIKey: "synthetic", AIVerifierModel: "runner-ontology"}, upstream.Client())
-	maintenance := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: topicStore, Config: configuration, Audit: audit, DefaultModel: "runner-ontology", Organizer: func(model string, tokens int64, accounting assessment.AttemptAccounting) *organization.Service {
-		return organization.NewService(topicStore, assessment.NewProviderWithAccounting(transport, model, assessor.DefaultSemanticAssessmentLimits(), accounting, int(tokens)))
-	}})
+	limits := assessor.DefaultSemanticAssessmentLimits()
+	maintenance := buildTopicMaintenance(topicStore, configuration, transport, limits, "runner-ontology", 0, audit, nil, organization.MaintenanceDiagnosticCapture{})
+	assignment := topicassignment.NewService(topicStore, configuration, transport, nil, limits, "runner-ontology", nil)
+	maintenance.WithTopicProcessing(assignment, topicStore, topicStore, organization.CommunityAssessor{Transport: transport, Limits: limits})
 	_, err = maintenance.Command(ctx, domain.TopicMaintenanceCommand{Action: "pause", OperationKey: uuid.NewString()}, "", "")
 	require.NoError(t, err)
 	recallStore := recallpg.NewStore(app, rls, search, recallpg.LoadRecallEvidenceConflictRecords).
@@ -199,11 +200,44 @@ func pairArgumentString(arguments map[string]any, key string) string {
 	return value
 }
 
+func runnerTopicProcessResponse(schema string, content []byte) ([]byte, error) {
+	switch schema {
+	case "topic_assignment_v1":
+		var input struct {
+			RequestID string                  `json:"request_id"`
+			Text      string                  `json:"evidence"`
+			Topics    []topicassignment.Topic `json:"topics"`
+		}
+		if err := json.Unmarshal(content, &input); err != nil {
+			return nil, err
+		}
+		matches, proposals := []map[string]string{}, []map[string]string{}
+		if len(input.Topics) > 0 {
+			matches = append(matches, map[string]string{"id": input.Topics[0].ID, "quote": input.Text})
+		} else {
+			proposals = append(proposals, map[string]string{
+				"label": "runner-storage", "description": "Paired fixture classification", "quote": input.Text,
+			})
+		}
+		return json.Marshal(map[string]any{"request_id": input.RequestID, "status": "assigned", "matches": matches, "proposals": proposals})
+	case "community_placement_v1":
+		return []byte(`{"parent_id":""}`), nil
+	case assessment.EquivalenceSchemaName:
+		var input assessment.Request
+		if err := json.Unmarshal(content, &input); err != nil {
+			return nil, err
+		}
+		return json.Marshal(runnerOrganizationResponse(input))
+	default:
+		return nil, fmt.Errorf("unexpected runner fixture provider schema %q", schema)
+	}
+}
+
 func runnerOrganizationResponse(request assessment.Request) assessment.Response {
 	response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{}, Equivalence: []assessment.Equivalence{}}
 	created := map[string]string{}
 	for _, item := range request.Items {
-		if item.LockedDefinitionRef != "" {
+		if request.EquivalenceOnly || item.LockedDefinitionRef != "" {
 			continue
 		}
 		kind, key := ontology.Topic, "runner-storage"

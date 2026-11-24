@@ -110,14 +110,14 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	require.Equal(t, 2, f.provider.calls, "a completed checkpoint can export without Remember calls")
 	manifest.ResumeScope = nil
 	migrator := storagepostgres.NewMigratorWithDB(f.native.DB)
-	var newest int64
-	require.NoError(t, f.native.DB.QueryRowContext(ctx, "SELECT version_id FROM goose_db_version ORDER BY id DESC LIMIT 1").Scan(&newest))
-	require.EqualValues(t, 20261114010000, newest, "the fixture rolls back only the verified no-op constraint-validation migration")
+	const validationVersion = int64(20261124010004)
+	require.Equal(t, validationVersion, seed.SchemaVersion, "the fixture rolls back only the no-op Down of the check validation")
 	require.NoError(t, migrator.RunDown(ctx))
 	var applied bool
-	require.NoError(t, f.native.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=$1 AND is_applied)", newest).Scan(&applied))
+	require.NoError(t, f.native.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=$1 AND is_applied)", validationVersion).Scan(&applied))
 	require.False(t, applied)
-	seed.SchemaVersion = 20261113020000
+	require.NoError(t, f.native.DB.QueryRowContext(ctx, "SELECT COALESCE(max(version_id),0) FROM (SELECT DISTINCT ON (version_id) version_id,is_applied FROM goose_db_version ORDER BY version_id,id DESC) latest WHERE is_applied").Scan(&seed.SchemaVersion))
+	require.Less(t, seed.SchemaVersion, validationVersion)
 	_, err = f.native.DB.ExecContext(ctx, "INSERT INTO operation_logs(severity,severity_rank,message) VALUES ('DEBUG',10,$1)", "seed-provider-credential-canary-782")
 	require.NoError(t, err)
 	config, err := pgx.ParseConfig(f.admin.Dialector.(*gormpostgres.Dialector).Config.DSN)
@@ -200,7 +200,7 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	var restoredDatabase string
 	require.NoError(t, restoredDB.QueryRowContext(ctx, "SELECT current_database()").Scan(&restoredDatabase))
 	require.Equal(t, target, restoredDatabase)
-	require.NoError(t, restoredDB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=$1 AND is_applied)", newest).Scan(&applied))
+	require.NoError(t, restoredDB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=$1 AND is_applied)", validationVersion).Scan(&applied))
 	require.False(t, applied, "the restored seed must require the supported startup migration")
 	require.NoError(t, storagepostgres.NewMigratorWithDB(restoredDB).RunUp(ctx))
 	for _, table := range []string{"operation_logs", "remember_attempt_diagnostics", "remember_invocation_diagnostics", "remember_failure_artifacts"} {
@@ -208,7 +208,7 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 		require.NoError(t, restoredDB.QueryRowContext(ctx, "SELECT count(*) FROM "+table).Scan(&count))
 		require.Zero(t, count)
 	}
-	require.NoError(t, restoredDB.QueryRowContext(ctx, "SELECT is_applied FROM goose_db_version WHERE version_id=$1 ORDER BY id DESC LIMIT 1", newest).Scan(&applied))
+	require.NoError(t, restoredDB.QueryRowContext(ctx, "SELECT is_applied FROM goose_db_version WHERE version_id=$1 ORDER BY id DESC LIMIT 1", validationVersion).Scan(&applied))
 	require.True(t, applied)
 	loaded, err := accesspostgres.NewCredentialRepository(restored, storagepostgres.NewRLS(), nil).GetActiveByPrefix(ctx, crypto.GetKeyPrefix(key))
 	require.NoError(t, err)

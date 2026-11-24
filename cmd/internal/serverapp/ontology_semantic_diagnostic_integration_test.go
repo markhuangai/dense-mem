@@ -119,7 +119,7 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 			service := application.NewManagementService(store, auditapp.New(auditpg.NewStore(app, rls)))
 			draft, err := service.SaveDraft(ctx, "", contract.SaveDraftInput{OperationKey: uuid.NewString(), ExpectedRevision: 1, Reason: "Audit failure acceptance", Edits: []contract.ManagementEdit{{Action: "define", Kind: contract.Topic, Definition: record("audit-child", parent.ID).Definition}}})
 			require.NoError(t, err)
-			require.NoError(t, admin.Exec(`CREATE FUNCTION reject_semantic_publication_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.operation='ONTOLOGY_PUBLISH' THEN RAISE EXCEPTION 'fixture semantic audit rejection'; END IF; RETURN NEW; END $$;
+			require.NoError(t, admin.Exec(`CREATE FUNCTION reject_semantic_publication_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.operation='TOPIC_PUBLISH' THEN RAISE EXCEPTION 'fixture semantic audit rejection'; END IF; RETURN NEW; END $$;
 				CREATE TRIGGER reject_semantic_publication_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION reject_semantic_publication_audit()`).Error)
 			t.Cleanup(func() {
 				require.NoError(t, admin.Exec(`DROP TRIGGER IF EXISTS reject_semantic_publication_audit ON audit_log; DROP FUNCTION IF EXISTS reject_semantic_publication_audit()`).Error)
@@ -163,20 +163,17 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 			invisible, err := logs.ListOperationLogs(context.Background(), domain.OperationLogFilter{Event: "topic_semantic_publication_failed", TeamID: &foreign})
 			require.NoError(t, err)
 			require.Zero(t, invisible.Total)
-			capture(func() {
+			console, records := capture(func() {
 				pin := contract.Record{ID: uuid.NewString(), Kind: contract.OverrideKind, Override: &contract.Override{Action: contract.PinDefinition, TargetID: child.ID}}
 				_, err := publish(1, contract.Change{Record: pin})
-				require.NoError(t, err)
-			})
-			console, records := capture(func() {
-				_, err := store.PublishAutomatic(context.Background(), team.String(), contract.Publication{OperationKey: uuid.NewString(), ExpectedRevision: 2, Reason: "Pinned semantic definition", Changes: []contract.Change{{ExpectedVersion: 1, Record: child}}})
 				require.ErrorIs(t, err, contract.ErrOverride)
 			})
-			require.Contains(t, console, "definition_pinned")
+			require.Contains(t, console, "topic_semantic_publication_rejected")
+			require.Contains(t, console, "\"transaction_outcome\":\"not_committed\"")
 			if level <= slog.LevelDebug {
-				ontologyPublicationPayloads(t, records)
+				require.Contains(t, string(ontologyPublicationPayloads(t, records)["input:"]), "pin_definition")
 			}
-			depthParent, depthRevision := "", int64(2)
+			depthParent, depthRevision := "", int64(1)
 			var changes []contract.Change
 			for depth := 0; depth <= contract.MaxParentDepth; depth++ {
 				value := record(fmt.Sprintf("depth-%d", depth), depthParent)

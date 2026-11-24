@@ -166,7 +166,7 @@ func TestOntologyGroupingKeepsDistinctContext(t *testing.T) {
 	}
 }
 
-func TestOntologyManagerOverridesSurviveReprocessing(t *testing.T) {
+func TestHistoricalOverridesDoNotControlTopicAndEquivalencePublications(t *testing.T) {
 	definition := topicRecord("person")
 	definition.Version = 1
 	pin := Record{ID: policyID("pin"), Kind: OverrideKind, Override: &Override{Action: PinDefinition, TargetID: definition.ID}, Version: 1}
@@ -177,32 +177,31 @@ func TestOntologyManagerOverridesSurviveReprocessing(t *testing.T) {
 	changed.Definition.Label = "Renamed person"
 	input := publicationFor(changed)
 	input.Changes[0].ExpectedVersion = 1
-	_, err := PreparePublication(catalog, nil, input, true)
-	require.ErrorIs(t, err, ErrOverride)
-	_, err = PreparePublication(catalog, nil, input, false)
-	require.NoError(t, err)
+	for _, automatic := range []bool{true, false} {
+		prepared, err := PreparePublication(catalog, nil, input, automatic)
+		require.NoError(t, err)
+		require.Empty(t, prepared[0].Dependencies)
+		_, err = PreparePublication(map[string]Record{definition.ID: definition}, nil, publicationFor(pin), automatic)
+		require.ErrorIs(t, err, ErrOverride)
+	}
 	retired := pin
 	retired.Retired = true
-	_, err = PreparePublication(catalog, nil, Publication{OperationKey: "unpin", Reason: "remove pin", Changes: []Change{{ExpectedVersion: 1, Record: retired}, {ExpectedVersion: 1, Record: changed}}}, false)
-	require.NoError(t, err)
-	_, err = PreparePublication(map[string]Record{definition.ID: definition}, nil, publicationFor(pin), true)
+	_, err := PreparePublication(catalog, nil, Publication{OperationKey: "unpin", Reason: "remove pin", Changes: []Change{{ExpectedVersion: 1, Record: retired}, {ExpectedVersion: 1, Record: changed}}}, false)
 	require.ErrorIs(t, err, ErrOverride)
 	first := policySnapshot("a", EvidenceSource, "same complete meaning")
 	second := policySnapshot("b", EvidenceSource, first.MeaningKey)
 	separation := Record{ID: policyID("separation"), Version: 1, Kind: OverrideKind, Override: &Override{Action: KeepSeparate, Members: []SourceHandle{first.SourceHandle, second.SourceHandle}}}
 	group := Record{ID: policyID("joined"), Kind: EvidenceGroup, Group: &Group{Members: []SourceHandle{first.SourceHandle, second.SourceHandle}}, Sources: []SourceDependency{sourceDependency(t, first), sourceDependency(t, second)}}
-	_, err = PreparePublication(map[string]Record{separation.ID: separation}, map[string]SourceSnapshot{SourceKey(first.SourceHandle): first, SourceKey(second.SourceHandle): second}, publicationFor(group), true)
-	require.ErrorIs(t, err, ErrOverride)
-	group.Version = 1
+	prepared, err := PreparePublication(map[string]Record{separation.ID: separation}, map[string]SourceSnapshot{SourceKey(first.SourceHandle): first, SourceKey(second.SourceHandle): second}, publicationFor(group), true)
+	require.NoError(t, err)
+	group = prepared[0]
 	retiredGroup := group
 	retiredGroup.Retired = true
-	retirement := Publication{OperationKey: "retire-separated-group", Reason: "honor manager separation", Changes: []Change{{ExpectedVersion: group.Version, Record: retiredGroup}}}
-	_, err = PreparePublication(map[string]Record{separation.ID: separation, group.ID: group}, nil, retirement, true)
-	require.NoError(t, err)
+	retirement := Publication{OperationKey: "retire-group", Reason: "equivalence reassessment", Changes: []Change{{ExpectedVersion: group.Version, Record: retiredGroup}}}
 	grouping := separation
 	grouping.Override = &Override{Action: GroupTogether, Members: separation.Override.Members}
 	_, err = PreparePublication(map[string]Record{grouping.ID: grouping, group.ID: group}, nil, retirement, true)
-	require.ErrorIs(t, err, ErrOverride)
+	require.NoError(t, err)
 }
 
 func TestOntologyFingerprintsAreStableAndSelective(t *testing.T) {

@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/assessor"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
 	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
@@ -32,12 +32,13 @@ func unitReceipt(t *testing.T, sources []contract.SourceSnapshot) contract.Organ
 	return receipt
 }
 
-func TestOrganizationRequestUsesBoundedContextAndManagerRules(t *testing.T) {
+func TestOrganizationRequestUsesBoundedContextWithHistoricalOverrides(t *testing.T) {
 	a, b := unitSource("a", "Atlas uses PostgreSQL."), unitSource("b", "Atlas uses PostgreSQL.")
+	b.TeamID, b.SpaceID, b.MeaningKey = a.TeamID, a.SpaceID, a.MeaningKey
 	topic := contract.Record{ID: uuid.NewString(), Version: 1, Kind: contract.Topic, Definition: &contract.Definition{Key: "postgresql", Label: "PostgreSQL"}}
 	separate := contract.Record{ID: uuid.NewString(), Kind: contract.OverrideKind, Override: &contract.Override{Action: contract.KeepSeparate, Members: []contract.SourceHandle{a.SourceHandle, b.SourceHandle}}}
-	pin := contract.Record{ID: uuid.NewString(), Kind: contract.OverrideKind, Override: &contract.Override{Action: contract.SetClassification, DefinitionID: topic.ID, Members: []contract.SourceHandle{a.SourceHandle}}}
-	ctx := contract.OrganizationContext{Sources: []contract.SourceSnapshot{a, b}, Records: []contract.RecordView{{Record: separate, Current: true}, {Record: pin, Current: true}}, Candidates: []contract.RecordView{{Record: topic, Current: true}}}
+	classification := contract.Record{ID: uuid.NewString(), Kind: contract.OverrideKind, Override: &contract.Override{Action: contract.SetClassification, DefinitionID: topic.ID, Members: []contract.SourceHandle{a.SourceHandle}}}
+	ctx := contract.OrganizationContext{Sources: []contract.SourceSnapshot{a, b}, Records: []contract.RecordView{{Record: separate, Current: true}, {Record: classification, Current: true}}, Candidates: []contract.RecordView{{Record: topic, Current: true}}}
 	service := NewService(nil, assessment.NewProvider(nil, "model", assessor.DefaultSemanticAssessmentLimits(), 300000))
 	receipt := unitReceipt(t, ctx.Sources)
 	request, binding, err := service.request(ctx, &receipt)
@@ -45,14 +46,17 @@ func TestOrganizationRequestUsesBoundedContextAndManagerRules(t *testing.T) {
 	require.Len(t, request.Items, 2)
 	require.Len(t, request.Definitions, 1)
 	require.Len(t, binding.sources, 2)
-	require.Equal(t, "d0", request.Items[0].LockedDefinitionRef)
-	require.Equal(t, "distinct", request.Pairs[0].RequiredRelation)
+	require.Empty(t, request.Items[0].LockedDefinitionRef)
+	require.Empty(t, request.Items[0].PreferredDefinitionRef)
+	require.Len(t, request.Pairs, 1)
+	require.Equal(t, "equivalent", request.Pairs[0].RequiredRelation)
 	ctx.Candidates = nil
 	receipt = unitReceipt(t, ctx.Sources)
 	request, _, err = service.request(ctx, &receipt)
 	require.NoError(t, err)
-	require.Len(t, request.Items, 1)
-	require.Equal(t, "required_classification_unavailable", receipt.Result.Outcomes[0].Reason)
+	require.Len(t, request.Items, 2)
+	require.Empty(t, request.Definitions)
+	require.Equal(t, "unchanged", receipt.Result.Outcomes[0].Status)
 	ctx.Records = []contract.RecordView{{Record: contract.Record{ID: uuid.NewString(), Kind: contract.EvidenceGroup, Group: &contract.Group{Members: []contract.SourceHandle{a.SourceHandle, unitSource("outside", "outside").SourceHandle}}}, Current: true}}
 	receipt = unitReceipt(t, ctx.Sources)
 	request, _, err = service.request(ctx, &receipt)
@@ -78,14 +82,14 @@ func TestOrganizationRequestUsesBoundedContextAndManagerRules(t *testing.T) {
 	require.Equal(t, "oversized", receipt.Result.Outcomes[0].Status)
 }
 
-func TestIncompleteGroupPreservesPersistentOverrides(t *testing.T) {
+func TestIncompleteGroupUsesMaterializedMembership(t *testing.T) {
 	a, b := unitSource("a", "Atlas uses PostgreSQL."), unitSource("b", "Atlas uses PostgreSQL.")
 	group := contract.Record{ID: uuid.NewString(), Kind: contract.EvidenceGroup, Group: &contract.Group{Members: []contract.SourceHandle{a.SourceHandle, b.SourceHandle}}}
 	keys := map[string]bool{contract.SourceKey(a.SourceHandle): true}
 	require.False(t, incompleteGroup(a, []contract.RecordView{{Record: group}}, keys))
 	require.True(t, incompleteGroup(a, []contract.RecordView{{Record: group, Current: true}}, keys))
 	override := contract.Record{ID: uuid.NewString(), Kind: contract.OverrideKind, Override: &contract.Override{Action: contract.GroupTogether, Members: group.Group.Members}}
-	require.True(t, incompleteGroup(a, []contract.RecordView{{Record: override}}, keys))
+	require.False(t, incompleteGroup(a, []contract.RecordView{{Record: override, Current: true}}, keys))
 }
 
 func TestOrganizationRejectsConflictingDefinitionIdentities(t *testing.T) {

@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+import { spawnSync } from "node:child_process";
+import { reconstructDiagnosticBody } from "./ontology_assessment_diagnostics.mjs";
+
 const userURL = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");
 const controlURL = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
 const controlToken = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
@@ -116,6 +119,7 @@ if (scenario === "credential_memory_binding") {
   for (const item of privateRecall.results ?? []) assert(item.space_kind === "team_shared", "private-bound read-only recall exposed an unexpected private result");
   const repeat = await mcpSuccess("recall_memory", { query: sharedNeedle, limit: 20 }, privateRead.apiKey);
   assert(JSON.stringify(privateRecall.results ?? []) === JSON.stringify(repeat.results ?? []), "space-aware recall was not deterministic");
+  await verifyExpandedRecallLogs(sharedWrite.apiKey, privateWrite.apiKey);
 } else if (scenario === "memory_space_isolation") {
   const otherTeam = await createTeam("E2E isolated team");
   const other = await createCredential(otherTeam.id, "isolated key", { scopes: ["read", "write"] });
@@ -136,6 +140,57 @@ if (scenario === "credential_memory_binding") {
 }
 
 console.log(JSON.stringify({ status: "ok", scenario, explicit_destinations: true, labels_and_isolation: true }, null, 2));
+
+async function verifyExpandedRecallLogs(sharedKey, privateKey) {
+  const bridge = "zirconograph";
+  async function store(text, key, space) {
+    const input = rememberInput(text, "", "", "", space);
+    input.evidence[0].force_insert = true;
+    const receipt = await mcpSuccess("remember", input, key);
+    assert(receipt.processing_state === "completed" && receipt.evidence.length === 1, "expansion fixture must store exact Evidence");
+    return receipt.evidence[0].evidence_id;
+  }
+  const passages = [
+    "The lighthouse ledger lists a zirconograph.",
+    "A brass crate contains the zirconograph.",
+    "A clerk sealed the zirconograph.",
+    "The zirconograph manual has a torn page.",
+    "A guide checks the zirconograph at dusk.",
+    "The zirconograph rests on a glass shelf.",
+  ];
+  const shared = [];
+  for (const passage of passages) shared.push(await store(passage, sharedKey, "team_shared"));
+  assert(new Set(shared).size === passages.length, "expansion fixture must exceed the five-seed cap");
+  const privateID = await store("A private log describes the zirconograph.", privateKey, "private");
+  const since = new Date().toISOString();
+  const receipt = await mcpSuccess("recall_memory", { query: "lighthouse", limit: 10 }, sharedKey);
+  const resultIDs = receipt.results.map((item) => item.evidence_id);
+  const logs = spawnSync("docker", [
+    "compose", "-p", requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT"), "-f", requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE"),
+    "logs", "--no-color", "--no-log-prefix", "--since", since, "server",
+  ], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 });
+  assert(logs.status === 0, "Recall console log capture failed");
+  for (const secret of [controlToken, sharedKey, privateKey]) {
+    assert(!logs.stdout.includes(secret), "Recall console diagnostics exposed a credential");
+  }
+  const records = logs.stdout.split(/\r?\n/).filter(Boolean).map(JSON.parse);
+  const selected = records.find((row) => row.msg === "recall_expansion_selected" && row.recall_id === receipt.recall_id);
+  assert(selected?.correlation_id && selected.level === "DEBUG" && selected.method === "hybrid_rrf_one_hop", "Recall selection must carry the hybrid method and correlation");
+  assert(JSON.stringify(selected.evidence_ids) === JSON.stringify(resultIDs), "Recall stdout must identify the exact final ranking");
+  const captures = new Map();
+  for (const row of records.filter((item) => item.msg === "recall_expansion_candidates" && item.correlation_id === selected.correlation_id)) {
+    assert(row.team_id === teamID && row.space_id && row.diagnostic_capture_id, "Recall candidate capture must carry authenticated scope and a capture ID");
+    const chunks = captures.get(row.diagnostic_capture_id) || [];
+    chunks.push(row);
+    captures.set(row.diagnostic_capture_id, chunks);
+  }
+  const candidates = Array.from(captures.values(), (chunks) => reconstructDiagnosticBody(chunks.sort((left, right) => left.payload_chunk.index - right.payload_chunk.index)));
+  const selection = candidates.find((item) => item.paths?.some((path) => path.Term === bridge && resultIDs.includes(path.EvidenceID)));
+  assert(selection?.seed_ids.includes(shared[0]) && selection.seed_ids.length <= 5, "protected stdout must explain a returned bridge from the bounded seed set");
+  assert(selection.ranked_peers.some((item) => resultIDs.includes(item.SourceID)), "Recall stdout must show a ranked peer retained after hydration");
+  assert(!resultIDs.includes(privateID) && !JSON.stringify(candidates).includes(privateID), "another credential's private Evidence appeared in Recall diagnostics");
+  console.log(JSON.stringify({ scenario, recall_id: receipt.recall_id, correlation_id: selected.correlation_id, protected_expansion_diagnostics: true }));
+}
 
 async function assertTeamReadOnlyPrivateWrite(key, otherKey) {
   const request = rememberInput("Automation privately remembers an encountered workflow failure.", "automation", "remembers", "workflow failure", "private");

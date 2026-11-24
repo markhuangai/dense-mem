@@ -199,6 +199,9 @@ type vocabularyCandidate struct {
 }
 
 func (s *Store) organizationVocabulary(tx *gorm.DB, fence scope, sources []ontology.SourceSnapshot, forced []string) ([]ontology.RecordView, error) {
+	if forced == nil {
+		forced = []string{}
+	}
 	_, words := ontology.VocabularyQuery(sources)
 	if words == nil {
 		words = []string{}

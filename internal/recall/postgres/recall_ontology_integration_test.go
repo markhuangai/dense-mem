@@ -167,7 +167,8 @@ func TestRecallOntologyPunctuatedKeysAndAliases(t *testing.T) {
 	handle := f.evidence(t, 0, "Atlas retains durable records.", nil)
 	for _, name := range []string{"C++", "Node.js", "C#"} {
 		definition := ontology.Record{ID: uuid.NewString(), Kind: ontology.Topic, Definition: &ontology.Definition{Key: name, Label: name, Aliases: []string{name + " platform"}}}
-		f.publication(t, definition, f.assignment(t, definition.ID, handle))
+		assignment := f.assignment(t, definition.ID, handle)
+		f.publication(t, definition, assignment)
 		for _, query := range []string{name, "What is " + name + "?", "Where is (" + name + " platform)?"} {
 			input := RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, Query: query, Limit: 3}
 			ordinary, err := f.search.RecallEvidence(f.actor(2, "member"), input)
@@ -181,8 +182,10 @@ func TestRecallOntologyPunctuatedKeysAndAliases(t *testing.T) {
 		}
 		definition.Version = 1
 		definition.Definition.Key = name + " language"
+		definition.Definition.Label = name + " language"
 		definition.Definition.Aliases = []string{name}
-		f.publication(t, definition, f.assignment(t, definition.ID, handle))
+		assignment.Version = 1
+		f.publication(t, definition, assignment)
 		alias, err := f.search.RecallEvidence(f.actor(2, "member"), RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, Query: "What is " + name + "?", Limit: 3, OrganizationEnabled: true})
 		require.NoError(t, err)
 		require.Len(t, alias.Results, 1)

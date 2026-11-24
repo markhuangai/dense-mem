@@ -194,7 +194,7 @@ func TestOntologyManagementAuditFailureIsAtomic(t *testing.T) {
 	draft, err := service.SaveDraft(ctx, "", managementInput(0, ontology.ManagementEdit{Action: "define", Kind: ontology.Topic, Definition: &ontology.Definition{Key: "atomic", Label: "Atomic", Description: "Audit atomicity"}}))
 	require.NoError(t, err)
 	before := f.canonicalSnapshot(t)
-	require.NoError(t, f.admin.Exec(`CREATE FUNCTION reject_management_publication_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.operation='ONTOLOGY_PUBLISH' THEN RAISE EXCEPTION 'fixture audit rejection'; END IF; RETURN NEW; END $$;
+	require.NoError(t, f.admin.Exec(`CREATE FUNCTION reject_management_publication_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.operation='TOPIC_PUBLISH' THEN RAISE EXCEPTION 'fixture audit rejection'; END IF; RETURN NEW; END $$;
  CREATE TRIGGER reject_management_publication_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION reject_management_publication_audit()`).Error)
 	command := managementCommand(draft)
 	_, err = service.CommandDraft(ctx, draft.ID, "publish", command)
@@ -212,7 +212,7 @@ func TestOntologyManagementAuditFailureIsAtomic(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, published, replayed)
 	var count int
-	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM audit_log WHERE team_id=?::uuid AND operation='ONTOLOGY_PUBLISH'`, f.team).Row().Scan(&count))
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM audit_log WHERE team_id=?::uuid AND operation='TOPIC_PUBLISH'`, f.team).Row().Scan(&count))
 	require.Equal(t, 1, count)
 	require.Equal(t, before, f.canonicalSnapshot(t))
 }
