@@ -97,7 +97,24 @@ func TestOntologyMaintenanceDiscoveryCommittedDiagnostics(t *testing.T) {
 			}
 			require.Equal(t, queue, x.queue(t))
 			require.Equal(t, canonical, schedulerCanonical(t, x.f))
-			require.Equal(t, history, revalidationReceiptHistory(t, x.f))
+			afterHistory := revalidationReceiptHistory(t, x.f)
+			if rollback {
+				require.Equal(t, history, afterHistory)
+			} else {
+				var original, retained []json.RawMessage
+				require.NoError(t, json.Unmarshal([]byte(history), &original))
+				require.NoError(t, json.Unmarshal([]byte(afterHistory), &retained))
+				require.Len(t, retained, len(original)+1)
+				require.Subset(t, retained, original, "completed work must preserve prior receipts exactly")
+				batchID, ok := preparation["batch_id"].(string)
+				require.True(t, ok)
+				require.NotEmpty(t, batchID)
+				var assessmentID string
+				require.NoError(t, x.f.admin.Raw(`SELECT assessment_id::text FROM historical_organization_assessments
+					WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND operation_key=?`,
+					x.f.team, x.f.space, x.f.generation, "maintenance:"+batchID).Row().Scan(&assessmentID))
+				require.Equal(t, queue[0].AssessmentID, assessmentID, "the completion receipt must reuse the earlier assessment")
+			}
 		})
 	}
 }

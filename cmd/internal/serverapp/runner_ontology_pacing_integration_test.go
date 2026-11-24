@@ -25,6 +25,7 @@ const (
 	originalPacingEvidence  = "Obsidian cools."
 	correctedPacingEvidence = "Fluorite fluoresces."
 	pacingBatches           = 3
+	pacingBacklog           = (pacingBatches - 1) * ontology.MaxOrganizationSources
 	pacingSamplesPerBatch   = 16
 	pacingSampleInterval    = 150 * time.Millisecond
 )
@@ -115,7 +116,7 @@ func measureOntologyPacing(t *testing.T, mode string, tick time.Duration) ontolo
 		releaseErr := f.ontology.ReleaseMaintenanceTurn(ctx, *turn)
 		require.NoError(t, errors.Join(err, releaseErr))
 	}
-	for index := range (pacingBatches - 1) * ontology.MaxOrganizationSources {
+	for index := range pacingBacklog {
 		text := fmt.Sprintf("Botanical entry %d describes Celandine blossoms.", index+1)
 		_, err := rememberPacingEvidence(ctx, client, "team_shared", text, "", "", "")
 		require.NoError(t, err)
@@ -183,7 +184,8 @@ func measureOntologyPacing(t *testing.T, mode string, tick time.Duration) ontolo
 		require.Equal(t, expected, batchCount())
 		if topicTime == 0 {
 			var members recall.RecallResult
-			err := client.CallTool(foreground, "recall_memory", map[string]any{"topic_ids": []string{topicID}, "limit": 10}, &members)
+			// Topic-only Recall orders by Evidence ID, so probe the full test backlog and correction.
+			err := client.CallTool(foreground, "recall_memory", map[string]any{"topic_ids": []string{topicID}, "limit": pacingBacklog + 1}, &members)
 			var toolErr *evalharness.StructuredToolError
 			if errors.As(err, &toolErr) && toolErr.Result["reason_code"] == "topic_unavailable" {
 				continue

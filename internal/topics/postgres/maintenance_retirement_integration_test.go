@@ -153,10 +153,10 @@ func TestOntologyEvidenceOnlyResetRebuildsExistingEvidence(t *testing.T) {
 	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM topic_maintenance_teams WHERE discovery_kind<>0 OR discovery_cursor<>'' OR lease_token IS NOT NULL OR lease_until IS NOT NULL`).Row().Scan(&staleCursors))
 	require.Zero(t, staleCursors)
 	config := maintenanceSettings(t, f)
+	window := maintenanceWindow(t, f, config)
 	_, err = config.UpdateTopicMaintenanceSettings(ctx, map[string]string{domain.AppConfigTopicMaintenanceEnabled: "false"}, "control", "", "")
 	require.NoError(t, err)
 	service, calls := maintenanceServiceFixture(t, f, config, nil)
-	window := maintenanceWindow(t, f, config)
 	_, err = f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now().UTC(), time.Minute)
 	require.ErrorIs(t, err, ontology.ErrMaintenancePaused)
 	require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
