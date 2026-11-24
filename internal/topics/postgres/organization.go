@@ -125,33 +125,41 @@ func (s *Store) assessmentContext(tx *gorm.DB, fence scope, handles []ontology.S
 }
 
 func organizationSourceRecords(tx *gorm.DB, fence scope, handles []ontology.SourceHandle, groupingOnly bool) ([]ontology.Record, error) {
-	keys := []string{}
+	kinds := make([]string, 0, len(handles))
+	ids := make([]string, 0, len(handles))
 	for _, handle := range handles {
-		keys = append(keys, ontology.SourceKey(handle))
+		kinds = append(kinds, string(handle.Kind))
+		ids = append(ids, handle.ID)
 	}
 	filter := "(NOT head.retired OR head.kind IN ('evidence_group','relationship_group'))"
 	if groupingOnly {
 		filter = "head.kind='evidence_group'"
 	}
-	rows, err := tx.Raw(`SELECT DISTINCT revision.body, head.record_id
-            FROM topic_record_heads AS head JOIN topic_revision_records AS revision
-              USING (team_id,shared_space_id,space_generation,record_id,version)
-            JOIN topic_source_dependencies AS dependency
-              ON dependency.team_id=head.team_id AND dependency.shared_space_id=head.shared_space_id
-              AND dependency.space_generation=head.space_generation AND dependency.record_id=head.record_id
-              AND dependency.record_version=head.version
-            WHERE head.team_id=?::uuid AND head.shared_space_id=?::uuid AND head.space_generation=?
-              AND `+filter+`
-              AND dependency.source_kind || ':' || dependency.source_id=ANY(?::text[])
-            ORDER BY head.record_id LIMIT ?`, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(keys), ontology.MaxDependencyRecords+1).Rows()
+	rows, err := tx.Raw(`WITH matched AS MATERIALIZED (
+		SELECT DISTINCT head.team_id,head.shared_space_id,head.space_generation,head.record_id,head.version,head.kind
+		FROM unnest(?::text[],?::text[]) AS source(kind,id)
+		JOIN topic_source_dependencies AS dependency ON dependency.source_kind=source.kind AND dependency.source_id=source.id
+		JOIN topic_record_heads AS head ON (head.team_id,head.shared_space_id,head.space_generation,head.record_id,head.version)=
+			(dependency.team_id,dependency.shared_space_id,dependency.space_generation,dependency.record_id,dependency.record_version)
+		WHERE dependency.team_id=?::uuid AND dependency.shared_space_id=?::uuid AND dependency.space_generation=?
+		  AND `+filter+`
+		ORDER BY head.record_id LIMIT ?
+	)
+	SELECT revision.body FROM matched
+	JOIN LATERAL (
+		SELECT body FROM topic_revision_records AS record
+		WHERE (record.team_id,record.shared_space_id,record.space_generation,record.record_id,record.version,record.kind)=
+			(matched.team_id,matched.shared_space_id,matched.space_generation,matched.record_id,matched.version,matched.kind)
+		LIMIT 1
+	) AS revision ON true
+	ORDER BY matched.record_id`, pq.Array(kinds), pq.Array(ids), fence.TeamID, fence.SpaceID, fence.Generation, ontology.MaxDependencyRecords+1).Rows()
 	if err != nil {
 		return nil, err
 	}
 	var records []ontology.Record
 	for rows.Next() {
 		var body []byte
-		var id string
-		if err := rows.Scan(&body, &id); err != nil {
+		if err := rows.Scan(&body); err != nil {
 			rows.Close()
 			return nil, err
 		}
