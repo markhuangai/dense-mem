@@ -1,6 +1,8 @@
--- Lock/rewrite impact: short ACCESS EXCLUSIVE locks rename existing relations in place.
--- The preceding migration copies and verifies each converted payload before this transaction.
--- Recovery resumes the fenced migration or restores the pre-cutover backup.
+-- Lock/rewrite impact: exclusive catalog locks rename relations in place and build maintenance indexes.
+-- RLS impact: preserves forced RLS, renames policies, and validates scoped outcome writes.
+-- Backfill: verifies completed pages before moving stored settings and closing superseded runs.
+-- Backward compatibility: the new application opens listeners after cutover and keeps historical receipts readable.
+-- Rollback: resume with the compatible application or restore the verified pre-cutover backup.
 -- +goose Up
 -- +goose StatementBegin
 SET LOCAL lock_timeout='5s';

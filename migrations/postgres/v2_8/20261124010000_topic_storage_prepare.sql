@@ -1,5 +1,8 @@
--- Lock/rewrite impact: short catalog locks for nullable columns and empty outcome tables.
--- The durable write fence covers copying and cutover. Recovery resumes forward.
+-- Lock/rewrite impact: maintenance admission locks and short catalog locks add nullable columns and empty outcome tables.
+-- RLS impact: sets up forced RLS on new tables and migration-only access for the copy.
+-- Backfill: reconciles expired maintenance batches. The next migration owns the paged copy.
+-- Backward compatibility: drains old writers and fences writes until the new layout is published.
+-- Rollback: resume the fenced migration or restore the verified pre-cutover backup.
 -- +goose Up
 -- +goose StatementBegin
 SET LOCAL lock_timeout = '5s';

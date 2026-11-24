@@ -1,3 +1,8 @@
+-- Lock/rewrite impact: creates an empty outcome table and indexes and replaces the status check without an existing-row scan.
+-- RLS impact: forces RLS on outcomes with current shared-space checks and installs the feature write gate.
+-- Backfill: historical assessments stay in their existing table.
+-- Backward compatibility: the wider status check accepts all previously valid values.
+-- Rollback: Down refuses to discard the new layout. Resume forward or restore the pre-cutover backup.
 -- +goose Up
 -- +goose StatementBegin
 SET LOCAL lock_timeout='5s';
