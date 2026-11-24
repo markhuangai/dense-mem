@@ -25,6 +25,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/provider/structured"
 	"github.com/markhuangai/dense-mem/internal/settings"
+	"github.com/markhuangai/dense-mem/internal/topicassignment"
 	organization "github.com/markhuangai/dense-mem/internal/topics"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
@@ -602,4 +603,46 @@ func TestOntologyMaintenanceContextConfigurationAndManualReuse(t *testing.T) {
 	require.Equal(t, manual.WindowID, status.Window.ID)
 	require.EqualValues(t, 1, status.Counts.Organized)
 	require.Positive(t, calls())
+	t.Run("assignment uses the active window", testActiveAssignmentWindowPolicy)
+}
+
+type observedAssignmentTransport struct {
+	modelprovider.StructuredTransport
+	assignments []modelprovider.StructuredRequest
+}
+
+func (t *observedAssignmentTransport) Complete(ctx context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+	if request.SchemaName == "topic_assignment_v1" {
+		t.assignments = append(t.assignments, request)
+	}
+	return t.StructuredTransport.Complete(ctx, request)
+}
+
+func testActiveAssignmentWindowPolicy(t *testing.T) {
+	f := newOrganizationFixture(t)
+	f.organizationEvidence(t, 0, "Atlas uses PostgreSQL.", nil)
+	settings := maintenanceSettings(t, f)
+	window := maintenanceWindow(t, f, settings)
+	ctx := context.Background()
+	_, err := settings.UpdateTopicMaintenanceSettings(ctx, map[string]string{
+		domain.AppConfigTopicMaintenanceModel:         "next-model",
+		domain.AppConfigTopicMaintenanceContextWindow: "200000",
+	}, "control", "", "")
+	require.NoError(t, err)
+	limits := assessor.DefaultSemanticAssessmentLimits()
+	upstream, _ := cohortTopicTransport(t, window.Policy.Model)
+	transport := &observedAssignmentTransport{StructuredTransport: upstream}
+	assigner := topicassignment.NewService(f.store, settings, transport, nil, limits, window.Policy.Model, nil)
+	service, _ := maintenanceServiceFixture(t, f, settings, nil)
+	service.WithTopicProcessing(assigner, f.store, f.store, organization.CommunityAssessor{Transport: transport, Limits: limits})
+	drainMaintenance(t, service)
+	require.NotEmpty(t, transport.assignments)
+	for _, request := range transport.assignments {
+		require.Equal(t, window.Policy.Model, request.Model)
+		require.Equal(t, limits.MaxInputTokens, request.MaxInputTokens)
+	}
+	status, err := service.Status(ctx)
+	require.NoError(t, err)
+	require.Equal(t, window.ID, status.Window.ID)
+	require.EqualValues(t, 1, status.Counts.Organized)
 }

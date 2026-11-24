@@ -30,7 +30,7 @@ type MaintenanceDependencies struct {
 	Repository      contract.MaintenanceRepository
 	Config          MaintenanceConfigSource
 	Organizer       func(string, int64, assessment.AttemptAccounting) *Service
-	Assign          func(context.Context, contract.MaintenanceClaim, assessment.AttemptAccounting) (contract.OrganizationResult, error)
+	Assign          func(context.Context, contract.MaintenanceClaim, domain.TopicMaintenanceConfig, assessment.AttemptAccounting) (contract.OrganizationResult, error)
 	Communities     contract.CommunityRepository
 	Placement       CommunityAssessor
 	DefaultModel    string
@@ -315,7 +315,7 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 		result, runErr = organizer.AssessMaintenanceEquivalence(equivalenceCtx, claim)
 		if runErr == nil {
 			assessmentCtx = observability.WithAIOperation(claimCtx, observability.AIOperationTopicAssignment, len(claim.Sources))
-			result, runErr = s.deps.Assign(assessmentCtx, claim, accounting)
+			result, runErr = s.deps.Assign(assessmentCtx, claim, work.policy, accounting)
 		}
 	} else {
 		result, runErr = organizer.Organize(assessmentCtx, claim.TeamID, contract.OrganizationInput{OperationKey: "maintenance:" + claim.ID, Sources: claim.Sources})

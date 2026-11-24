@@ -13,7 +13,7 @@ import (
 const decisionConfigBodyKey = "decision_config_body"
 
 type controlDecisionConfigRequest struct {
-	Items []controlTelemetryPricingConfigItemRequest `json:"items" validate:"required,min=1,max=4,dive"`
+	Items []controlTelemetryPricingConfigItemRequest `json:"items" validate:"required,min=1,max=6,dive"`
 }
 
 func (h *controlPortalHandler) getDecisionConfig(c *echo.Context) error {

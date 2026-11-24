@@ -47,6 +47,15 @@ func NewService(reader CandidateReader, config ConfigSource, transport modelprov
 
 // Prepare evaluates immutable source slices without creating Evidence, definitions, or memberships.
 func (s *Service) Prepare(ctx context.Context, scope Scope, slices []Slice, decisionSettings *domain.DecisionRuntimeConfig) ([]contract.Outcome, error) {
+	return s.prepare(ctx, scope, slices, decisionSettings, nil)
+}
+
+// PrepareMaintenance uses the settings frozen for the active maintenance window.
+func (s *Service) PrepareMaintenance(ctx context.Context, scope Scope, slices []Slice, decisionSettings *domain.DecisionRuntimeConfig, window domain.TopicMaintenanceConfig) ([]contract.Outcome, error) {
+	return s.prepare(ctx, scope, slices, decisionSettings, &window)
+}
+
+func (s *Service) prepare(ctx context.Context, scope Scope, slices []Slice, decisionSettings *domain.DecisionRuntimeConfig, window *domain.TopicMaintenanceConfig) ([]contract.Outcome, error) {
 	if len(slices) == 0 {
 		return nil, nil
 	}
@@ -68,6 +77,10 @@ func (s *Service) Prepare(ctx context.Context, scope Scope, slices []Slice, deci
 	}
 	if !policy.Enabled {
 		return nil, nil
+	}
+	if window != nil {
+		policy.Model = window.Model
+		policy.ContextWindowTokens = window.ContextWindowTokens
 	}
 	model := policy.Model
 	if strings.TrimSpace(model) == "" {

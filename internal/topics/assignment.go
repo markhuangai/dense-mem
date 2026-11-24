@@ -18,7 +18,7 @@ type IncrementalAssignments interface {
 
 func (s *MaintenanceService) WithTopicProcessing(assigner *topicassignment.Service, store IncrementalAssignments, communities contract.CommunityRepository, placement CommunityAssessor) *MaintenanceService {
 	s.deps.Communities, s.deps.Placement = communities, placement
-	s.deps.Assign = func(ctx context.Context, claim contract.MaintenanceClaim, accounting assessment.AttemptAccounting) (contract.OrganizationResult, error) {
+	s.deps.Assign = func(ctx context.Context, claim contract.MaintenanceClaim, policy domain.TopicMaintenanceConfig, accounting assessment.AttemptAccounting) (contract.OrganizationResult, error) {
 		var result contract.OrganizationResult
 		snapshots, err := store.ReadSources(ctx, claim.TeamID, claim.Sources)
 		if err != nil {
@@ -41,7 +41,7 @@ func (s *MaintenanceService) WithTopicProcessing(assigner *topicassignment.Servi
 			settings = &value
 		}
 		input := assignment.Scope{TeamID: claim.TeamID, SpaceID: claim.SpaceID, Generation: claim.Generation, OperationID: claim.ID}
-		outcomes, err := assigner.Prepare(topicassignment.WithAccounting(ctx, accounting), input, slices, settings)
+		outcomes, err := assigner.PrepareMaintenance(topicassignment.WithAccounting(ctx, accounting), input, slices, settings, policy)
 		if err != nil {
 			return result, err
 		}

@@ -28,7 +28,15 @@ func decisionServiceForPostgres(db *gorm.DB, rls *storagepostgres.RLS, provider 
 func preserveDecisionConfig(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS) func() {
 	t.Helper()
 	ctx := context.Background()
-	keys := []string{domain.AppConfigDecisionDeduplication, domain.AppConfigDecisionSecurity, domain.AppConfigDecisionConflict, domain.AppConfigDecisionReranking, domain.AppConfigUpdateTimeKey}
+	keys := []string{
+		domain.AppConfigDecisionDeduplication,
+		domain.AppConfigDecisionSecurity,
+		domain.AppConfigDecisionConflict,
+		domain.AppConfigDecisionReranking,
+		domain.AppConfigDecisionTopicAssignment,
+		domain.AppConfigDecisionCommunityPlacement,
+		domain.AppConfigUpdateTimeKey,
+	}
 	original, err := settingspostgres.NewAppConfigRepository(db, rls).List(ctx)
 	require.NoError(t, err)
 	restored := false
@@ -159,6 +167,27 @@ func TestDecisionSettingsControlAuthorizationAndStrictPatch(t *testing.T) {
 	require.NotContains(t, updated.Body.String(), "decision-settings-control")
 	read := controlRequest(e, http.MethodGet, "/control/api/config/decisions", "decision-settings-control", "")
 	require.Equal(t, http.StatusOK, read.Code)
+
+	updated = controlRequest(e, http.MethodPatch, "/control/api/config/decisions", "decision-settings-control", `{"items":[
+		{"key":"DECISION_DEDUPLICATION_ENABLED","value":"false"},
+		{"key":"DECISION_SECURITY_REVIEW_ENABLED","value":"true"},
+		{"key":"DECISION_CONFLICT_REVIEW_ENABLED","value":"false"},
+		{"key":"DECISION_RECALL_RERANKING_ENABLED","value":"false"},
+		{"key":"DECISION_TOPIC_ASSIGNMENT_ENABLED","value":"false"},
+		{"key":"DECISION_COMMUNITY_PLACEMENT_ENABLED","value":"false"}
+	]}`)
+	require.Equal(t, http.StatusOK, updated.Code, updated.Body.String())
+	persisted, err := decisionServiceForPostgres(db, rls, "openai").DecisionRuntimeConfig(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, domain.DecisionTasks{SecurityReview: true}, persisted.Preferences)
+	require.Equal(t, domain.DecisionTasks{
+		Deduplication:      true,
+		SecurityReview:     true,
+		ConflictReview:     true,
+		RecallReranking:    true,
+		TopicAssignment:    true,
+		CommunityPlacement: true,
+	}, persisted.Overrides)
 }
 
 func TestDecisionSettingsRefreshWaitHonorsCancellation(t *testing.T) {

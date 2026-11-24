@@ -1,7 +1,9 @@
 package http
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	settings "github.com/markhuangai/dense-mem/internal/settings"
@@ -17,6 +19,8 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	httpmw "github.com/markhuangai/dense-mem/internal/http/middleware"
+	"github.com/markhuangai/dense-mem/internal/httperr"
 )
 
 type controlAppConfigSvc struct {
@@ -477,6 +481,44 @@ func TestControlPortalRecallFeedbackConfigFlows(t *testing.T) {
 	appConfig.updateErr = settings.ErrInvalidAppConfig
 	rec = do(http.MethodPatch, "/control/api/config/recall-feedback", `{"items":[{"key":"RECALL_FEEDBACK_ENABLED","value":"maybe"}]}`)
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+}
+
+func TestControlPortalDecisionConfigPatchItemBound(t *testing.T) {
+	e := echo.New()
+	e.HTTPErrorHandler = httperr.ErrorHandler
+	e.PATCH("/control/api/config/decisions", func(c *echo.Context) error {
+		body := httpmw.MustGetValidatedBody[controlDecisionConfigRequest](c.Request().Context(), decisionConfigBodyKey)
+		require.Len(t, body.Items, 6)
+		return c.NoContent(http.StatusNoContent)
+	}, httpmw.BindAndValidateStrict[controlDecisionConfigRequest](decisionConfigBodyKey))
+
+	value := "false"
+	payload := controlDecisionConfigRequest{}
+	for _, key := range []string{
+		domain.AppConfigDecisionDeduplication,
+		domain.AppConfigDecisionSecurity,
+		domain.AppConfigDecisionConflict,
+		domain.AppConfigDecisionReranking,
+		domain.AppConfigDecisionTopicAssignment,
+		domain.AppConfigDecisionCommunityPlacement,
+	} {
+		payload.Items = append(payload.Items, controlTelemetryPricingConfigItemRequest{Key: key, Value: &value})
+	}
+	patch := func() *httptest.ResponseRecorder {
+		body, err := json.Marshal(payload)
+		require.NoError(t, err)
+		req := httptest.NewRequest(http.MethodPatch, "/control/api/config/decisions", bytes.NewReader(body))
+		req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		return rec
+	}
+	accepted := patch()
+	require.Equal(t, http.StatusNoContent, accepted.Code, accepted.Body.String())
+
+	payload.Items = append(payload.Items, payload.Items[0])
+	rejected := patch()
+	require.Equal(t, http.StatusUnprocessableEntity, rejected.Code, rejected.Body.String())
 }
 
 func TestControlPortalTelemetryPricingConfigFlows(t *testing.T) {
