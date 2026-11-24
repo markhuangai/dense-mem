@@ -14,6 +14,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestOntologyMaintenanceDiscoveryCommittedDiagnostics(t *testing.T) {
@@ -24,6 +25,11 @@ func TestOntologyMaintenanceDiscoveryCommittedDiagnostics(t *testing.T) {
 			definitions := coalescingDefinitions(t, x, 2, "overlap")
 			enqueueCoalescingMarkers(t, x, definitions)
 			if rollback {
+				require.NoError(t, x.f.rls.WithSystemTx(t.Context(), x.f.admin, func(tx *gorm.DB) error {
+					return tx.Exec(`UPDATE topic_maintenance_sources SET status='organized' WHERE team_id=?::uuid
+						AND shared_space_id=?::uuid AND space_generation=? AND source_kind='evidence' AND source_id=?`,
+						x.f.team, x.f.space, x.f.generation, x.sources[0].ID).Error
+				}))
 				topic := x.topic
 				topic.Definition.Description = "PostgreSQL revised required definition"
 				revalidationPublish(t, x.f, ontology.Change{ExpectedVersion: 1, Record: topic})
@@ -84,6 +90,10 @@ func TestOntologyMaintenanceDiscoveryCommittedDiagnostics(t *testing.T) {
 				require.EqualValues(t, 2, counts["refreshed_sources"])
 				require.EqualValues(t, 2, counts["completed_markers"])
 				require.Empty(t, discovery["error_code"])
+				for i := range queue {
+					require.Equal(t, "pending", queue[i].Status)
+					queue[i].Status = "organized"
+				}
 			}
 			require.Equal(t, queue, x.queue(t))
 			require.Equal(t, canonical, schedulerCanonical(t, x.f))

@@ -639,11 +639,23 @@ ontology_backup_command() {
 }
 
 restore_pre_cutover_backup() {
-  local archive="$1" restored_database="topic_cutover_restore" before="$2" schema
+  local source_dir="$1" archive="$2" before="$3" restored_database="topic_cutover_restore" schema
+  local restore_list="${archive}.restore-list"
   ontology_backup_command createdb -h 127.0.0.1 -U "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER" \
     --owner=densemem_e2e_database_owner "$restored_database" || fail "isolated pre-cutover restore database creation failed"
-  ontology_backup_command pg_restore -h 127.0.0.1 -U "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER" \
-    --exit-on-error --single-transaction -d "$restored_database" "$archive" || fail "pre-cutover restore failed"
+  ontology_backup_command pg_restore --list "$archive" |
+    node --input-type=module -e '
+      import { readFileSync } from "node:fs";
+      import { pathToFileURL } from "node:url";
+      const { remainingSeedRestoreEntries } = await import(pathToFileURL(process.argv[1]));
+      process.stdout.write(remainingSeedRestoreEntries(readFileSync(0, "utf8")));
+    ' "$source_dir/.github/scripts/evaluation-seeds.mjs" |
+    ontology_backup_command sh -ec 'umask 077; cat > "$1"' sh "$restore_list" || fail "pre-cutover restore list preparation failed"
+  local -a restore=(pg_restore -h 127.0.0.1 -U "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER" --exit-on-error --single-transaction -d "$restored_database")
+  ontology_backup_command "${restore[@]}" --section=pre-data "$archive" || fail "pre-cutover schema restore failed"
+  # Legacy scope checks resolve the shared memory space while copying dependent rows.
+  ontology_backup_command "${restore[@]}" --data-only --schema=public --table=memory_spaces "$archive" || fail "pre-cutover memory space restore failed"
+  ontology_backup_command "${restore[@]}" --section=data --section=post-data --use-list="$restore_list" "$archive" || fail "pre-cutover data restore failed"
   schema="$(identity_postgres_scalar "SELECT to_regclass('public.ontology_record_heads') IS NOT NULL
     AND to_regclass('public.topic_record_heads') IS NULL AND EXISTS(SELECT 1 FROM ontology_maintenance_runs WHERE operation_key='ontology-upgrade-fixture')
     AND NOT EXISTS(SELECT 1 FROM v2_compatibility_markers WHERE marker_kind='topic_storage')" "$restored_database")"
@@ -716,7 +728,7 @@ run_ontology_upgrade_startup_matrix() {
       EXISTS(SELECT 1 FROM topic_maintenance_runs WHERE operation_key='ontology-upgrade-fixture' AND status='incomplete' AND failure_code='window_closed')) FROM topic_maintenance_state")"
     [[ "$state" == "false|true|2|1|true" || "$state" == "f|t|2|1|t" ]] || fail "ontology upgrade did not restore its admission state: ${state}"
     [[ "$(ontology_upgrade_fingerprints current)" == "$before" ]] || fail "automatic ontology upgrade changed canonical or historical rows"
-    if [[ "$variant" == "expired" ]]; then restore_pre_cutover_backup "$archive" "$before"; fi
+    if [[ "$variant" == "expired" ]]; then restore_pre_cutover_backup "$source_dir" "$archive" "$before"; fi
   done
   printf '%s\n' '{"scenario":"ontology_upgrade","expired_recovered":true,"unreconciled_refused":true,"interrupted_restart_resumed":true,"history_preserved":true,"pre_cutover_restore_read":true}' >&2
 }

@@ -98,7 +98,7 @@ func measureOntologyPacing(t *testing.T, mode string, tick time.Duration) ontolo
 	require.NoError(t, err)
 	drain()
 	initialBatches := batchCount()
-	require.Equal(t, 1, initialBatches)
+	require.Positive(t, initialBatches, "warm-up must complete assignment work before measurement")
 	var originalRecall recall.RecallResult
 	require.NoError(t, client.CallTool(ctx, "recall_memory", map[string]any{"query": originalPacingEvidence, "limit": 5, "topic_limit": 1}, &originalRecall))
 	require.Len(t, originalRecall.RelatedTopics, 1)

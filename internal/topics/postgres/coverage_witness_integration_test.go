@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
 	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
@@ -139,16 +138,11 @@ func TestOntologyCoverageFailureWitnesses(t *testing.T) {
 		require.Nil(t, result.Attempts[2].Validation)
 		require.Equal(t, before, f.canonicalSnapshot(t))
 	})
-	t.Run("model cannot join memories the manager kept separate", func(t *testing.T) {
+	t.Run("model cannot bridge incompatible source owners", func(t *testing.T) {
 		f := newOrganizationFixture(t)
-		left := f.organizationEvidence(t, 0, "Atlas stores task data in PostgreSQL.", nil)
+		left := f.organizationEvidence(t, 0, "I store Atlas task data in PostgreSQL.", nil)
 		middle := f.organizationEvidence(t, 0, "Atlas persists data in PostgreSQL.", nil)
-		right := f.organizationEvidence(t, 0, "Atlas stores account data in PostgreSQL.", nil)
-		separation := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind,
-			Override: &ontology.Override{Action: ontology.KeepSeparate, Members: []ontology.SourceHandle{left, right}},
-			Sources:  []ontology.SourceDependency{f.source(t, left), f.source(t, right)}}
-		_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("keep-separate", 0, ontology.Change{Record: separation}))
-		require.NoError(t, err)
+		right := f.organizationEvidence(t, 1, "Atlas stores account data in PostgreSQL.", nil)
 		before := f.canonicalSnapshot(t)
 		service, calls := organizationFixtureService(t, f, func(assessment.Item, assessment.Item) bool { return true },
 			func(request assessment.Request, response *assessment.Response) {
@@ -156,7 +150,7 @@ func TestOntologyCoverageFailureWitnesses(t *testing.T) {
 				require.Len(t, response.Equivalence, 2)
 			})
 		result, err := service.Organize(context.Background(), f.team, ontology.OrganizationInput{
-			OperationKey: "bridge-kept-separate", Sources: []ontology.SourceHandle{left, middle, right},
+			OperationKey: "bridge-incompatible-owners", Sources: []ontology.SourceHandle{left, middle, right},
 		})
 		require.Error(t, err)
 		require.Equal(t, "provider_response_invalid", result.FailureCode)

@@ -61,7 +61,7 @@ func (h *controlPortalHandler) updateOntologyMaintenanceConfig(c *echo.Context) 
 	values := map[string]string{}
 	for _, item := range body.Items {
 		if _, duplicate := values[item.Key]; duplicate {
-			return httperr.New(httperr.VALIDATION_ERROR, "duplicate ontology configuration key")
+			return httperr.New(httperr.VALIDATION_ERROR, "duplicate topic maintenance configuration key")
 		}
 		values[item.Key] = item.Value
 	}
@@ -83,7 +83,7 @@ func (h *controlPortalHandler) getOntologyMaintenanceStatus(c *echo.Context) err
 func (h *controlPortalHandler) listOntologyMaintenanceRuns(c *echo.Context) error {
 	for key := range c.QueryParams() {
 		if key != "limit" && key != "cursor" {
-			return httperr.New(httperr.VALIDATION_ERROR, "unknown ontology run query parameter")
+			return httperr.New(httperr.VALIDATION_ERROR, "unknown topic maintenance run query parameter")
 		}
 	}
 	limit := 50
@@ -137,22 +137,22 @@ func ontologyControlError(err error) error {
 	code := ontology.MaintenanceErrorCode(err)
 	switch {
 	case code == "invalid_input", errors.Is(err, settings.ErrInvalidAppConfig):
-		return httperr.New(httperr.VALIDATION_ERROR, "invalid ontology maintenance input")
+		return httperr.New(httperr.VALIDATION_ERROR, "invalid topic maintenance input")
 	case code == "unauthorized":
 		return httperr.New(httperr.FORBIDDEN, "operator authorization required")
 	case code == "not_found":
-		return httperr.New(httperr.NOT_FOUND, "ontology run not found")
+		return httperr.New(httperr.NOT_FOUND, "topic maintenance run not found")
 	case code == "conflict":
-		return httperr.New(httperr.CONFLICT, "ontology operation conflicts with its durable state")
+		return httperr.New(httperr.CONFLICT, "topic maintenance operation conflicts with its durable state")
 	case code == "maintenance_paused":
-		return httperr.New(httperr.CONFLICT, "ontology maintenance is paused")
+		return httperr.New(httperr.CONFLICT, "topic maintenance is paused")
 	case code == "maintenance_disabled":
-		return httperr.New(httperr.CONFLICT, "ontology maintenance is disabled")
+		return httperr.New(httperr.CONFLICT, "topic maintenance is disabled")
 	case code == "window_closed":
-		return httperr.New(httperr.CONFLICT, "ontology maintenance window is closed")
+		return httperr.New(httperr.CONFLICT, "topic maintenance window is closed")
 	case code == "configuration_invalid":
-		return httperr.New(httperr.CONFLICT, "configure an ontology context window with sufficient request and response capacity")
+		return httperr.New(httperr.CONFLICT, "configure a topic maintenance context window with sufficient request and response capacity")
 	default:
-		return httperr.New(httperr.SERVICE_UNAVAILABLE, "ontology maintenance unavailable")
+		return httperr.New(httperr.SERVICE_UNAVAILABLE, "topic maintenance unavailable")
 	}
 }

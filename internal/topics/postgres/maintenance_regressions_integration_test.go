@@ -201,7 +201,9 @@ func TestOntologyMaintenanceDefinitionMarkersTargetReceiptsAndVocabulary(t *test
 		return handles
 	}
 	handles := selectSources(maintenanceMarker{AnchorKind: "source_dependency", AnchorID: ontology.SourceKey(support), TargetKind: "definition", TargetID: support.ID})
-	require.ElementsMatch(t, []ontology.SourceHandle{support, dependent}, handles, "a parent support change must reach failed receipts without scanning unrelated sources")
+	require.Equal(t, []ontology.SourceHandle{support}, handles, "a source dependency marker follows materialized catalog dependencies")
+	handles = selectSources(maintenanceMarker{AnchorKind: "topic_record_heads", AnchorID: child.ID, TargetKind: "definition", TargetID: child.ID})
+	require.Equal(t, []ontology.SourceHandle{dependent}, handles, "a Topic revision marker finds matching Evidence without reading failed receipts")
 	page, err := f.store.ListRecords(ctx, f.team, "", "", 1)
 	require.NoError(t, err)
 	topic := testTopic("swift")

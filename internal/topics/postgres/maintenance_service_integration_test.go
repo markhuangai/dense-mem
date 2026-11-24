@@ -39,16 +39,23 @@ func maintenanceServiceFixture(t *testing.T, f *ontologyFixture, config *setting
 	}
 	var counters []*atomic.Int32
 	var countersMu sync.Mutex
-	service := organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: config, Audit: audit, DefaultModel: "fixture-model", ProviderTimeout: time.Minute, Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *organization.Service {
-		if accounting == nil {
-			return organization.NewService(nil, assessment.NewProvider(nil, model, maintenanceFixtureLimits(), int(contextWindowTokens)))
-		}
-		organizer, calls := organizationFixtureServiceWithAccounting(t, f, nil, edit, model, maintenanceFixtureLimits(), accounting, int(contextWindowTokens))
-		countersMu.Lock()
-		counters = append(counters, calls)
-		countersMu.Unlock()
-		return organizer
-	}})
+	const fixtureModel = "fixture-model"
+	transport, _ := cohortTopicTransport(t, fixtureModel)
+	service := organization.NewMaintenanceService(organization.MaintenanceDependencies{
+		Repository: f.store, Config: config, Audit: audit, DefaultModel: fixtureModel, ProviderTimeout: time.Minute,
+		Communities: f.store,
+		Placement:   organization.CommunityAssessor{Transport: transport, Limits: maintenanceFixtureLimits()},
+		Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *organization.Service {
+			if accounting == nil {
+				return organization.NewService(nil, assessment.NewProvider(nil, model, maintenanceFixtureLimits(), int(contextWindowTokens)))
+			}
+			organizer, calls := organizationFixtureServiceWithAccounting(t, f, nil, edit, model, maintenanceFixtureLimits(), accounting, int(contextWindowTokens))
+			countersMu.Lock()
+			counters = append(counters, calls)
+			countersMu.Unlock()
+			return organizer
+		},
+	})
 	return service, func() int32 {
 		countersMu.Lock()
 		defer countersMu.Unlock()
@@ -141,45 +148,45 @@ func TestOntologyMaintenanceOperatorHTTPAndScheduler(t *testing.T) {
 		require.NoError(t, json.Unmarshal(envelope.Data, value))
 	}
 	var configured domain.TopicMaintenanceSettings
-	decode(request(http.MethodGet, "/config/ontology-maintenance", ""), &configured)
+	decode(request(http.MethodGet, "/config/topic-maintenance", ""), &configured)
 	require.True(t, configured.Effective.Enabled)
-	decode(request(http.MethodPatch, "/config/ontology-maintenance", `{"items":[{"key":"ONTOLOGY_MAINTENANCE_CADENCE_HOURS","value":"24"}]}`), &configured)
+	decode(request(http.MethodPatch, "/config/topic-maintenance", `{"items":[{"key":"TOPIC_MAINTENANCE_CADENCE_HOURS","value":"24"}]}`), &configured)
 	require.Equal(t, 24, configured.Effective.CadenceHours)
 	for _, item := range []struct {
 		method, path, body string
 		status             int
 	}{
-		{http.MethodPost, "/ontology/runs", `{"operation_key":"invalid-bound","max_batches":101}`, http.StatusUnprocessableEntity},
-		{http.MethodPost, "/ontology/runs", `{"operation_key":"unknown-field","team_id":"untrusted"}`, http.StatusUnprocessableEntity},
-		{http.MethodGet, "/ontology/runs?limit=invalid", "", http.StatusUnprocessableEntity},
-		{http.MethodGet, "/ontology/runs?unexpected=1", "", http.StatusUnprocessableEntity},
-		{http.MethodPost, "/ontology/runs/invalid/retry", `{"operation_key":"invalid-run"}`, http.StatusBadRequest},
-		{http.MethodPatch, "/config/ontology-maintenance", `{"items":[{"key":"ONTOLOGY_MAINTENANCE_MODEL","value":"a"},{"key":"ONTOLOGY_MAINTENANCE_MODEL","value":"b"}]}`, http.StatusUnprocessableEntity},
+		{http.MethodPost, "/topic-maintenance/runs", `{"operation_key":"invalid-bound","max_batches":101}`, http.StatusUnprocessableEntity},
+		{http.MethodPost, "/topic-maintenance/runs", `{"operation_key":"unknown-field","team_id":"untrusted"}`, http.StatusUnprocessableEntity},
+		{http.MethodGet, "/topic-maintenance/runs?limit=invalid", "", http.StatusUnprocessableEntity},
+		{http.MethodGet, "/topic-maintenance/runs?unexpected=1", "", http.StatusUnprocessableEntity},
+		{http.MethodPost, "/topic-maintenance/runs/invalid/retry", `{"operation_key":"invalid-run"}`, http.StatusBadRequest},
+		{http.MethodPatch, "/config/topic-maintenance", `{"items":[{"key":"TOPIC_MAINTENANCE_MODEL","value":"a"},{"key":"TOPIC_MAINTENANCE_MODEL","value":"b"}]}`, http.StatusUnprocessableEntity},
 	} {
 		rec := request(item.method, item.path, item.body)
 		require.Equal(t, item.status, rec.Code, "%s %s: %s", item.method, item.path, rec.Body.String())
 	}
 	var command ontology.MaintenanceRun
-	decode(request(http.MethodPost, "/ontology/pause", `{"operation_key":"http-pause"}`), &command)
+	decode(request(http.MethodPost, "/topic-maintenance/pause", `{"operation_key":"http-pause"}`), &command)
 	var status ontology.MaintenanceStatus
-	decode(request(http.MethodGet, "/ontology/status", ""), &status)
+	decode(request(http.MethodGet, "/topic-maintenance/status", ""), &status)
 	require.True(t, status.Paused)
-	require.Equal(t, http.StatusConflict, request(http.MethodPost, "/ontology/runs", `{"operation_key":"paused-run"}`).Code)
+	require.Equal(t, http.StatusConflict, request(http.MethodPost, "/topic-maintenance/runs", `{"operation_key":"paused-run"}`).Code)
 	require.Zero(t, calls())
-	decode(request(http.MethodPost, "/ontology/resume", `{"operation_key":"http-resume"}`), &command)
-	decode(request(http.MethodPost, "/ontology/runs", `{"operation_key":"http-run","max_batches":1}`), &command)
+	decode(request(http.MethodPost, "/topic-maintenance/resume", `{"operation_key":"http-resume"}`), &command)
+	decode(request(http.MethodPost, "/topic-maintenance/runs", `{"operation_key":"http-run","max_batches":1}`), &command)
 	var replay ontology.MaintenanceRun
-	decode(request(http.MethodPost, "/ontology/runs", `{"operation_key":"http-run","max_batches":1}`), &replay)
+	decode(request(http.MethodPost, "/topic-maintenance/runs", `{"operation_key":"http-run","max_batches":1}`), &replay)
 	require.Equal(t, command, replay)
-	decode(request(http.MethodGet, "/ontology/status", ""), &status)
-	require.Equal(t, http.StatusNotFound, request(http.MethodPost, "/ontology/allowances", `{"operation_key":"retired"}`).Code)
-	require.Equal(t, http.StatusUnprocessableEntity, request(http.MethodPatch, "/config/ontology-maintenance", `{"items":[{"key":"ONTOLOGY_MAINTENANCE_INPUT_TOKENS","value":"1"}]}`).Code)
+	decode(request(http.MethodGet, "/topic-maintenance/status", ""), &status)
+	require.Equal(t, http.StatusNotFound, request(http.MethodPost, "/topic-maintenance/allowances", `{"operation_key":"retired"}`).Code)
+	require.Equal(t, http.StatusUnprocessableEntity, request(http.MethodPatch, "/config/topic-maintenance", `{"items":[{"key":"TOPIC_MAINTENANCE_INPUT_TOKENS","value":"1"}]}`).Code)
 
 	var runs ontology.MaintenanceRunPage
-	decode(request(http.MethodGet, "/ontology/runs?limit=1", ""), &runs)
+	decode(request(http.MethodGet, "/topic-maintenance/runs?limit=1", ""), &runs)
 	require.Len(t, runs.Runs, 1)
 	require.NotEmpty(t, runs.NextCursor)
-	decode(request(http.MethodGet, "/ontology/runs?cursor="+runs.NextCursor, ""), &runs)
+	decode(request(http.MethodGet, "/topic-maintenance/runs?cursor="+runs.NextCursor, ""), &runs)
 	require.NotEmpty(t, runs.Runs)
 	ctx, cancel := context.WithCancel(context.Background())
 	finished := make(chan struct{})
@@ -199,16 +206,16 @@ func TestOntologyMaintenanceOperatorHTTPAndScheduler(t *testing.T) {
 		t.Fatal("maintenance scheduler failed to release its workers after cancellation")
 	}
 	require.Positive(t, calls())
-	decode(request(http.MethodGet, "/ontology/status", ""), &status)
+	decode(request(http.MethodGet, "/topic-maintenance/status", ""), &status)
 	require.Greater(t, status.Usage.UnavailableUsageAttempts, int64(0))
 	require.Equal(t, before, f.canonicalSnapshot(t))
 	var auditCount int
-	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM audit_log WHERE operation='ONTOLOGY_MAINTENANCE_COMMAND'`).Row().Scan(&auditCount))
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM audit_log WHERE operation='TOPIC_MAINTENANCE_COMMAND'`).Row().Scan(&auditCount))
 	require.GreaterOrEqual(t, auditCount, 4)
 	var diagnostic strings.Builder
 	organization.NewMaintenanceScheduler(service, slog.New(slog.NewTextHandler(&diagnostic, nil))).Start(ctx)
 	require.Contains(t, diagnostic.String(), "configuration_unavailable")
-	failed := httptest.NewRequest(http.MethodGet, "/control/api/ontology/status", nil).WithContext(ctx)
+	failed := httptest.NewRequest(http.MethodGet, "/control/api/topic-maintenance/status", nil).WithContext(ctx)
 	failed.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	portal.ServeHTTP(rec, failed)
@@ -231,7 +238,7 @@ func TestOntologyMaintenanceCommandAuditIsAtomic(t *testing.T) {
 	}
 	t.Run("database_failure", func(t *testing.T) {
 		require.NoError(t, f.admin.Exec(`CREATE FUNCTION reject_maintenance_audit() RETURNS trigger LANGUAGE plpgsql AS $$
-		BEGIN IF NEW.operation='ONTOLOGY_MAINTENANCE_COMMAND' THEN RAISE EXCEPTION 'maintenance audit fixture failure'; END IF; RETURN NEW; END $$;
+		BEGIN IF NEW.operation='TOPIC_MAINTENANCE_COMMAND' THEN RAISE EXCEPTION 'maintenance audit fixture failure'; END IF; RETURN NEW; END $$;
 		CREATE TRIGGER reject_maintenance_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION reject_maintenance_audit()`).Error)
 		defer func() {
 			require.NoError(t, f.admin.Exec(`DROP TRIGGER reject_maintenance_audit ON audit_log; DROP FUNCTION reject_maintenance_audit()`).Error)
@@ -256,7 +263,7 @@ func TestOntologyMaintenanceCommandAuditIsAtomic(t *testing.T) {
 	t.Run("cancellation_during_audit", func(t *testing.T) {
 		require.NoError(t, f.admin.Exec(`UPDATE topic_maintenance_state SET paused=false WHERE singleton`).Error)
 		require.NoError(t, f.admin.Exec(`CREATE FUNCTION block_maintenance_audit() RETURNS trigger LANGUAGE plpgsql AS $$
-		BEGIN IF NEW.operation='ONTOLOGY_MAINTENANCE_COMMAND' THEN PERFORM pg_advisory_xact_lock(243541); END IF; RETURN NEW; END $$;
+		BEGIN IF NEW.operation='TOPIC_MAINTENANCE_COMMAND' THEN PERFORM pg_advisory_xact_lock(243541); END IF; RETURN NEW; END $$;
 		CREATE TRIGGER block_maintenance_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION block_maintenance_audit()`).Error)
 		defer func() {
 			require.NoError(t, f.admin.Exec(`DROP TRIGGER block_maintenance_audit ON audit_log; DROP FUNCTION block_maintenance_audit()`).Error)
@@ -301,7 +308,7 @@ func TestOntologyMaintenanceCommandAuditIsAtomic(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, first, replay)
 	var audits int
-	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM audit_log WHERE operation='ONTOLOGY_MAINTENANCE_COMMAND' AND entity_id=? AND metadata->>'operation_key'=? AND actor_role='control' AND client_ip='192.0.2.20' AND correlation_id='atomic-audit'`, first.ID, command.OperationKey).Row().Scan(&audits))
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM audit_log WHERE operation='TOPIC_MAINTENANCE_COMMAND' AND entity_id=? AND metadata->>'operation_key'=? AND actor_role='control' AND client_ip='192.0.2.20' AND correlation_id='atomic-audit'`, first.ID, command.OperationKey).Row().Scan(&audits))
 	require.Equal(t, 2, audits, "both accepted requests retain their audit entry and one idempotent command result")
 }
 

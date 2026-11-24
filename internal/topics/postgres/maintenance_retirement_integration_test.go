@@ -63,7 +63,8 @@ func TestOntologyEvidenceOnlyResetRebuildsExistingEvidence(t *testing.T) {
 		if err := tx.Exec(`INSERT INTO ontology_maintenance_windows(window_id,starts_at,ends_at,policy) VALUES(?,now()-interval '2 days',now()-interval '1 day','{"model":"fixture-model","context_window_tokens":300000}')`, windowID).Error; err != nil {
 			return err
 		}
-		if err := tx.Exec(`INSERT INTO ontology_maintenance_runs(run_id,window_id,operation_key,request_hash,command,kind,status,created_at,updated_at) VALUES(?,?,'populated-reset','historical','{}','scheduled','completed',now()-interval '2 days',now()-interval '1 day')`, runID, windowID).Error; err != nil {
+		if err := tx.Exec(`INSERT INTO ontology_maintenance_runs(run_id,window_id,operation_key,request_hash,command,kind,status,max_batches,created_at,updated_at)
+			VALUES(?,?,'populated-reset','historical','{}','scheduled','completed',0,now()-interval '2 days',now()-interval '1 day')`, runID, windowID).Error; err != nil {
 			return err
 		}
 		for _, source := range shared {
@@ -118,7 +119,7 @@ func TestOntologyEvidenceOnlyResetRebuildsExistingEvidence(t *testing.T) {
 		require.NoError(t, f.admin.Raw(`SELECT COALESCE(jsonb_object_agg(replace(key,'TOPIC_MAINTENANCE_','ONTOLOGY_MAINTENANCE_'),value)::text,'{}') FROM app_config WHERE key LIKE 'ONTOLOGY_MAINTENANCE_%' OR key LIKE 'TOPIC_MAINTENANCE_%'`).Row().Scan(&settings))
 		result["settings"] = settings
 		var batches string
-		require.NoError(t, f.admin.Raw(`SELECT jsonb_agg(to_jsonb(row_value)-ARRAY['sources','revisions','status','failure_code','completed_at'] ORDER BY batch_id)::text FROM `+prefix+`batches row_value`).Row().Scan(&batches))
+		require.NoError(t, f.admin.Raw(`SELECT jsonb_agg(to_jsonb(row_value)-ARRAY['sources','revisions','status','failure_code','completed_at','community_topic_id'] ORDER BY batch_id)::text FROM `+prefix+`batches row_value`).Row().Scan(&batches))
 		result["batch_identity"] = batches
 		return result
 	}
@@ -130,11 +131,13 @@ func TestOntologyEvidenceOnlyResetRebuildsExistingEvidence(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, migrator.RunUp(ctx))
 	require.Equal(t, beforeHistory, history("topic_maintenance_"))
-	var retired, completed int
+	var retired, completed, communityBatches int
 	require.NoError(t, f.admin.Raw(`SELECT count(*) FILTER(WHERE batch_id=?::uuid AND status='lost' AND failure_code='retired_contract' AND completed_at IS NOT NULL),
- count(*) FILTER(WHERE batch_id<>?::uuid AND status='completed' AND completed_at IS NOT NULL)
- FROM topic_maintenance_batches`, unfinished, unfinished).Row().Scan(&retired, &completed))
+ count(*) FILTER(WHERE batch_id<>?::uuid AND status='completed' AND completed_at IS NOT NULL),
+ count(*) FILTER(WHERE community_topic_id IS NOT NULL)
+ FROM topic_maintenance_batches`, unfinished, unfinished).Row().Scan(&retired, &completed, &communityBatches))
 	require.Equal(t, 1, retired)
+	require.Zero(t, communityBatches)
 	var batchIdentities []json.RawMessage
 	require.NoError(t, json.Unmarshal([]byte(beforeHistory["batch_identity"]), &batchIdentities))
 	require.Greater(t, len(batchIdentities), 1)

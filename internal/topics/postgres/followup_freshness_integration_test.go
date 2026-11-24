@@ -29,8 +29,8 @@ func TestOntologyAutomaticRetirementPreservesGroupingOverrides(t *testing.T) {
 			migrator, err := storage.NewMigrator(f.admin)
 			require.NoError(t, err)
 			require.NoError(t, migrator.RunUpThroughEvidenceOnly(ctx))
-			a := f.organizationEvidenceAt(t, 0, "Atlas uses PostgreSQL.", "2026-10-08T12:00:00Z", "")
-			b := f.organizationEvidenceAt(t, 0, "Atlas uses PostgreSQL.", "2026-10-08T12:00:00Z", "")
+			a := f.evidenceAt(t, 0, "Atlas uses PostgreSQL.", "2026-10-08T12:00:00Z")
+			b := f.evidenceAt(t, 0, "Atlas uses PostgreSQL.", "2026-10-08T12:00:00Z")
 			before := f.canonicalSnapshot(t)
 			group := ontology.Record{ID: uuid.NewString(), Kind: ontology.EvidenceGroup, Group: &ontology.Group{Members: []ontology.SourceHandle{a, b}}, Sources: []ontology.SourceDependency{f.source(t, a), f.source(t, b)}}
 			override := ontology.Record{ID: uuid.NewString(), Kind: ontology.OverrideKind, Override: &ontology.Override{Action: action, Members: group.Group.Members}, Sources: group.Sources}
