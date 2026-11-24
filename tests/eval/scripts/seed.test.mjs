@@ -5,7 +5,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import imagePolicy from "../../../.github/scripts/image-release-policy.cjs";
-import { seedBuildRequest, seedReference, seedBuildVersion, seedMetadata, verifySeedFiles, sealSeed, hashFile, resolveSeedBuildSource, requireSeedBuildValidation, remainingSeedRestoreEntries, resolveSeedImage, publishSeed } from "../../../.github/scripts/evaluation-seeds.mjs";
+import { seedBuildRequest, seedReference, seedBuildVersion, seedMetadata, seedVerificationReason, verifySeedFiles, sealSeed, hashFile, resolveSeedBuildSource, requireSeedBuildValidation, remainingSeedRestoreEntries, resolveSeedImage, publishSeed } from "../../../.github/scripts/evaluation-seeds.mjs";
 import { location, setup } from "./workflow.mjs";
 import { localSeedRequest, lockSeedBuild, savedSeedRequest, verifiedSeedExport } from "./local-seeds.mjs";
 import { readWorkflow, workflowJob } from "../../uat/workflow_helpers.mjs";
@@ -127,6 +127,7 @@ test("resume restores the original seed build settings and locks its local direc
   assert.deepEqual(savedSeedRequest(receipt, id, registry, registryHash), {
     pr: 777, dataset: ["hotpotqa"], workers: 20, skipAISecurityReview: true,
   });
+  assert.throws(() => savedSeedRequest({ ...receipt, variant: "ontology-on" }, id, registry, registryHash), /retired ontology preparation/);
   assert.throws(() => savedSeedRequest(receipt, id, registry, "c".repeat(64)), /incompatible/);
   assert.throws(() => savedSeedRequest({ ...receipt, datasets: ["hotpotqa", "musique"] }, id, registry, registryHash), /selection is invalid/);
   const unlock = lockSeedBuild(directory);
@@ -359,8 +360,20 @@ test("seed checks bind public source counts, scope and real file checksums", asy
   const bootable = { ...sealed, version: 2 };
   fs.writeFileSync(path.join(directory, "seed.json"), JSON.stringify(bootable));
   assert.deepEqual(await verifySeedFiles(directory, "hotpotqa", registryHash, 9811, { bootable: true }), bootable);
+  const diagnostic = {};
+  const otherRegistry = "7".repeat(64);
+  fs.writeFileSync(path.join(directory, "seed.json"), JSON.stringify({ ...bootable, registry_sha256: otherRegistry }));
+  await assert.rejects(verifySeedFiles(directory, "hotpotqa", registryHash, 9811, { bootable: true, diagnostic }),
+    (error) => seedVerificationReason(error) === "seed_identity_incompatible");
+  assert.equal(diagnostic.observed_registry_sha256, otherRegistry);
+  fs.writeFileSync(path.join(directory, "seed.json"), JSON.stringify({ ...bootable, ontology_preparation: null }));
+  await assert.rejects(verifySeedFiles(directory, "hotpotqa", registryHash, 9811, { bootable: true }), { code: "ontology_preparation_present" });
+  fs.writeFileSync(path.join(directory, "seed.json"), JSON.stringify(bootable));
   fs.appendFileSync(path.join(directory, "mapping.json"), "corrupted mapping");
-  await assert.rejects(verifySeedFiles(directory, "hotpotqa", registryHash, 9811, { bootable: true }), /mapping checksum/);
+  await assert.rejects(verifySeedFiles(directory, "hotpotqa", registryHash, 9811, { bootable: true, diagnostic }),
+    (error) => seedVerificationReason(error) === "seed_mapping_checksum_mismatch");
+  assert.equal(diagnostic.expected_mapping_sha256, bootable.mapping_sha256);
+  assert.equal(diagnostic.observed_mapping_sha256, await hashFile(path.join(directory, "mapping.json")));
 });
 
 test("live evaluation pins every seed before allocating provider-backed jobs", async () => {

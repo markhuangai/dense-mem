@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -35,7 +34,7 @@ func ReadManifest(path string) (Manifest, error) {
 			return manifest, errors.New("hosted execution manifest identity or operation is invalid")
 		}
 	} else if os.Getenv("GITHUB_ACTIONS") == "true" || manifest.WorkflowRunID != "" || manifest.Mode != "live" || !seedBuildPattern.MatchString(manifest.SeedBuildID) || manifest.SeedBuildID != os.Getenv("EVAL_LOCAL_SEED_ID") ||
-		(manifest.Operation != "bootstrap" && manifest.Operation != "prepare" && manifest.Operation != "verify-seed" && manifest.Operation != "prepare-topics") {
+		(manifest.Operation != "bootstrap" && manifest.Operation != "prepare" && manifest.Operation != "verify-seed") {
 		return manifest, errors.New("local execution permits only public seed preparation and restore verification")
 	}
 	imageValid := imagePattern.MatchString(manifest.Image)
@@ -45,7 +44,7 @@ func ReadManifest(path string) (Manifest, error) {
 	if manifest.SkipAISecurityReview && (manifest.SeedBuildID == "" || manifest.Operation != "prepare" || !seedImagePattern.MatchString(manifest.SeedImage)) {
 		return manifest, errors.New("skipping AI security review requires preparation from a public seed bootstrap")
 	}
-	if manifest.ResumeScope != nil && (manifest.SeedBuildID == "" || (manifest.Operation != "prepare" && manifest.Operation != "prepare-topics") || manifest.IntakeProof || !seedImagePattern.MatchString(manifest.SeedImage)) {
+	if manifest.ResumeScope != nil && (manifest.SeedBuildID == "" || manifest.Operation != "prepare" || manifest.IntakeProof || !seedImagePattern.MatchString(manifest.SeedImage)) {
 		return manifest, errors.New("resuming requires a local public seed build and its pinned bootstrap")
 	}
 	if manifest.Version != 1 || manifest.RunID == "" || !revisionPattern.MatchString(manifest.SourceRevision) || !imageValid {
@@ -54,38 +53,26 @@ func ReadManifest(path string) (Manifest, error) {
 	if manifest.Mode != "live" && manifest.Mode != "fixtures" {
 		return manifest, errors.New("invalid runner campaign mode")
 	}
-	if manifest.RunID != manifest.ExpectedRunID() {
+	if (manifest.Operation == "run" && manifest.Condition != scoringCondition) ||
+		(manifest.Operation != "run" && manifest.Condition != "") {
+		return manifest, errors.New("scored evaluation requires ontology off")
+	}
+	if manifest.RunID != manifest.DatasetRunID() {
 		return manifest, errors.New("manifest does not belong to this dataset job")
 	}
 	if !modelPattern.MatchString(manifest.Model) || strings.Contains(manifest.Model, "://") || manifest.EmbeddingModel != "text-embedding-3-small" || manifest.EmbeddingDimensions != 1536 || manifest.ContextWindowTokens < 16384 {
 		return manifest, errors.New("explicit verified model and context settings are required")
 	}
-	if manifest.PairArm != "" || manifest.PairPhase != "" || manifest.ParentSeedImage != "" || manifest.Operation == "prepare-topics" {
-		if (manifest.PairArm != "baseline" && manifest.PairArm != "candidate") || !seedImagePattern.MatchString(manifest.ParentSeedImage) || manifest.Mode != "live" {
-			return manifest, errors.New("paired evaluation requires a pinned parent seed and a named arm")
-		}
-		switch manifest.Operation {
-		case "run":
-			if manifest.PairPhase != "verify" && manifest.PairPhase != "score" && manifest.PairPhase != "lexical" && manifest.PairPhase != "counterevidence" {
-				return manifest, errors.New("invalid paired scoring phase")
-			}
-			if manifest.PairPhase == "score" && (manifest.PairShards < 1 || manifest.PairShards > 16 || manifest.PairShard < 0 || manifest.PairShard >= manifest.PairShards) {
-				return manifest, errors.New("invalid paired question shard")
-			}
-		case "prepare-topics":
-			if manifest.SeedBuildID == "" || manifest.SeedImage != manifest.ParentSeedImage || manifest.PairPhase != "" {
-				return manifest, errors.New("Topic seed preparation requires a local pinned parent")
-			}
-		case "verify-seed":
-			if manifest.SeedBuildID == "" || manifest.PairPhase != "" {
-				return manifest, errors.New("invalid local derivative verification")
-			}
-		default:
-			return manifest, errors.New("unsupported paired operation")
-		}
-	}
-	if manifest.Operation != "prepare" && manifest.Operation != "run" && manifest.Operation != "bootstrap" && manifest.Operation != "verify-seed" && manifest.Operation != "prepare-topics" {
+	if manifest.Operation != "prepare" && manifest.Operation != "run" && manifest.Operation != "bootstrap" && manifest.Operation != "verify-seed" {
 		return manifest, errors.New("invalid workflow-internal operation")
+	}
+	if manifest.Operation == "run" {
+		manifest.AnswerWorkers = manifest.effectiveAnswerWorkers()
+		if manifest.AnswerWorkers < defaultAnswerWorkers || manifest.AnswerWorkers > maxAnswerWorkers {
+			return manifest, errors.New("answer_workers must be 4..10")
+		}
+	} else if manifest.AnswerWorkers != 0 {
+		return manifest, errors.New("answer_workers applies only to scored evaluation")
 	}
 	if manifest.Operation == "prepare" || manifest.Operation == "bootstrap" {
 		if err := validateImportWorkers(manifest.ImportWorkers); err != nil {
@@ -103,21 +90,27 @@ func ReadManifest(path string) (Manifest, error) {
 	if manifest.Operation == "verify-seed" && !manifest.IntakeProof && !localImagePattern.MatchString(manifest.SeedImage) {
 		return manifest, errors.New("seed boot verification requires an immutable local PostgreSQL image")
 	}
-	if manifest.Operation == "run" && manifest.Mode == "fixtures" && manifest.SeedImage != "" && !localImagePattern.MatchString(manifest.SeedImage) {
+	if manifest.Operation == "run" && manifest.Mode == "fixtures" && !localImagePattern.MatchString(manifest.SeedImage) {
 		return manifest, errors.New("fixture seed must use an immutable local PostgreSQL image")
 	}
 	if manifest.DataDir == "" || manifest.OutputDir == "" || len(manifest.RegistryHash) != 64 {
 		return manifest, errors.New("manifest data and output identity missing")
 	}
-	maximum := 330 * time.Minute
-	if manifest.ModelDeadline.IsZero() || manifest.ModelDeadline.After(time.Now().Add(maximum)) {
+	if manifest.ModelDeadline.IsZero() || manifest.ModelDeadline.After(time.Now().Add(330*time.Minute)) {
 		return manifest, errors.New("model deadline is missing or exceeds the campaign limit")
 	}
 	return manifest, nil
 }
 
+func (m Manifest) effectiveAnswerWorkers() int {
+	if m.AnswerWorkers == 0 {
+		return defaultAnswerWorkers
+	}
+	return m.AnswerWorkers
+}
+
 func (m Manifest) PostgresRuntimeImage() string {
-	if (m.Operation == "run" || m.Operation == "verify-seed" || m.Operation == "prepare-topics") && m.SeedImage != "" {
+	if (m.Operation == "run" || m.Operation == "verify-seed") && m.SeedImage != "" {
 		return m.SeedImage
 	}
 	return PostgresImage
@@ -130,17 +123,17 @@ func (m Manifest) ExecutionID() string {
 	return m.WorkflowRunID
 }
 
+func (m Manifest) DatasetRunID() string {
+	id := m.ExecutionID() + "-" + m.Dataset
+	if m.Condition != "" {
+		id += "-" + m.Condition
+	}
+	return id
+}
+
 func validateImportWorkers(workers int) error {
 	if workers < 1 || workers > maxImportWorkers {
 		return errors.New("import workers must be between 1 and 100")
 	}
 	return nil
-}
-
-func (m Manifest) ExpectedRunID() string {
-	id := m.ExecutionID() + "-" + m.Dataset
-	if m.PairPhase != "" {
-		id += "-" + m.PairArm + "-" + m.PairPhase + "-" + strconv.Itoa(m.PairShard)
-	}
-	return id
 }

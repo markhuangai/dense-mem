@@ -28,6 +28,9 @@ export function lockSeedBuild(directory) {
 }
 
 export function savedSeedRequest(receipt, id, registry, registryHash) {
+  if (receipt?.variant !== undefined || receipt?.parents !== undefined) {
+    throw new Error("Checkpoint belongs to retired ontology preparation");
+  }
   if (receipt?.resume_version !== 1 || receipt.build_id !== id || receipt.registry_sha256 !== registryHash ||
       (receipt.pr !== null && (!Number.isSafeInteger(receipt.pr) || receipt.pr < 1)) ||
       !Array.isArray(receipt.datasets) || typeof receipt.skip_ai_security_review !== "boolean") {
@@ -214,7 +217,6 @@ export function localSeedEnvironment(settings, workers) {
 }
 
 export async function main(args, settings = process.env) {
-  if (args[0] === "prepare-topics") return prepareTopicDerivatives(args.slice(1), settings);
   const registryBytes = fs.readFileSync("tests/eval/datasets.json");
   const registry = JSON.parse(registryBytes);
   const registryHash = sha256(registryBytes);
@@ -296,115 +298,6 @@ async function runSeedBuild({ id, directory, request, registryHash, rows, saved,
   } finally {
     for (const signal of ["SIGINT", "SIGTERM"]) process.removeListener(signal, stop);
   }
-}
-
-export async function prepareTopicDerivatives(args, settings) {
-  const { values } = parseArgs({ args, options: {
-    pr: { type: "string" }, lock: { type: "string" }, resume: { type: "string" },
-  } });
-  const registry = read("tests/eval/datasets.json");
-  const pr = Number(values.pr);
-  if (!Number.isSafeInteger(pr) || pr < 1 || !values.lock) throw new Error("Seed build requires --pr and a pinned source --lock");
-  if (values.resume && !/^local-[a-f0-9]{32}$/.test(values.resume)) throw new Error("Seed build resume ID is invalid");
-  const frozen = read(values.lock);
-  const checkout = command("git", ["rev-parse", "HEAD"]);
-  const source = await resolveSeedBuildSource(github, pr, checkout);
-  const env = localSeedEnvironment(settings, 8);
-  const imagePattern = /^ghcr\.io\/markhuangai\/dense-mem@sha256:[a-f0-9]{64}$/;
-  const seedPattern = /^ghcr\.io\/markhuangai\/dense-mem-eval-postgres@sha256:[a-f0-9]{64}$/;
-  if (!imagePattern.test(frozen.baseline_image) || !imagePattern.test(frozen.candidate_image) ||
-      Object.keys(frozen.seeds ?? {}).length !== registry.datasets.length ||
-      registry.datasets.some((dataset) => !seedPattern.test(frozen.seeds[dataset.id]))) {
-    throw new Error("Seed build lock must pin both application images and all five parent seed digests");
-  }
-  const images = {};
-  for (const arm of ["baseline", "candidate"]) {
-    const ref = frozen[arm + "_image"];
-    docker(["pull", "--quiet", "--platform=linux/amd64", ref]);
-    images[arm] = resolveEvaluationImage(ref, "markhuangai/dense-mem", JSON.parse(docker(["image", "inspect", ref]))[0]);
-  }
-  if (images.candidate.revision !== source.sourceRevision || images.candidate.image !== source.image) {
-    throw new Error("Seed build candidate does not match the approved PR image");
-  }
-  if (!/^[a-f0-9]{40}$/.test(frozen.baseline_revision ?? "") || images.baseline.revision !== frozen.baseline_revision) {
-    throw new Error("Seed build baseline does not match the pinned revision");
-  }
-  const id = values.resume ?? `local-${randomBytes(16).toString("hex")}`;
-  const directory = path.resolve("tmp/eval-seeds", id);
-  if (!values.resume) fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
-  const stat = fs.lstatSync(directory);
-  if (!stat.isDirectory() || stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0) throw new Error("Seed build state must be private");
-  const unlock = lockSeedBuild(directory);
-  const controller = new AbortController();
-  const stop = () => controller.abort();
-  for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, stop);
-  try {
-    const lockFile = path.join(directory, "topic-source.json");
-    if (values.resume ? !isDeepStrictEqual(read(lockFile), frozen) : fs.existsSync(lockFile)) throw new Error("Seed build immutable lock differs");
-    if (!values.resume) save(lockFile, frozen);
-    const binary = path.join(directory, "eval-runner");
-    if (!fs.existsSync(binary)) buildRunner(directory, checkout);
-    process.stdout.write(`Topic seed preparation ID: ${id}\n`);
-    const completed = {};
-    for (const dataset of registry.datasets) {
-      const parent = frozen.seeds[dataset.id];
-      completed[dataset.id] = { parent };
-      for (const arm of ["baseline", "candidate"]) {
-        controller.signal.throwIfAborted();
-        await requireSeedBuildValidation(github, source.validation);
-        const runID = `local-${sha256(id + ":" + dataset.id + ":" + arm).slice(0, 32)}`;
-        const work = path.join(directory, dataset.id, arm);
-        fs.mkdirSync(work, { recursive: true, mode: 0o700 });
-        const worker = {
-          ...env, EVAL_LOCAL_SEED_ID: runID, EVAL_LOCAL_SEED_ROOT: work,
-          EVAL_SOURCE_REVISION: images[arm].revision, EVAL_IMAGE: images[arm].image,
-          EVAL_BASE_RELEASE: source.baseRelease, EVAL_DATASET: dataset.id, EVAL_SEED_IMAGE: parent,
-          EVAL_RUNNER_BINARY: binary, EVAL_PAIR_ARM: arm, EVAL_PARENT_SEED_IMAGE: parent,
-          EVAL_MODEL_DEADLINE_EPOCH: String(Math.floor(Date.now() / 1000) + 330 * 60),
-        };
-        completed[dataset.id][arm] = await prepareTopicDerivative(worker, work, controller.signal, () => requireSeedBuildValidation(github, source.validation));
-      }
-      // A partial numeric receipt can be inspected without qualifying the paired run.
-      save(path.join(directory, "paired-seed-lock.json"), completed);
-    }
-    return completed;
-  } finally {
-    for (const signal of ["SIGINT", "SIGTERM"]) process.removeListener(signal, stop);
-    unlock();
-  }
-}
-
-async function prepareTopicDerivative(env, work, signal, verifyPublication) {
-  const identity = sha256(JSON.stringify([env.EVAL_DATASET, env.EVAL_PAIR_ARM, env.EVAL_IMAGE, env.EVAL_PARENT_SEED_IMAGE]));
-  const repository = env.EVAL_PARENT_SEED_IMAGE.split("@")[0];
-  const tag = `${repository}:${env.EVAL_DATASET}-prepared-${env.EVAL_PAIR_ARM}-${identity.slice(0, 24)}`;
-  const receiptFile = path.join(work, "published.json");
-  const published = await resolveSeedImage(tag, {});
-  if (published) {
-    if (!fs.existsSync(receiptFile) || read(receiptFile).digest !== published) throw new Error("Seed build derivative tag exists without a matching verified receipt");
-    return published;
-  }
-  return withOwnedRuntime(env, async () => {
-    const checkpoint = fs.existsSync(location(env).checkpointFile);
-    await cleanup(env, { retainVolume: checkpoint });
-    const exportDirectory = fs.mkdtempSync(path.join(work, "seed-export-"));
-    const runtime = await setup(env, { operation: "prepare-topics", seedImage: env.EVAL_PARENT_SEED_IMAGE, resumable: true, exportDirectory, signal });
-    await runBinary("prepare-topics", runtime, env, signal);
-    const postgres = `densemem-eval-${runtime.paths.runID}-postgres`;
-    dumpSeed(docker, postgres, runtime.seedDir);
-    await sealSeed(runtime.seedDir);
-    fs.writeFileSync(path.join(runtime.seedDir, "NOTICE.md"), notice());
-    const image = await buildBootableSeed(docker, postgres, runtime.seedDir, seedSecrets(runtime.state));
-    await roundTrip(runtime, env, "verify-seed", signal, { resumable: true, bootableImage: image });
-    await verifyPublication();
-    signal.throwIfAborted();
-    docker(["image", "tag", image, tag]);
-    docker(["image", "push", tag], { timeout: 20 * 60_000 });
-    const digest = await resolveSeedImage(tag, {});
-    if (!digest) throw new Error("Seed build derivative was not visible after publication");
-    save(receiptFile, { digest, tag, identity });
-    return digest;
-  }, { resumable: true });
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {

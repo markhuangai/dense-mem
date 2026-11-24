@@ -20,7 +20,13 @@ import (
 
 func main() {
 	protector := evalharness.NewRunnerCredentialProtector(os.Getenv("DENSE_MEM_EVAL_API_KEY"), os.Getenv("DENSE_MEM_EVAL_EMBED_API_KEY"), os.Getenv("DENSE_MEM_EVAL_VERIFIER_URL"), os.Getenv("DENSE_MEM_EVAL_EMBED_URL"), os.Getenv("AI_VERIFIER_API_URL"), os.Getenv("AI_API_URL"), os.Getenv("EVAL_API_KEY"), os.Getenv("EVAL_CONTROL_TOKEN"), os.Getenv("EVAL_DATABASE_PASSWORD"), os.Getenv("EVAL_DATABASE_URL"))
-	logger := observability.NewWithProtector(slog.LevelDebug, protector)
+	console, closeConsole, err := evaluationConsole()
+	if err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, "evaluation console initialization failed")
+		os.Exit(1)
+	}
+	defer closeConsole()
+	logger := observability.NewConsoleWithProtector(slog.LevelDebug, protector, console)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	if err := execute(ctx, os.Args[1:], logger, protector); err != nil {
@@ -36,7 +42,7 @@ func execute(ctx context.Context, args []string, logger *observability.Logger, p
 		}
 		return evalharness.FreezeIntakeProofInputs("tests/eval/datasets.json", args[1])
 	}
-	if len(args) != 2 || (args[0] != "validate" && args[0] != "prepare" && args[0] != "run" && args[0] != "bootstrap" && args[0] != "verify-seed" && args[0] != "prepare-topics") {
+	if len(args) != 2 || (args[0] != "validate" && args[0] != "prepare" && args[0] != "run" && args[0] != "bootstrap" && args[0] != "verify-seed") {
 		return errors.New("usage: eval-runner validate|bootstrap|prepare|verify-seed|run EXECUTION_MANIFEST; workflow-internal only except local seed preparation")
 	}
 	if args[0] == "run" {
@@ -127,8 +133,16 @@ func execute(ctx context.Context, args []string, logger *observability.Logger, p
 	native := &evalharness.Native{DB: database, Client: client, Scope: evalharness.Scope{TeamID: os.Getenv("EVAL_TEAM_ID"), CredentialID: os.Getenv("EVAL_CREDENTIAL_ID")}, ControlURL: os.Getenv("EVAL_CONTROL_URL"), ControlToken: os.Getenv("EVAL_CONTROL_TOKEN")}
 	native.ServerUsage = map[string]evalharness.UsageTotals{}
 	native.RuntimeLogs = func(ctx context.Context) error {
-		requireUsage := manifest.ResumeScope == nil && manifest.PairPhase != "lexical" && !(manifest.PairPhase == "score" && os.Getenv("EVAL_RESUME_QUESTIONS") != "")
-		return runtimeLogs(ctx, manifest.RunID, capture, native.ServerUsage, requireUsage)
+		requireUsage := manifest.ResumeScope == nil
+		if manifest.Operation == "run" {
+			requireUsage = native.RequireRuntimeUsage
+		}
+		return runtimeLogs(ctx, manifest.RunID, capture, native.ServerUsage, requireUsage, manifest.Operation == "run")
+	}
+	if manifest.Operation == "run" {
+		native.StopRuntime = func(ctx context.Context, cutoff bool) error {
+			return stopRuntime(ctx, manifest.RunID, cutoff)
+		}
 	}
 	if args[0] == "prepare" {
 		prepareCtx, stop := context.WithCancel(ctx)
@@ -145,17 +159,11 @@ func execute(ctx context.Context, args []string, logger *observability.Logger, p
 		defer cancel()
 		return errors.Join(prepareErr, native.RuntimeLogs(shutdown))
 	}
-	if args[0] == "prepare-topics" {
-		return evalharness.PrepareTopics(ctx, manifest, corpus, client, native)
-	}
 	if args[0] == "verify-seed" {
 		_, _, _, _, err := evalharness.VerifySeed(ctx, manifest, corpus, client, native)
 		return err
 	}
 	transport := evalharness.AnswerTransport{URL: os.Getenv("DENSE_MEM_EVAL_VERIFIER_URL"), Key: os.Getenv("DENSE_MEM_EVAL_API_KEY"), Client: &http.Client{Timeout: 5 * time.Minute}, Capture: capture}
-	if manifest.PairArm != "" {
-		return evalharness.PairedMeasurement(ctx, manifest, dataset, corpus, questions, client, transport, native)
-	}
 	report, err := evalharness.Run(ctx, manifest, corpus, questions, client, transport, native)
 	if err != nil {
 		return err

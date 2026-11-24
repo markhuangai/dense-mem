@@ -21,7 +21,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/evalharness"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
@@ -33,10 +32,19 @@ func (f runnerAnswerTransport) Complete(ctx context.Context, request modelprovid
 }
 
 func TestRunnerCampaignConditionsAndCapture(t *testing.T) {
+	for _, scenario := range []string{"verified", "active ontology at restore", "ontology changed during scoring", "terminal capture failed"} {
+		t.Run(scenario, func(t *testing.T) { testRunnerOffCampaign(t, scenario) })
+	}
+}
+
+func testRunnerOffCampaign(t *testing.T, scenario string) {
 	f := newRunnerServiceFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	require.NoError(t, f.native.Control(ctx, http.MethodPatch, "/config/topic-maintenance", map[string]any{"items": []map[string]string{{"key": domain.AppConfigTopicMaintenanceEnabled, "value": "false"}}}, nil))
+	setOntology := func(value string) error {
+		return f.native.Control(ctx, http.MethodPatch, "/config/topic-maintenance", map[string]any{"items": []map[string]string{{"key": domain.AppConfigTopicMaintenanceEnabled, "value": value}}}, nil)
+	}
+	require.NoError(t, setOntology("false"))
 	manifest := f.manifest
 	manifest.RunID, manifest.Dataset = "native-runner", "synthetic"
 	manifest.SourceRevision = strings.Repeat("a", 40)
@@ -48,11 +56,16 @@ func TestRunnerCampaignConditionsAndCapture(t *testing.T) {
 	corpus := []evalharness.CorpusItem{{SourceDocID: "source-one", Content: "Project Alpha stores durable memory in PostgreSQL."}}
 	questions := []evalharness.Question{{ID: "question-one", Query: "Where does Project Alpha store durable memory?", Answers: []string{"PostgreSQL", "private-gold-answer-canary"}, GoldSources: []string{"source-one"}}}
 	var calls atomic.Int32
-	var initialPackets [4]evalharness.MemoryCall
+	var initialPackets [2]evalharness.MemoryCall
 	transport := runnerAnswerTransport(func(_ context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
 		position := calls.Add(1) - 1
 		if position >= int32(len(initialPackets)) {
 			return modelprovider.StructuredResult{}, errors.New("unexpected extra answer call")
+		}
+		if position == 0 && scenario == "ontology changed during scoring" {
+			if err := setOntology("true"); err != nil {
+				return modelprovider.StructuredResult{}, err
+			}
 		}
 		for _, message := range request.Messages {
 			if strings.Contains(message.Content, "private-gold-answer-canary") {
@@ -78,53 +91,73 @@ func TestRunnerCampaignConditionsAndCapture(t *testing.T) {
 		body, err := json.Marshal(map[string]any{"action": "answer", "query": "", "topic_id": "", "evidence_id": "", "answer": "PostgreSQL", "citations": []evalharness.Citation{{EvidenceID: id, Quote: "PostgreSQL"}}})
 		return modelprovider.StructuredResult{Content: string(body)}, err
 	})
-	worker := make(chan error, 1)
-	go func() {
-		for ctx.Err() == nil {
-			if _, err := f.maintenance.RunTurn(ctx); err != nil && ctx.Err() == nil && !errors.Is(err, ontology.ErrMaintenancePaused) {
-				worker <- err
-				return
-			}
-			select {
-			case <-ctx.Done():
-			case <-time.After(10 * time.Millisecond):
-			}
-		}
-		worker <- nil
-	}()
-	defer func() { cancel(); require.NoError(t, <-worker) }()
 	manifest.SeedDir, manifest.BaseRelease = t.TempDir(), "v2.8.1-rc.5"
 	seed, err := evalharness.Prepare(ctx, manifest, corpus, f.native.Client, f.native)
 	require.NoError(t, err)
 	runnerSealSyntheticSeed(t, manifest.SeedDir, seed)
-	manifest.ImportWorkers = 0
+	manifest.ImportWorkers, manifest.Condition = 0, "off"
+	if scenario == "active ontology at restore" {
+		require.NoError(t, setOntology("true"))
+	}
+	if scenario == "terminal capture failed" {
+		f.native.RuntimeLogs = func(context.Context) error {
+			return errors.New("runtime collector unavailable: " + f.native.ControlToken)
+		}
+	}
 	providerCalls := f.provider.calls
 	report, err := evalharness.Run(ctx, manifest, corpus, questions, f.native.Client, transport, f.native)
 	require.Equal(t, providerCalls, f.provider.calls, "scoring never imports the corpus again")
-	require.NoError(t, err)
-	require.True(t, report.Complete)
-	require.Equal(t, 4, report.ExpectedAnswers)
-	require.Equal(t, 4, report.CompletedAnswers)
-	require.Equal(t, int32(4), calls.Load())
-	require.Len(t, report.NativeMeasurements, 3)
-	for _, observation := range report.NativeMeasurements {
-		require.Equal(t, report.Identity.CanonicalHash, observation.CanonicalHash)
+	require.Len(t, f.snapshot(t).ProviderAttempts, 0)
+	require.Equal(t, 2, report.ExpectedAnswers)
+	require.FileExists(t, filepath.Join(manifest.OutputDir, "scores.json"))
+	require.NotContains(t, logs.String(), f.native.ControlToken)
+	switch scenario {
+	case "active ontology at restore":
+		require.ErrorContains(t, err, "unexpected native ontology state")
+		require.Zero(t, calls.Load())
+		require.Zero(t, report.CompletedAnswers)
+		require.False(t, report.Complete)
+		require.Contains(t, logs.String(), `"kind":"seed_verification_failed"`)
+		return
+	case "ontology changed during scoring":
+		require.ErrorContains(t, err, "unexpected native ontology state")
+		require.False(t, report.ModelVerified)
+		require.False(t, report.Complete)
+	case "terminal capture failed":
+		require.ErrorContains(t, err, "protected runtime capture")
+		require.True(t, report.ModelVerified)
+		require.False(t, report.CaptureComplete)
+		require.False(t, report.Complete)
+		require.Equal(t, "runtime_log_collection_failed", report.CaptureFailure.Reason)
+	default:
+		require.NoError(t, err)
+		require.True(t, report.Complete)
+		require.True(t, report.ModelVerified)
+		require.True(t, report.CaptureComplete)
+		require.Len(t, report.NativeMeasurements, 2)
+		for _, observation := range report.NativeMeasurements {
+			require.Equal(t, seed.CanonicalHash, observation.CanonicalHash)
+		}
+		require.Contains(t, report.Timings, "scoring_through_flush")
 	}
-	require.True(t, report.CaptureComplete)
+	require.Equal(t, 2, report.CompletedAnswers)
+	require.Equal(t, int32(2), calls.Load())
 	require.Equal(t, initialPackets[0], initialPackets[1])
-	require.Equal(t, initialPackets[2], initialPackets[3])
-	conditions := []string{}
-	for _, axis := range report.Matrix {
-		conditions = append(conditions, axis.Condition)
+	for _, score := range report.Scores {
+		require.Equal(t, 1.0, score.EM)
+		require.Equal(t, 1, score.ValidCitations)
 	}
-	require.Equal(t, []string{"off", "off", "on", "on"}, conditions)
+	require.Equal(t, "off", report.Matrix[0].Condition)
+	require.Equal(t, "off", report.Matrix[1].Condition)
 	kinds := map[string]int{}
 	for _, line := range bytes.Split(bytes.TrimSpace(logs.Bytes()), []byte("\n")) {
 		var event evalharness.Event
 		require.NoError(t, json.Unmarshal(line, &event))
 		kinds[event.Kind]++
 	}
+	require.Equal(t, 1, kinds["initial_recall"])
 	require.Equal(t, 1, kinds["seed_verified"])
+	require.Equal(t, 1, kinds["finished"])
 	require.Zero(t, kinds["mapping"])
 	require.Zero(t, kinds["canonical"])
 }

@@ -30,11 +30,12 @@ captured outcomes and use the existing feedback capture policy.
 
 Recall can expand candidates through exact lexical pivots and current direct
 memberships. It reauthorizes all hits and can apply optional Decision
-reranking. Factual Relationships remain retired. Only the paired benchmark
-can qualify expanded ranking as the default.
+reranking. Recall expansion is opt-in. Factual Relationships remain retired.
 
 ## Verification
 
 Issue #824 requires populated and fresh PostgreSQL upgrades, exact replay,
-paused and disabled write cases, authorization and concurrency, and complete
-readiness for all five saved evaluation corpora before paired scoring.
+paused and disabled write cases, authorization and concurrency. The standard
+image-based evaluation scores all five published seeds using the validated
+application image and its default Recall settings.
+[Approved evaluation scope](https://github.com/markhuangai/dense-mem/issues/824#issuecomment-7131587011)

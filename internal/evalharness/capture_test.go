@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -279,4 +280,165 @@ func capturedProgress(t *testing.T, logs []byte) []captureProgress {
 		}
 	}
 	return updates
+}
+
+func TestQueuedCaptureReconstructsScoringAndRetainsImmutableInputs(t *testing.T) {
+	var output bytes.Buffer
+	capture := captureFixture(&output)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	capture.startQueue(cancel)
+	question, observation, corpus, mapping, canonical := scoringFixture()
+	expected, err := ScoreObservation(question, observation, corpus, mapping, canonical)
+	require.NoError(t, err)
+	require.NoError(t, capture.EmitContext(ctx, "initial_recall", map[string]any{"question_id": question.ID, "condition": observation.Condition, "call": observation.Initial}))
+	require.NoError(t, capture.EmitContext(ctx, "observation", observationReceipt(observation)))
+	observation.Hosts[0].Answer = "changed after queueing"
+	require.NoError(t, capture.finishQueue(ctx))
+	events := capturedEvents(t, output.Bytes())
+	require.Len(t, events, 2)
+	var initial struct {
+		Call MemoryCall `json:"call"`
+	}
+	require.NoError(t, json.Unmarshal(events[0].Payload, &initial))
+	var restored Observation
+	require.NoError(t, json.Unmarshal(events[1].Payload, &restored))
+	restored.Initial = initial.Call
+	for i := range restored.Hosts {
+		restored.Hosts[i].Calls = append([]MemoryCall{initial.Call}, restored.Hosts[i].Calls...)
+	}
+	measured, err := ScoreObservation(question, restored, corpus, mapping, canonical)
+	require.NoError(t, err)
+	require.Equal(t, expected, measured)
+	require.NotContains(t, string(events[1].Payload), "changed after queueing")
+	require.NotContains(t, string(events[1].Payload), "\"initial\"")
+}
+
+type failedCaptureWriter struct{}
+
+func (failedCaptureWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+func TestQueuedCapturePropagatesWriteFailure(t *testing.T) {
+	capture := &Capture{Logger: slog.New(slog.NewJSONHandler(failedCaptureWriter{}, &slog.HandlerOptions{Level: slog.LevelDebug})), Protector: observability.NewCredentialProtector()}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	capture.startQueue(cancel)
+	require.NoError(t, capture.EmitContext(ctx, "observation", "public"))
+	<-ctx.Done()
+	require.ErrorContains(t, capture.finishQueue(context.Background()), "did not drain")
+	require.True(t, capture.incomplete())
+	failure := capture.firstFailure.Load()
+	require.NotNil(t, failure)
+	require.Equal(t, "observation", failure.Kind)
+	require.Equal(t, 1, failure.Sequence)
+	require.Equal(t, "console_write_failed", failure.Reason)
+}
+
+func TestQueuedCaptureRetainsProtectionBudgetFailure(t *testing.T) {
+	var output bytes.Buffer
+	const canary = "capture-credential-canary"
+	capture := captureFixture(&output)
+	capture.Protector = observability.NewCredentialProtector(canary, strings.Repeat("a", 3000)+"b")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	capture.startQueue(cancel)
+	capture.setPhase("ontology off")
+	require.NoError(t, capture.EmitContext(ctx, "answer_wire_request", map[string]string{
+		"content": strings.Repeat("%61", 3000), "credential": canary,
+	}))
+	require.ErrorContains(t, capture.finishQueue(t.Context()), "did not drain")
+	failure := capture.firstFailure.Load()
+	require.NotNil(t, failure)
+	require.Equal(t, "ontology off", failure.Phase)
+	require.Equal(t, "answer_wire_request", failure.Kind)
+	require.Equal(t, 1, failure.Sequence)
+	require.Equal(t, "matching_work_exceeded", failure.Reason)
+	require.Contains(t, failure.Protection, "matching_work=")
+	require.Contains(t, output.String(), `"msg":"eval_capture_unavailable"`)
+	require.Contains(t, output.String(), `"reason":"matching_work_exceeded"`)
+	require.NotContains(t, output.String(), canary)
+}
+
+func TestQueuedCapturePreservesTerminalExchangesAfterWorkCancellation(t *testing.T) {
+	var output bytes.Buffer
+	capture := captureFixture(&output)
+	ctx, cancel := context.WithCancel(t.Context())
+	capture.startQueue(cancel)
+	cancel()
+	require.NoError(t, capture.EmitTerminal(ctx, "answer_wire_unavailable", map[string]string{"exchange_id": "interrupted-answer"}))
+	progress := captureProgress{Stage: "questions", Unit: "answers", Total: 4, Completed: 2}
+	require.NoError(t, capture.emitProgressContext(ctx, progress, true))
+	require.NoError(t, capture.finishQueue(t.Context()))
+	defer capture.queue.cancelPreserve()
+	events := capturedEvents(t, output.Bytes())
+	require.Len(t, events, 2)
+	require.Equal(t, "answer_wire_unavailable", events[0].Kind)
+	require.JSONEq(t, `{"exchange_id":"interrupted-answer"}`, string(events[0].Payload))
+	progress.Remaining = 2
+	require.Equal(t, []captureProgress{progress}, capturedProgress(t, output.Bytes()))
+}
+
+func TestQueuedCaptureReportsUnserializableRecords(t *testing.T) {
+	var output bytes.Buffer
+	capture := captureFixture(&output)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	capture.startQueue(cancel)
+	require.ErrorContains(t, capture.EmitContext(ctx, "observation", make(chan string)), "unsupported type")
+	require.ErrorContains(t, capture.finishQueue(ctx), "did not drain")
+	require.True(t, capture.incomplete())
+}
+
+func TestQueuedCaptureReportsAnOversizedRecordWithoutEmittingIt(t *testing.T) {
+	var output bytes.Buffer
+	capture := captureFixture(&output)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	capture.startQueue(cancel)
+	require.ErrorContains(t, capture.EmitContext(ctx, "observation", strings.Repeat("x", captureLimit)), "payload exceeds limit")
+	require.ErrorContains(t, capture.finishQueue(ctx), "did not drain")
+	require.Empty(t, output.String())
+}
+
+type heldCaptureWriter struct {
+	started chan struct{}
+	release chan struct{}
+	output  *bytes.Buffer
+}
+
+func (w heldCaptureWriter) Write(data []byte) (int, error) {
+	select {
+	case <-w.started:
+	default:
+		close(w.started)
+	}
+	<-w.release
+	return w.output.Write(data)
+}
+
+func TestQueuedCaptureBoundsBlockedWriter(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var output bytes.Buffer
+		sink := heldCaptureWriter{started: make(chan struct{}), release: make(chan struct{}), output: &output}
+		release := sync.OnceFunc(func() { close(sink.release) })
+		defer release()
+		capture := &Capture{Logger: slog.New(slog.NewJSONHandler(sink, &slog.HandlerOptions{Level: slog.LevelDebug})), Protector: observability.NewCredentialProtector()}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		capture.startQueue(cancel)
+		require.NoError(t, capture.EmitContext(ctx, "observation", "public"))
+		<-sink.started
+		for range cap(capture.queue.events) {
+			require.NoError(t, capture.EmitContext(ctx, "observation", "waiting on the sink"))
+		}
+		require.ErrorContains(t, capture.EmitContext(ctx, "observation", "beyond queue capacity"), "queue unavailable")
+		require.ErrorContains(t, capture.finishQueue(ctx), "did not drain")
+		require.True(t, capture.incomplete())
+		failure := capture.firstFailure.Load()
+		require.NotNil(t, failure)
+		require.Equal(t, "enqueue_interrupted", failure.Reason)
+		release()
+		<-capture.queue.done
+		require.Len(t, capturedEvents(t, output.Bytes()), 1)
+	})
 }

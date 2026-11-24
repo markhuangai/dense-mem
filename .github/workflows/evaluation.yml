@@ -15,20 +15,15 @@ on:
       mode:
         required: true
         type: string
-      paired_baseline_image:
-        type: string
-      paired_base_revision:
-        type: string
-      paired_seed_lock:
-        type: string
-      paired_resume_run:
-        type: string
       seed_version:
         type: string
         default: latest
       dataset_selection:
         type: string
         default: ''
+      answer_workers:
+        type: string
+        default: '4'
       model:
         type: string
         default: ''
@@ -48,8 +43,6 @@ on:
         required: false
       eval-embedding-api-key:
         required: false
-      eval-decision-api-key:
-        required: false
       eval-team-api-key:
         required: false
       eval-database-password:
@@ -64,32 +57,13 @@ env:
   EVAL_DATASET_SELECTION: ${{ inputs.dataset_selection }}
 
 jobs:
-  paired:
-    if: inputs.paired_baseline_image != '' || inputs.paired_seed_lock != '' || inputs.paired_resume_run != ''
-    uses: ./.github/workflows/paired-evaluation.yml
-    with:
-      image: ${{ inputs.image }}
-      revision: ${{ inputs.source_revision }}
-      baseline: ${{ inputs.paired_baseline_image }}
-      base_revision: ${{ inputs.paired_base_revision }}
-      seed_lock: ${{ inputs.paired_seed_lock }}
-      resume: ${{ inputs.paired_resume_run }}
-      mode: ${{ inputs.mode }}
-      dataset_selection: ${{ inputs.dataset_selection }}
-    secrets:
-      eval-verifier-url: ${{ secrets.eval-verifier-url }}
-      eval-api-key: ${{ secrets.eval-api-key }}
-      eval-embedding-api-key: ${{ secrets.eval-embedding-api-key }}
-      eval-decision-api-key: ${{ secrets.eval-decision-api-key }}
-      eval-team-api-key: ${{ secrets.eval-team-api-key }}
-      eval-database-password: ${{ secrets.eval-database-password }}
-
   registry:
-    if: inputs.paired_baseline_image == '' && inputs.paired_seed_lock == '' && inputs.paired_resume_run == ''
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     outputs:
       matrix: ${{ steps.registry.outputs.matrix }}
+      max_parallel: ${{ steps.registry.outputs.max_parallel }}
+      answer_workers: ${{ steps.registry.outputs.answer_workers }}
       seed_images: ${{ steps.seeds.outputs.images }}
     steps:
       - &checkout-source
@@ -106,6 +80,7 @@ jobs:
       - id: registry
         env:
           EVAL_MODE: ${{ inputs.mode }}
+          EVAL_ANSWER_WORKERS: ${{ inputs.answer_workers }}
           EVAL_SOURCE_REVISION: ${{ inputs.source_revision }}
           EVAL_IMAGE: ${{ inputs.image }}
         run: node tests/eval/scripts/workflow.mjs matrix
@@ -121,24 +96,28 @@ jobs:
         env:
           EVAL_MODE: live
           EVAL_SEED_VERSION: ${{ inputs.seed_version }}
+          EVAL_SOURCE_REVISION: ${{ inputs.source_revision }}
+          EVAL_IMAGE: ${{ inputs.image }}
           GITHUB_TOKEN: ${{ github.token }}
         run: node tests/eval/scripts/workflow.mjs pin-seeds
 
   datasets:
-    name: ${{ format('Evaluate {0}', matrix.dataset) }}
+    name: ${{ inputs.mode == 'fixtures' && 'Prepare and score synthetic off seed' || format('Evaluate {0} ontology off', matrix.dataset) }}
     needs: registry
     runs-on: ubuntu-latest
     timeout-minutes: 360
     strategy:
       fail-fast: false
+      max-parallel: ${{ fromJSON(needs.registry.outputs.max_parallel) }}
       matrix: ${{ fromJSON(needs.registry.outputs.matrix) }}
     env:
       EVAL_MODE: ${{ inputs.mode }}
+      EVAL_ANSWER_WORKERS: ${{ needs.registry.outputs.answer_workers }}
       EVAL_DATASET: ${{ matrix.dataset }}
       EVAL_IMAGE: ${{ inputs.image }}
       EVAL_SOURCE_REVISION: ${{ inputs.source_revision }}
       WORKFLOW_EMBEDDING_MODEL: 'text-embedding-3-small'
-      EVAL_SEED_IMAGE: ${{ inputs.mode == 'live' && fromJSON(needs.registry.outputs.seed_images)[matrix.dataset] || '' }}
+      EVAL_SEED_IMAGE: ${{ inputs.mode == 'live' && fromJSON(needs.registry.outputs.seed_images)[matrix.dataset].image || '' }}
       WORKFLOW_EMBEDDING_DIMENSIONS: '1536'
       DENSE_MEM_EVAL_MODEL: ${{ inputs.model || vars.DENSE_MEM_EVAL_MODEL || secrets.eval-model }}
       DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS: ${{ inputs.context_window_tokens || vars.DENSE_MEM_EVAL_CONTEXT_WINDOW_TOKENS || secrets.eval-context-window }}
@@ -156,6 +135,11 @@ jobs:
           printf 'EVAL_RUNNER_BINARY=%s/eval-runner\n' "${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - *checkout-source
       - *setup-node
+      - name: Require verified seed pin
+        if: inputs.mode == 'live' && env.EVAL_SEED_IMAGE == ''
+        run: |
+          echo "::error::Selected ontology-off seed could not be pinned. See the registry job."
+          exit 1
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
@@ -177,20 +161,20 @@ jobs:
       - name: Verify seed exports, protected failures and owned cleanup
         if: inputs.mode == 'fixtures'
         run: node --test tests/eval/scripts/workflow_docker.test.mjs tests/eval/scripts/seed_docker.test.mjs
-      - name: Run complete dataset campaign
+      - name: Score frozen ontology-off seed
         run: node tests/eval/scripts/workflow.mjs run
       - name: Preserve protected startup failure logs
         if: failure()
         run: node tests/eval/scripts/workflow.mjs diagnostics
-      - name: Remove this dataset's runtime
+      - name: Remove this job's runtime
         if: always()
         run: node tests/eval/scripts/workflow.mjs cleanup
       - name: Retain numeric report and reproducibility manifest
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: evaluation-${{ matrix.dataset }}
-          path: ${{ runner.temp }}/dense-mem-eval-${{ github.run_id }}-${{ matrix.dataset }}/public/*.json
+          name: evaluation-${{ matrix.dataset }}-off
+          path: ${{ runner.temp }}/dense-mem-eval-${{ github.run_id }}-${{ matrix.dataset }}-off/public/*.json
           retention-days: 2
           if-no-files-found: warn
 
@@ -210,11 +194,15 @@ jobs:
         with:
           pattern: evaluation-*
           path: ${{ runner.temp }}/evaluation-reports
-      - name: Build complete comparison matrix
+      - name: Aggregate frozen dataset reports
         env:
           EVAL_MODE: ${{ inputs.mode }}
+          EVAL_SOURCE_REVISION: ${{ inputs.source_revision }}
+          EVAL_IMAGE: ${{ inputs.image }}
+          EVAL_ANSWER_WORKERS: ${{ needs.registry.outputs.answer_workers }}
+          EVAL_PINNED_SEEDS: ${{ needs.registry.outputs.seed_images }}
         run: node tests/eval/scripts/workflow.mjs aggregate
-      - name: Retain comparison including missing axes
+      - name: Retain scores including missing datasets
         if: always()
         uses: actions/upload-artifact@v7
         with:

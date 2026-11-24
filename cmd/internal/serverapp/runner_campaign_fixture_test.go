@@ -216,7 +216,7 @@ func runnerTopicProcessResponse(schema string, content []byte) ([]byte, error) {
 			matches = append(matches, map[string]string{"id": input.Topics[0].ID, "quote": input.Text})
 		} else {
 			proposals = append(proposals, map[string]string{
-				"label": "runner-storage", "description": "Paired fixture classification", "quote": input.Text,
+				"label": "runner-storage", "description": "Runner fixture classification", "quote": input.Text,
 			})
 		}
 		return json.Marshal(map[string]any{"request_id": input.RequestID, "status": "assigned", "matches": matches, "proposals": proposals})
@@ -255,7 +255,7 @@ func runnerOrganizationResponse(request assessment.Request) assessment.Response 
 			if ref == "" {
 				ref = "new-" + key
 				created[key] = ref
-				response.Definitions = append(response.Definitions, assessment.Definition{Ref: ref, Kind: kind, Key: key, Label: key, Description: "Paired fixture classification", Aliases: []string{}})
+				response.Definitions = append(response.Definitions, assessment.Definition{Ref: ref, Kind: kind, Key: key, Label: key, Description: "Runner fixture classification", Aliases: []string{}})
 			}
 		}
 		response.Items = append(response.Items, assessment.Decision{Ref: item.Ref, Status: "classified", DefinitionRef: ref})

@@ -33,8 +33,6 @@ on:
         required: false
       DENSE_MEM_EVAL_EMBED_API_KEY:
         required: false
-      DENSE_MEM_EVAL_DECISION_API_KEY:
-        required: false
       DENSE_MEM_EVAL_TEAM_API_KEY:
         required: false
       DENSE_MEM_EVAL_DATABASE_PASSWORD:
@@ -50,22 +48,14 @@ on:
         type: choice
         default: none
         options: [none, fixtures, live]
-      paired_baseline_image:
-        description: Pinned production image for the current PR base (paired live evaluation)
-        type: string
-        default: ''
-      paired_seed_lock:
-        description: JSON object containing parent, baseline and candidate seed digests per dataset
-        type: string
-        default: ''
-      paired_resume_run:
-        description: Optional previous paired run on the same head for complete question checkpoints
-        type: string
-        default: ''
       seed_version:
         description: Public evaluation seed suffix (latest or UTCtimestamp-release)
         type: string
         default: latest
+      answer_workers:
+        description: Concurrent answer workers per dataset (4–10)
+        type: string
+        default: '4'
       run_hotpotqa:
         description: HotpotQA
         type: boolean
@@ -89,7 +79,6 @@ on:
 
 permissions:
   actions: read
-  checks: read
   contents: read
   issues: read
   packages: read
@@ -130,7 +119,6 @@ jobs:
           INPUT_REVISION: ${{ inputs.source_revision }}
           INPUT_PR_NUMBER: ${{ inputs.pr_number }}
           INPUT_EVALUATION: ${{ inputs.evaluation }}
-          PAIRED_EVALUATION: ${{ inputs.paired_seed_lock != '' || inputs.paired_baseline_image != '' || inputs.paired_resume_run != '' }}
           TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         with:
           script: |
@@ -201,12 +189,6 @@ jobs:
                     full.target_url !== `${context.serverUrl}/${fullName}/actions/runs/${workflowRun.id}`) {
                   throw new Error("evaluation requires the successful current-head production-image receipt");
                 }
-              }
-              if (process.env.PAIRED_EVALUATION === "true") {
-                if (evaluation !== "live") throw new Error("paired evaluation requires live mode");
-                const {requireSeedBuildValidation} = await import(`${process.env.GITHUB_WORKSPACE}/.ci-policy/.github/scripts/evaluation-seeds.mjs`);
-                await requireSeedBuildValidation(github, {source_revision:pull.head.sha,pull_number:pull.number,actor:pull.user.login,
-                  run_id:workflowRun.id,publisher_attempt:publishedRun.run_attempt,validation_attempt:workflowRun.run_attempt});
               }
               const imageReceipt = policy.selectPreviewReceipt({ comments, pull, status: receipt.status, repository: fullName });
               image = imageReceipt.image;
@@ -380,11 +362,8 @@ jobs:
       source_repository: ${{ needs.authorize.outputs.source_repository }}
       source_revision: ${{ needs.authorize.outputs.source_revision }}
       mode: ${{ inputs.evaluation }}
-      paired_baseline_image: ${{ inputs.paired_baseline_image }}
-      paired_base_revision: ${{ needs.authorize.outputs.migration_base_ref }}
-      paired_seed_lock: ${{ inputs.paired_seed_lock }}
-      paired_resume_run: ${{ inputs.paired_resume_run }}
       seed_version: ${{ inputs.seed_version || 'latest' }}
+      answer_workers: ${{ inputs.answer_workers }}
       dataset_selection: >-
         {"hotpotqa":${{ inputs.run_hotpotqa }},"musique":${{ inputs.run_musique }},
         "2wikimultihopqa":${{ inputs.run_2wikimultihopqa }},"nq_rear":${{ inputs.run_nq_rear }},
@@ -398,7 +377,6 @@ jobs:
       eval-embedding-url: ${{ 'https://api.openai.com/v1' || vars.DENSE_MEM_EVAL_EMBED_URL || secrets.DENSE_MEM_EVAL_EMBED_URL }}
       eval-api-key: ${{ secrets.DENSE_MEM_EVAL_API_KEY }}
       eval-embedding-api-key: ${{ secrets.DENSE_MEM_EVAL_EMBED_API_KEY }}
-      eval-decision-api-key: ${{ secrets.DENSE_MEM_EVAL_DECISION_API_KEY }}
       eval-team-api-key: ${{ secrets.DENSE_MEM_EVAL_TEAM_API_KEY }}
       eval-database-password: ${{ secrets.DENSE_MEM_EVAL_DATABASE_PASSWORD }}
 

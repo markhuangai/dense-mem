@@ -13,9 +13,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
-	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
+	"github.com/markhuangai/dense-mem/internal/topics/contract"
 )
 
 //go:embed maintenance_snapshot.sql
@@ -33,14 +32,16 @@ type Scope struct {
 }
 
 type Native struct {
-	legacyOrganization bool
-	DB                 *sql.DB
-	Scope              Scope
-	ControlURL         string
-	ControlToken       string
-	Client             *HTTPClient
-	RuntimeLogs        func(context.Context) error
-	ServerUsage        map[string]UsageTotals
+	legacyMaintenance   bool
+	DB                  *sql.DB
+	Scope               Scope
+	ControlURL          string
+	ControlToken        string
+	Client              *HTTPClient
+	StopRuntime         func(context.Context, bool) error
+	RuntimeLogs         func(context.Context) error
+	ServerUsage         map[string]UsageTotals
+	RequireRuntimeUsage bool
 }
 
 type NativeAttempt struct {
@@ -107,7 +108,7 @@ type NativeObservation struct {
 	Unreconciled       int                        `json:"unreconciled_attempts"`
 	ForeignWork        int                        `json:"foreign_work"`
 	ProviderAttempts   []NativeAttempt            `json:"provider_attempts"`
-	Ontology           ontology.MaintenanceStatus `json:"ontology"`
+	Ontology           contract.MaintenanceStatus `json:"ontology"`
 	Search             struct {
 		Status   string `json:"status"`
 		Expected int    `json:"expected_documents"`
@@ -133,8 +134,20 @@ func (n *Native) ResolveScope(ctx context.Context) error {
 		return err
 	}
 	defer tx.Rollback()
-	err = tx.QueryRowContext(ctx, `SELECT a.legacy_owner_id::text,m.id::text,m.generation,to_regclass('public.topic_record_heads') IS NULL FROM ownership_aliases a JOIN memory_spaces m ON m.team_id=a.team_id AND m.kind='team_shared' AND m.lifecycle_state='active' WHERE a.team_id=$1::uuid AND a.credential_id=$2::uuid`, n.Scope.TeamID, n.Scope.CredentialID).Scan(&n.Scope.OwnerID, &n.Scope.SpaceID, &n.Scope.Generation, &n.legacyOrganization)
-	return err
+	var topicMaintenance, ontologyMaintenance bool
+	err = tx.QueryRowContext(ctx, `SELECT a.legacy_owner_id::text,m.id::text,m.generation,
+		to_regclass('public.topic_maintenance_batches') IS NOT NULL,
+		to_regclass('public.ontology_maintenance_batches') IS NOT NULL
+		FROM ownership_aliases a JOIN memory_spaces m ON m.team_id=a.team_id AND m.kind='team_shared' AND m.lifecycle_state='active'
+		WHERE a.team_id=$1::uuid AND a.credential_id=$2::uuid`, n.Scope.TeamID, n.Scope.CredentialID).Scan(&n.Scope.OwnerID, &n.Scope.SpaceID, &n.Scope.Generation, &topicMaintenance, &ontologyMaintenance)
+	if err != nil {
+		return err
+	}
+	if topicMaintenance == ontologyMaintenance {
+		return errors.New("dataset runtime maintenance layout is incompatible")
+	}
+	n.legacyMaintenance = ontologyMaintenance
+	return nil
 }
 
 func (n *Native) systemTx(ctx context.Context) (*sql.Tx, error) {
@@ -150,10 +163,6 @@ func (n *Native) systemTx(ctx context.Context) (*sql.Tx, error) {
 }
 
 func (n *Native) Control(ctx context.Context, method, path string, input, out any) error {
-	if n.legacyOrganization {
-		path = strings.Replace(path, "/config/topic-maintenance", "/config/ontology-maintenance", 1)
-		path = strings.Replace(path, "/topic-maintenance/", "/ontology/", 1)
-	}
 	var envelope struct {
 		Data json.RawMessage `json:"data"`
 	}
@@ -259,7 +268,7 @@ func (n *Native) Snapshot(ctx context.Context) (NativeObservation, error) {
 	}
 	var raw []byte
 	snapshotSQL := MaintenanceSnapshotSQL
-	if n.legacyOrganization {
+	if n.legacyMaintenance {
 		snapshotSQL = legacyMaintenanceSnapshotSQL
 	}
 	if err = tx.QueryRowContext(ctx, snapshotSQL, n.Scope.TeamID, n.Scope.OwnerID, n.Scope.SpaceID, n.Scope.Generation, n.Scope.CredentialID).Scan(&raw); err != nil {
@@ -268,7 +277,7 @@ func (n *Native) Snapshot(ctx context.Context) (NativeObservation, error) {
 	if err = json.Unmarshal(raw, &observation); err != nil {
 		return observation, err
 	}
-	if err = n.Control(ctx, http.MethodGet, "/topic-maintenance/status", nil, &observation.Ontology); err != nil {
+	if err = n.maintenanceControl(ctx, http.MethodGet, "status", nil, &observation.Ontology); err != nil {
 		return observation, err
 	}
 	if err = n.Control(ctx, http.MethodGet, "/search/convergence", nil, &observation.Search); err != nil {
@@ -289,7 +298,34 @@ func NativeReady(observation NativeObservation, ontologyEnabled, paused bool, ma
 	if status.Enabled != ontologyEnabled || status.Paused != paused {
 		return errors.New("unexpected native ontology state")
 	}
-	if observation.ActiveBatches != 0 || observation.ActivePreparations != 0 || observation.Unreconciled != 0 || status.ActiveWork != 0 {
+	if err := nativeDrained(observation); err != nil {
+		return err
+	}
+	if !ontologyEnabled {
+		return nil
+	}
+	if err := fullOntologyCoverage(status); err != nil {
+		return err
+	}
+	return nativeOntologyPolicy(status, manifest, teamID)
+}
+
+func fullOntologyCoverage(status contract.MaintenanceStatus) error {
+	if status.ConfigurationError != "" || !status.DiscoveryComplete || !status.CoverageComplete || status.Counts.Pending != 0 || status.Counts.Failed != 0 || status.Counts.Ambiguous != 0 || status.Counts.Eligible <= 0 || status.Counts.Eligible != status.Counts.Organized {
+		return errors.New("ontology coverage is incomplete")
+	}
+	return nil
+}
+
+func nativeOntologyPolicy(status contract.MaintenanceStatus, manifest Manifest, teamID string) error {
+	if status.Window == nil || status.Window.Policy.Model != manifest.Model || status.Window.Policy.ContextWindowTokens != int64(manifest.ContextWindowTokens) || status.Window.Policy.MaxConcurrency != 4 || status.Window.Policy.TeamConcurrency(teamID) != 4 {
+		return errors.New("effective ontology capacity differs from campaign settings")
+	}
+	return nil
+}
+
+func nativeDrained(observation NativeObservation) error {
+	if observation.ActiveBatches != 0 || observation.ActivePreparations != 0 || observation.Unreconciled != 0 || observation.Ontology.ActiveWork != 0 {
 		return errors.New("native model work has not drained")
 	}
 	measurement, err := MeasureAttempts(observation.ProviderAttempts)
@@ -299,38 +335,19 @@ func NativeReady(observation NativeObservation, ontologyEnabled, paused bool, ma
 	if measurement.Unfinished != 0 {
 		return errors.New("durable attempts have not reconciled")
 	}
-	if !ontologyEnabled {
-		return nil
-	}
-	if status.ConfigurationError != "" || !status.DiscoveryComplete || !status.CoverageComplete || status.Counts.Pending != 0 || status.Counts.Failed != 0 || status.Counts.Ambiguous != 0 || status.Counts.Eligible != status.Counts.Organized {
-		return errors.New("ontology coverage is incomplete")
-	}
-	if status.Window == nil || status.Window.Policy.Model != manifest.Model || status.Window.Policy.ContextWindowTokens != int64(manifest.ContextWindowTokens) || status.Window.Policy.MaxConcurrency != 4 || status.Window.Policy.TeamConcurrency(teamID) != 4 {
-		return errors.New("effective ontology capacity differs from campaign settings")
-	}
 	return nil
 }
 
-func (n *Native) EnableOntology(ctx context.Context, manifest Manifest) error {
-	values := map[string]string{domain.AppConfigTopicMaintenanceEnabled: "true", domain.AppConfigTopicMaintenanceModel: manifest.Model, domain.AppConfigTopicMaintenanceConcurrency: "4", domain.AppConfigTopicMaintenanceTeamConcurrency: "4", domain.AppConfigTopicMaintenanceContextWindow: strconv.Itoa(manifest.ContextWindowTokens)}
-	items := []map[string]string{}
-	for key, value := range values {
-		if n.legacyOrganization {
-			key = strings.Replace(key, "TOPIC_MAINTENANCE_", "ONTOLOGY_MAINTENANCE_", 1)
-		}
-		items = append(items, map[string]string{"key": key, "value": value})
-	}
-	if err := n.Control(ctx, http.MethodPatch, "/config/topic-maintenance", map[string]any{"items": items}, nil); err != nil {
-		return err
-	}
-	if err := n.Control(ctx, http.MethodPost, "/topic-maintenance/resume", map[string]string{"operation_key": uuid.NewString()}, nil); err != nil {
-		return err
-	}
-	return n.Control(ctx, http.MethodPost, "/topic-maintenance/runs", map[string]any{"operation_key": uuid.NewString(), "max_batches": 0}, nil)
+func (n *Native) Pause(ctx context.Context) error {
+	return n.maintenanceControl(ctx, http.MethodPost, "pause", map[string]string{"operation_key": uuid.NewString()}, nil)
 }
 
-func (n *Native) Pause(ctx context.Context) error {
-	return n.Control(ctx, http.MethodPost, "/topic-maintenance/pause", map[string]string{"operation_key": uuid.NewString()}, nil)
+func (n *Native) maintenanceControl(ctx context.Context, method, action string, input, out any) error {
+	prefix := "/topic-maintenance/"
+	if n.legacyMaintenance {
+		prefix = "/ontology/"
+	}
+	return n.Control(ctx, method, prefix+action, input, out)
 }
 
 func (n *Native) VerifyMappings(ctx context.Context, corpus []CorpusItem, mapping KnowledgeMapping) (map[string]CanonicalEvidence, error) {

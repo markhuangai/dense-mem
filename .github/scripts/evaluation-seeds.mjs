@@ -20,6 +20,14 @@ const release = /^v\d+\.\d+\.\d+(?:-rc\.\d+)?$/;
 const version = /^\d{8}T\d{9}Z-v\d+\.\d+\.\d+(?:-rc\.\d+)?$/;
 const read = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
 const save = (file, value) => fs.writeFileSync(file, JSON.stringify(value, null, 2) + "\n", { mode: 0o600 });
+const seedVerificationError = (code, message) => Object.assign(new Error(message), { code });
+
+export function seedVerificationReason(error) {
+  const code = error?.code;
+  if (code === "ontology_preparation_present" || (typeof code === "string" && code.startsWith("seed_"))) return code;
+  if (code === "ENOENT") return "seed_file_missing";
+  return error instanceof SyntaxError ? "seed_metadata_invalid_json" : "seed_verification_failed";
+}
 
 export function seedBuildRequest(registry, dataset, workers) {
   const allowed = registryMatrix(registry).dataset;
@@ -92,12 +100,26 @@ export function seedBuildVersion(baseRelease, now = new Date()) {
 }
 
 export function seedMetadata(metadata, dataset, registryHash, corpusRows, { bootable = false } = {}) {
-  if (metadata.version !== (bootable ? bootableSeedVersion : 1)) throw new Error(bootable ? "Evaluation requires a bootable PostgreSQL seed image; rebuild this dataset seed" : "Incompatible logical seed export version");
-  if (metadata.dataset !== dataset || metadata.registry_sha256 !== registryHash || metadata.corpus_rows !== corpusRows || !release.test(metadata.base_release) || !/^[0-9a-f]{40}$/.test(metadata.source_revision || "") || metadata.postgres_image !== postgresImage || metadata.embedding_model !== "text-embedding-3-small" || metadata.embedding_dimensions !== 1536 || !digest.test(metadata.dump_sha256 || "") || !Number.isSafeInteger(metadata.dump_bytes) || metadata.dump_bytes < 1 || !Number.isSafeInteger(metadata.schema_version) || metadata.schema_version < 1) throw new Error("Seed metadata is incompatible with the public dataset or runtime");
+  if (Object.hasOwn(metadata, "ontology_preparation")) {
+    throw seedVerificationError("ontology_preparation_present", "Public seed contains retired ontology preparation metadata");
+  }
+  if (metadata.version !== (bootable ? bootableSeedVersion : 1)) {
+    throw seedVerificationError("seed_format_incompatible", bootable ? "Evaluation requires a bootable PostgreSQL seed image; rebuild this dataset seed" : "Incompatible logical seed export version");
+  }
+  if (metadata.dataset !== dataset || metadata.registry_sha256 !== registryHash || metadata.corpus_rows !== corpusRows) {
+    throw seedVerificationError("seed_identity_incompatible", "Seed metadata is incompatible with the public dataset");
+  }
+  if (!release.test(metadata.base_release) || !/^[0-9a-f]{40}$/.test(metadata.source_revision || "") || metadata.postgres_image !== postgresImage || metadata.embedding_model !== "text-embedding-3-small" || metadata.embedding_dimensions !== 1536 || !digest.test(metadata.dump_sha256 || "") || !Number.isSafeInteger(metadata.dump_bytes) || metadata.dump_bytes < 1 || !Number.isSafeInteger(metadata.schema_version) || metadata.schema_version < 1) {
+    throw seedVerificationError("seed_runtime_incompatible", "Seed metadata is incompatible with the runtime");
+  }
   const scope = metadata.scope;
-  for (const key of ["team_id", "credential_id", "owner_id", "space_id"]) if (!/^[0-9a-f-]{36}$/.test(scope?.[key] || "")) throw new Error("Seed scope is incomplete");
-  if (!Number.isSafeInteger(scope.generation) || scope.generation < 1) throw new Error("Seed generation is invalid");
-  if (dataset !== "bootstrap" && (!digest.test(metadata.canonical_sha256 || "") || !digest.test(metadata.mapping_sha256 || "") || !digest.test(metadata.search_sha256 || ""))) throw new Error("Seed canonical, search or mapping digest is missing");
+  for (const key of ["team_id", "credential_id", "owner_id", "space_id"]) {
+    if (!/^[0-9a-f-]{36}$/.test(scope?.[key] || "")) throw seedVerificationError("seed_scope_incomplete", "Seed scope is incomplete");
+  }
+  if (!Number.isSafeInteger(scope.generation) || scope.generation < 1) throw seedVerificationError("seed_generation_invalid", "Seed generation is invalid");
+  if (dataset !== "bootstrap" && (!digest.test(metadata.canonical_sha256 || "") || !digest.test(metadata.mapping_sha256 || "") || !digest.test(metadata.search_sha256 || ""))) {
+    throw seedVerificationError("seed_fingerprint_missing", "Seed canonical, search or mapping digest is missing");
+  }
   return metadata;
 }
 
@@ -137,11 +159,35 @@ export function extractSeed(docker, image, directory, container, runID, options)
   }
 }
 
-export async function verifySeedFiles(directory, dataset, registryHash, corpusRows, { intakeProof = false, bootable = false } = {}) {
-  const metadata = seedMetadata(read(path.join(directory, "seed.json")), dataset, registryHash, corpusRows, { bootable });
-  if ((metadata.intake_proof ?? false) !== intakeProof || (intakeProof && metadata.ai_security_review !== "skipped")) throw new Error("Seed export kind or admission policy differs from the requested operation");
-  if (!bootable && (await hashFile(path.join(directory, "database.dump")) !== metadata.dump_sha256 || fs.statSync(path.join(directory, "database.dump")).size !== metadata.dump_bytes)) throw new Error("Seed dump checksum or size differs");
-  if (dataset !== "bootstrap" && await hashFile(path.join(directory, "mapping.json")) !== metadata.mapping_sha256) throw new Error("Seed mapping checksum differs");
+export async function verifySeedFiles(directory, dataset, registryHash, corpusRows, { intakeProof = false, bootable = false, diagnostic } = {}) {
+  const observed = read(path.join(directory, "seed.json"));
+  if (diagnostic) Object.assign(diagnostic, {
+    observed_registry_sha256: typeof observed?.registry_sha256 === "string" && digest.test(observed.registry_sha256) ? observed.registry_sha256 : undefined,
+    observed_rows: Number.isSafeInteger(observed?.corpus_rows) ? observed.corpus_rows : undefined,
+    seed_source_revision: typeof observed?.source_revision === "string" && /^[0-9a-f]{40}$/.test(observed.source_revision) ? observed.source_revision : undefined,
+    observed_seed_version: Number.isSafeInteger(observed?.version) ? observed.version : undefined,
+  });
+  const metadata = seedMetadata(observed, dataset, registryHash, corpusRows, { bootable });
+  if ((metadata.intake_proof ?? false) !== intakeProof || (intakeProof && metadata.ai_security_review !== "skipped")) {
+    throw seedVerificationError("seed_admission_incompatible", "Seed export kind or admission policy differs from the requested operation");
+  }
+  if (!bootable) {
+    const dump = path.join(directory, "database.dump");
+    const observedSHA = await hashFile(dump);
+    const observedBytes = fs.statSync(dump).size;
+    if (observedSHA !== metadata.dump_sha256 || observedBytes !== metadata.dump_bytes) {
+      if (diagnostic) Object.assign(diagnostic, { expected_dump_sha256: metadata.dump_sha256, observed_dump_sha256: observedSHA,
+        expected_dump_bytes: metadata.dump_bytes, observed_dump_bytes: observedBytes });
+      throw seedVerificationError("seed_dump_checksum_mismatch", "Seed dump checksum or size differs");
+    }
+  }
+  if (dataset !== "bootstrap") {
+    const observedSHA = await hashFile(path.join(directory, "mapping.json"));
+    if (observedSHA !== metadata.mapping_sha256) {
+      if (diagnostic) Object.assign(diagnostic, { expected_mapping_sha256: metadata.mapping_sha256, observed_mapping_sha256: observedSHA });
+      throw seedVerificationError("seed_mapping_checksum_mismatch", "Seed mapping checksum differs");
+    }
+  }
   return metadata;
 }
 
@@ -310,7 +356,9 @@ export async function publishSeed(docker, directory, dataset, selected, env, bef
   github,
   publisherDirectory = path.join(userInfo().homedir, ".local", "state", "dense-mem", "seed-publisher"),
 } = {}) {
-  if (read(path.join(directory, "seed.json")).intake_proof) throw new Error("Intake proof exports cannot be published");
+  const metadata = read(path.join(directory, "seed.json"));
+  if (metadata.intake_proof) throw new Error("Intake proof exports cannot be published");
+  if (Object.hasOwn(metadata, "ontology_preparation")) throw new Error("Only public ontology-off exports can be published");
   if (typeof beforePublication !== "function") throw new Error("Seed publication requires a fresh validation gate");
   const tagged = seedReference(dataset, selected);
   const alias = seedReference(dataset);
