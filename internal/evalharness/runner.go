@@ -69,6 +69,7 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 			}
 		}
 		if native.StopRuntime != nil {
+			cutoff = cutoff || !time.Now().Before(manifest.ModelDeadline) || ctx.Err() != nil
 			if err := native.StopRuntime(shutdown, cutoff); err != nil {
 				logsComplete = false
 				if runErr == nil {
@@ -187,7 +188,7 @@ func runCondition(ctx context.Context, manifest Manifest, corpus []CorpusItem, q
 	}
 	policies := []string{"single", "multi_turn"}
 	progress := captureProgress{Stage: "questions", Condition: condition, Unit: "answers", Total: len(questions) * len(policies)}
-	if err := client.Capture.emitProgressContext(ctx, progress); err != nil {
+	if err := client.Capture.emitProgressContext(ctx, progress, false); err != nil {
 		return nil, err
 	}
 	bySource := map[string]CorpusItem{}
@@ -199,6 +200,7 @@ func runCondition(ctx context.Context, manifest Manifest, corpus []CorpusItem, q
 	var mu sync.Mutex
 	var scores []CaseScore
 	var first error
+	var progressWriter sync.Mutex
 	lastProgress := time.Now()
 	for range manifest.effectiveAnswerWorkers() {
 		wg.Add(1)
@@ -233,18 +235,21 @@ func runCondition(ctx context.Context, manifest Manifest, corpus []CorpusItem, q
 				}
 				progress.Completed += completed
 				progress.Failed += len(policies) - completed
-				periodic := time.Since(lastProgress) >= time.Minute
-				if periodic {
-					lastProgress = time.Now()
-				}
-				current := progress
 				if err != nil && first == nil {
 					first = err
 				}
 				mu.Unlock()
 				err = client.Capture.EmitTerminal(ctx, "observation", observationReceipt(observation))
-				if periodic && err == nil {
-					err = client.Capture.emitProgressContext(ctx, current)
+				// Workers can continue scoring while another worker publishes progress.
+				if err == nil && progressWriter.TryLock() {
+					if time.Since(lastProgress) >= time.Minute {
+						mu.Lock()
+						current := progress
+						mu.Unlock()
+						err = client.Capture.emitProgressContext(ctx, current, true)
+						lastProgress = time.Now()
+					}
+					progressWriter.Unlock()
 				}
 				if err != nil {
 					mu.Lock()
@@ -267,7 +272,7 @@ schedule:
 	}
 	close(jobs)
 	wg.Wait()
-	if err := client.Capture.emitProgressContext(ctx, progress); first == nil {
+	if err := client.Capture.emitProgressContext(ctx, progress, true); first == nil {
 		first = err
 	}
 	if err := client.Capture.EmitTerminal(ctx, "condition_finished", map[string]string{"condition": condition}); first == nil {

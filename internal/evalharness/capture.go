@@ -99,15 +99,15 @@ type captureProgress struct {
 }
 
 func (c *Capture) emitProgress(progress captureProgress) error {
-	return c.emitProgressContext(context.Background(), progress)
+	return c.emitProgressContext(context.Background(), progress, false)
 }
 
-func (c *Capture) emitProgressContext(ctx context.Context, progress captureProgress) error {
+func (c *Capture) emitProgressContext(ctx context.Context, progress captureProgress, terminal bool) error {
 	if progress.Total < 0 || progress.Completed < 0 || progress.Failed < 0 || progress.Completed > progress.Total || progress.Failed > progress.Total-progress.Completed {
 		return errors.New("invalid evaluation progress counts")
 	}
 	progress.Remaining = progress.Total - progress.Completed - progress.Failed
-	return c.EmitContext(ctx, "progress", progress)
+	return c.emitRecord(ctx, "progress", progress, terminal)
 }
 
 func (c *Capture) incomplete() bool {

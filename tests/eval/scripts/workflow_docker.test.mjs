@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { requireRunner } from "../../../.github/scripts/evaluation-policy.mjs";
 import { cleanup, location, main, prepareFixtureSeed, runBinary, saveRuntimeJSON, setup } from "./workflow.mjs";
 
@@ -111,17 +112,27 @@ test("hosted cutoff stops the owned server before capture and preserves verified
   const runEnvs = [fixtureEnv(), fixtureEnv()];
   let seed;
   t.after(async () => {
+    const failures = [];
     for (const ownedEnv of [preparedEnv, ...runEnvs]) {
       const scoring = ownedEnv !== preparedEnv;
       const { directory, stateFile } = location(ownedEnv, scoring);
-      if (fs.existsSync(stateFile)) await cleanup(ownedEnv, { scoring });
-      fs.rmSync(directory, { recursive: true, force: true });
+      try {
+        if (fs.existsSync(stateFile)) await cleanup(ownedEnv, { scoring });
+        fs.rmSync(directory, { recursive: true, force: true });
+      } catch (error) {
+        failures.push(error);
+      }
     }
     if (seed) {
-      const stored = JSON.parse(docker("image", "inspect", seed.seedImage))[0];
-      assert.equal(stored.Id, seed.seedImage);
-      docker("image", "rm", seed.seedImage);
+      try {
+        const stored = JSON.parse(docker("image", "inspect", seed.seedImage))[0];
+        assert.equal(stored.Id, seed.seedImage);
+        docker("image", "rm", seed.seedImage);
+      } catch (error) {
+        failures.push(error);
+      }
     }
+    if (failures.length) throw new AggregateError(failures, "Fixture teardown failed");
     fs.rmSync(fixture, { recursive: true });
   });
   seed = await prepareFixtureSeed(preparedEnv);
@@ -139,7 +150,10 @@ exec "$EVAL_FIXTURE_DOCKER" "$@"
 `, { mode: 0o700 });
   const runner = path.join(fixture, "runner");
   fs.writeFileSync(runner, `#!/bin/sh
-exec "$EVAL_FIXTURE_RUNNER" "$@" > "$EVAL_FIXTURE_LOG" 2>&1
+"$EVAL_FIXTURE_RUNNER" "$@" > "$EVAL_FIXTURE_LOG" 2>&1 &
+pid=$!
+trap 'printf "SIGTERM\\n" > "$EVAL_FIXTURE_SIGNAL_PROOF"; kill -TERM "$pid"; wait "$pid"; exit "$?"' TERM
+wait "$pid"
 `, { mode: 0o700 });
 
   let unfinishedRequests = 0;
@@ -165,26 +179,43 @@ exec "$EVAL_FIXTURE_RUNNER" "$@" > "$EVAL_FIXTURE_LOG" 2>&1
     const container = `densemem-eval-${runtime.paths.runID}-server`;
     const marker = JSON.stringify({ level: "WARN", msg: "terminal capture canary", detail: runtime.state.environment.EVAL_CONTROL_TOKEN });
     docker("container", "exec", container, "sh", "-c", 'printf "%s\n" "$1" >> /proc/1/fd/1', "fixture", marker);
-    const deadline = Math.floor(Date.now() / 1000) + (verified ? 150 : 12);
+    const deadline = Math.floor(Date.now() / 1000) + 150;
     runtime.manifest.model_deadline = new Date(deadline * 1000).toISOString();
     saveRuntimeJSON(runtime.paths.manifestFile, runtime.manifest);
     const proof = path.join(fixture, `exit-${index}`);
     const output = path.join(fixture, `console-${index}`);
+    const signalProof = path.join(fixture, `signal-${index}`);
     const environment = {
       ...runEnv, PATH: `${fixture}:${runEnv.PATH}`, EVAL_MODEL_DEADLINE_EPOCH: String(deadline),
       EVAL_RUNNER_BINARY: runner, EVAL_FIXTURE_DOCKER: realDocker, EVAL_FIXTURE_EXIT_PROOF: proof,
       EVAL_FIXTURE_LOG: output, EVAL_FIXTURE_RUNNER: runEnv.EVAL_RUNNER_BINARY,
+      EVAL_FIXTURE_SIGNAL_PROOF: signalProof,
       EVAL_FIXTURE_PRESERVE_UNTIL: verified ? String(deadline) : "0",
     };
     const runRuntime = verified ? runtime : {
       ...runtime,
       state: { ...runtime.state, environment: { ...runtime.state.environment, DENSE_MEM_EVAL_VERIFIER_URL: `http://127.0.0.1:${heldAnswer.address().port}/v1` } },
     };
-    if (verified) await runBinary("run", runRuntime, environment);
-    else await assert.rejects(runBinary("run", runRuntime, environment), /Runner binary operation failed/);
+    if (verified) {
+      await runBinary("run", runRuntime, environment);
+    } else {
+      const cutoff = new AbortController();
+      const run = runBinary("run", runRuntime, environment, cutoff.signal).then(() => ({}), (error) => ({ error }));
+      let outcome;
+      try {
+        while (!(unfinishedRequests && fs.existsSync(output) && fs.readFileSync(output, "utf8").includes('"kind":"observation"'))) {
+          assert.equal(await Promise.race([run, delay(100)]), undefined, "runner must enter the intended scoring state before cutoff");
+        }
+      } finally {
+        cutoff.abort();
+        outcome = await run;
+      }
+      assert.match(outcome.error?.message ?? "", /Runner binary operation failed/);
+    }
     const report = JSON.parse(fs.readFileSync(path.join(runtime.manifest.output_dir, "scores.json"), "utf8"));
     const console = fs.readFileSync(output, "utf8");
     assert.equal(fs.readFileSync(proof, "utf8").trim(), "false", "capture opened only after owned exit");
+    assert.equal(fs.readFileSync(signalProof, "utf8").trim(), "SIGTERM", "workflow signaled the runner at cutoff");
     assert.ok(console.includes("terminal capture canary"));
     assert.equal(console.includes(runtime.state.environment.EVAL_CONTROL_TOKEN), false, "terminal capture protects credentials");
     assert.equal(report.complete, verified);
@@ -197,7 +228,8 @@ exec "$EVAL_FIXTURE_RUNNER" "$@" > "$EVAL_FIXTURE_LOG" 2>&1
       assert.ok(Date.now() > deadline * 1000, "completed model result finished capture in the preservation window");
     } else {
       assert.ok(unfinishedRequests > 0);
-      assert.match(report.failure, /ontology off incomplete|log capture incomplete/);
+      assert.equal(report.failure, "ontology off incomplete");
+      assert.equal(report.capture_complete, true);
       assert.equal(report.completed_answers, 2);
       const records = console.split("\n").filter((line) => line.startsWith("{")).map(JSON.parse);
       const terminal = records.find(({ kind, payload }) => kind === "answer_wire_unavailable" && payload?.state === "no_response");
@@ -215,7 +247,8 @@ exec "$EVAL_FIXTURE_RUNNER" "$@" > "$EVAL_FIXTURE_LOG" 2>&1
         assert.equal(createHash("sha256").update(body).digest("hex"), chunks[0].sha256);
         return JSON.parse(body).payload;
       });
-      assert.ok(decoded.some(({ exchange_id }) => exchange_id === terminal.payload.exchange_id), "wire request and terminal must share an exchange ID");
+      assert.ok(decoded.some(({ exchange_id, operation_id, attempt }) => exchange_id === terminal.payload.exchange_id &&
+        operation_id === terminal.payload.operation_id && attempt === terminal.payload.attempt), "wire request and terminal must share an exchange and attempt");
     }
     await cleanup(runEnv, { scoring: true });
     const receipt = JSON.parse(fs.readFileSync(path.join(runtime.manifest.output_dir, "cleanup.json"), "utf8"));

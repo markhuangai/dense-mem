@@ -148,7 +148,7 @@ func logReader(ctx context.Context, reader io.Reader, capture *evalharness.Captu
 		}
 		if json.Unmarshal([]byte(line), &record) != nil {
 			if err := capture.EmitContext(ctx, "runtime_log", map[string]string{"line": line}); err != nil {
-				return err
+				return errors.Join(payloadErr, err)
 			}
 			continue
 		}

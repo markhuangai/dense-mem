@@ -33,6 +33,10 @@ func (c *Capture) startQueue(cancelWork context.CancelFunc) {
 		defer close(q.done)
 		defer q.stop()
 		for event := range q.events {
+			if q.ctx.Err() != nil {
+				q.bytes.Release(int64(len(event.Payload)))
+				continue
+			}
 			started := time.Now()
 			err := c.emit(q.ctx, event.phase, event.Kind, event.Payload)
 			q.sinkNS.Add(time.Since(started).Nanoseconds())
@@ -42,8 +46,8 @@ func (c *Capture) startQueue(cancelWork context.CancelFunc) {
 			}
 			if err != nil {
 				c.failed.Store(true)
+				q.stop()
 				cancelWork()
-				return
 			}
 		}
 	}()

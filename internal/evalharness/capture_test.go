@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -365,12 +366,16 @@ func TestQueuedCapturePreservesTerminalExchangesAfterWorkCancellation(t *testing
 	capture.startQueue(cancel)
 	cancel()
 	require.NoError(t, capture.EmitTerminal(ctx, "answer_wire_unavailable", map[string]string{"exchange_id": "interrupted-answer"}))
+	progress := captureProgress{Stage: "questions", Unit: "answers", Total: 4, Completed: 2}
+	require.NoError(t, capture.emitProgressContext(ctx, progress, true))
 	require.NoError(t, capture.finishQueue(t.Context()))
 	defer capture.queue.cancelPreserve()
 	events := capturedEvents(t, output.Bytes())
-	require.Len(t, events, 1)
+	require.Len(t, events, 2)
 	require.Equal(t, "answer_wire_unavailable", events[0].Kind)
 	require.JSONEq(t, `{"exchange_id":"interrupted-answer"}`, string(events[0].Payload))
+	progress.Remaining = 2
+	require.Equal(t, []captureProgress{progress}, capturedProgress(t, output.Bytes()))
 }
 
 func TestQueuedCaptureReportsUnserializableRecords(t *testing.T) {
@@ -398,6 +403,7 @@ func TestQueuedCaptureReportsAnOversizedRecordWithoutEmittingIt(t *testing.T) {
 type heldCaptureWriter struct {
 	started chan struct{}
 	release chan struct{}
+	output  *bytes.Buffer
 }
 
 func (w heldCaptureWriter) Write(data []byte) (int, error) {
@@ -407,13 +413,15 @@ func (w heldCaptureWriter) Write(data []byte) (int, error) {
 		close(w.started)
 	}
 	<-w.release
-	return len(data), nil
+	return w.output.Write(data)
 }
 
 func TestQueuedCaptureBoundsBlockedWriter(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		sink := heldCaptureWriter{started: make(chan struct{}), release: make(chan struct{})}
-		defer close(sink.release)
+		var output bytes.Buffer
+		sink := heldCaptureWriter{started: make(chan struct{}), release: make(chan struct{}), output: &output}
+		release := sync.OnceFunc(func() { close(sink.release) })
+		defer release()
 		capture := &Capture{Logger: slog.New(slog.NewJSONHandler(sink, &slog.HandlerOptions{Level: slog.LevelDebug})), Protector: observability.NewCredentialProtector()}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -429,5 +437,8 @@ func TestQueuedCaptureBoundsBlockedWriter(t *testing.T) {
 		failure := capture.firstFailure.Load()
 		require.NotNil(t, failure)
 		require.Equal(t, "enqueue_interrupted", failure.Reason)
+		release()
+		<-capture.queue.done
+		require.Len(t, capturedEvents(t, output.Bytes()), 1)
 	})
 }

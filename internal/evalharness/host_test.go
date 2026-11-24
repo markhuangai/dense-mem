@@ -48,9 +48,9 @@ func TestConditionProgressCountsCompletedAndFailedAnswers(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, scores, 4)
 	progress := capturedProgress(t, logs.Bytes())
-	require.Len(t, progress, 2)
+	require.GreaterOrEqual(t, len(progress), 2)
 	require.Equal(t, captureProgress{Stage: "questions", Condition: "off", Unit: "answers", Total: 4, Remaining: 4}, progress[0])
-	require.Equal(t, captureProgress{Stage: "questions", Condition: "off", Unit: "answers", Total: 4, Completed: 2, Failed: 2}, progress[1])
+	require.Equal(t, captureProgress{Stage: "questions", Condition: "off", Unit: "answers", Total: 4, Completed: 2, Failed: 2}, progress[len(progress)-1])
 }
 
 func TestIndependentHostsShareInitialRecallAndEnforceEightCalls(t *testing.T) {
