@@ -10,13 +10,23 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
+	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/requestctx"
 	ontology "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 )
 
 func (s *Store) ClaimMaintenanceBatch(ctx context.Context, turn ontology.MaintenanceTurn, windowID string, now time.Time) (*ontology.MaintenanceClaim, error) {
+	if err := requireAutomatic(ctx); err != nil {
+		return nil, err
+	}
+	spaceID, err := uuid.Parse(turn.SpaceID)
+	if err != nil {
+		return nil, ontology.ErrLeaseLost
+	}
+	ctx = requestctx.WithAllowedSpaces(ctx, []domain.MemorySpaceAccess{{ID: spaceID, Kind: domain.MemorySpaceTeamShared, Generation: turn.Generation}})
 	claim := &ontology.MaintenanceClaim{ID: uuid.NewString(), WindowID: windowID, TeamID: turn.TeamID, SpaceID: turn.SpaceID, Generation: turn.Generation, LeaseToken: turn.LeaseToken, LeaseUntil: turn.LeaseUntil, Revisions: map[string]int64{}}
-	err := s.withScope(ctx, turn.TeamID, false, func(tx *gorm.DB, fence scope) error {
+	err = s.withScope(ctx, turn.TeamID, false, func(tx *gorm.DB, fence scope) error {
 		if fence.SpaceID != turn.SpaceID || fence.Generation != turn.Generation {
 			return ontology.ErrLeaseLost
 		}
