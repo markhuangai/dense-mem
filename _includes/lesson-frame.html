@@ -1,0 +1,62 @@
+{% assign version = include.alternative %}
+{% assign frame = include.frame %}
+{% assign scope = frame.id | append: '--' | append: include.scenario %}
+<div data-version="{{ include.scenario }}">
+  <section class="lesson-mode" data-view="story" aria-label="What happens">
+    {% include lesson-board.html pieces=frame.story override=version.story %}
+    <p class="lesson-caption">{{ version.behavior | default: frame.behavior | escape }}</p>
+    {% if frame.id == 'answer' and page.slug == 'rehearsal' and include.scenario == 'default' %}
+    <a class="learn-link show-original" href="#show-source" data-frame-link="show-source" data-preview-trigger aria-describedby="{{ scope }}--quote">Show original <span aria-hidden="true">→</span></a>
+    <span id="{{ scope }}--quote" hidden>{{ site.data.rehearsal.note | escape }}</span>
+    {% endif %}
+  </section>
+  <section class="lesson-mode" data-view="system" aria-label="How it works">
+    {% assign diagram = version.diagram | default: frame.diagram %}
+    {% assign notes = frame.flow_notes %}
+    {% if version.flow %}{% assign notes = version.flow_notes %}{% endif %}
+    {% include lesson-board.html pieces=frame.flow override=version.flow flow=true diagram=diagram notes=notes scope=scope %}
+    <p class="lesson-caption">{{ version.mechanics | default: frame.mechanics | escape }}</p>
+  </section>
+  <section class="lesson-mode" data-view="data" aria-label="Follow the data">
+    {% if frame.id == 'split' and page.slug == 'rehearsal' %}
+    <blockquote class="data-quote" data-highlight-for="end-offset"><mark>{{ site.data.rehearsal.room | escape }}<span aria-label="line break">↵</span></mark><br>{{ site.data.rehearsal.gear | escape }}</blockquote>
+    {% endif %}
+    {% assign shown_fields = version.fields | default: frame.fields %}
+    {% for selection in shown_fields %}
+    {% assign field = site.data.lesson_fields[selection] %}
+    {% assign example = field.value %}
+    {% if field.fixture %}{% assign example = site.data.rehearsal[field.fixture] %}{% endif %}
+    {% if field.fixture == 'room_span' %}{% assign example = site.data.rehearsal.note | slice: 0, site.data.rehearsal.span_end %}{% endif %}
+    {% capture display_value %}{% if field.array %}[{% endif %}{{ example | jsonify }}{% if field.array %}]{% endif %}{% endcapture %}
+    {% assign purpose_id = scope | append: '--field-' | append: selection %}
+    <details class="lesson-field" name="{{ scope }}" data-property="{{ selection }}"{% if forloop.first %} open{% endif %}>
+      <summary data-preview-trigger aria-describedby="{{ purpose_id }}"><code>{{ field.path | escape | replace: '.', '<wbr>.' }}</code><span>{{ field.type | escape }}</span></summary>
+      <div class="field-handoff" data-ui>
+        <div><span>{{ field.from | escape }}</span><pre><code>{{ display_value | escape }}</code></pre></div>
+        <span class="field-arrow" aria-hidden="true">→</span>
+        <div><span>{{ field.to | escape }}</span><pre><code data-field-transfer>{{ display_value | escape }}</code></pre></div>
+      </div>
+      <p id="{{ purpose_id }}">{{ field.use | escape }}</p>
+      {% if field.contract %}
+      {% assign tool_name = field.contract[0] %}
+      {% assign direction = field.contract[1] %}
+      {% assign field_path = field.contract[2] %}
+      {% assign tool = site.data.contracts.tools[tool_name] %}
+      {% assign schema = tool[direction] | where: 'path', field_path | first %}
+      <p class="field-contract"><a href="{{ '/fields/' | relative_url }}#{{ field.contract[0] }}-{{ field.contract[1] }}-{{ schema.path | slugify }}">{{ field.contract[0] }} {{ field.contract[1] }}</a> · {% if schema.required %}Required{% else %}Optional{% endif %}{% if schema.constraints.maxLength %} · Up to {{ schema.constraints.maxLength }} characters{% endif %}</p>
+      {% endif %}
+    </details>
+    {% endfor %}
+    {% if page.slug == 'rehearsal' %}
+    {% assign request_key = frame.id %}
+    {% if include.scenario == 'private' and frame.id == 'save' %}{% assign request_key = 'save-private' %}{% endif %}
+    {% assign request = site.data.rehearsal.requests[request_key] %}
+    {% if request and include.scenario == 'default' or request_key == 'save-private' %}
+    <details class="lesson-request">
+      <summary>Example <code>{{ request.tool | escape }}</code> arguments</summary>
+      <pre><code data-tool-request="{{ request.tool | escape }}">{{ request.arguments | jsonify | escape }}</code></pre>
+    </details>
+    {% endif %}
+    {% endif %}
+  </section>
+</div>

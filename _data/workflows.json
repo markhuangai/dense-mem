@@ -2,96 +2,115 @@
   "evidence": {
     "title": "The life of a memory",
     "description": "Follow a note from the fictional Atlas team through intake, Topic assignment, Recall, and back to its source.",
-    "url": "/"
+    "url": "/walkthroughs/atlas/",
+    "lesson": "/learn/rehearsal/"
   },
   "start": {
     "title": "Start and connect",
     "description": "Bring up a disposable deployment and make the first MCP call.",
-    "url": "/walkthroughs/start/"
+    "url": "/walkthroughs/start/",
+    "lesson": "/learn/start-a-server/"
   },
   "client": {
     "title": "Integrate an MCP client",
     "description": "Follow one host operation from authenticated discovery through a retry.",
-    "url": "/walkthroughs/client/"
+    "url": "/walkthroughs/client/",
+    "lesson": "/learn/portal-connect/"
   },
   "session": {
     "title": "Ingest a private session",
     "description": "See how user events become exact, authorized private Evidence.",
-    "url": "/walkthroughs/session/"
+    "url": "/walkthroughs/session/",
+    "lesson": "/learn/save-a-chat/"
   },
   "corrections": {
     "title": "Correct, retract, and resolve conflicts",
     "description": "Follow a changed policy through ownership checks and append-only history.",
-    "url": "/walkthroughs/corrections/"
+    "url": "/walkthroughs/corrections/",
+    "lesson": "/learn/change-a-note/"
   },
   "packs": {
     "title": "Export a memory pack",
     "description": "Package selected Evidence with exact provenance and an integrity hash.",
-    "url": "/walkthroughs/packs/"
+    "url": "/walkthroughs/packs/",
+    "lesson": "/learn/share-a-source/"
   },
   "feedback": {
     "title": "Record recall feedback",
     "description": "Follow an observed Recall outcome into the feedback record.",
-    "url": "/walkthroughs/feedback/"
+    "url": "/walkthroughs/feedback/",
+    "lesson": "/learn/give-feedback/"
   },
   "access": {
     "title": "Authenticate and scope a request",
     "description": "Trace a request from ingress through storage and an authorized response.",
-    "url": "/walkthroughs/access/"
+    "url": "/walkthroughs/access/",
+    "lesson": "/learn/who-can-see-it/"
   },
   "identity": {
     "title": "Connect SSO and directory roles",
     "description": "Follow sign-in, role mapping, and directory changes to an authenticated team.",
-    "url": "/walkthroughs/identity/"
+    "url": "/walkthroughs/identity/",
+    "lesson": "/learn/control-identity/"
   },
   "deploy": {
     "title": "Route a production deployment",
     "description": "Place the listeners, storage, and observability behind the intended network boundaries.",
-    "url": "/walkthroughs/deploy/"
+    "url": "/walkthroughs/deploy/",
+    "lesson": "/learn/start-a-server/"
   },
   "storage": {
     "title": "Maintain PostgreSQL and search indexes",
     "description": "Follow a storage change from a versioned plan to a verified active index.",
-    "url": "/walkthroughs/storage/"
+    "url": "/walkthroughs/storage/",
+    "lesson": "/learn/upgrade-a-database/"
   },
   "diagnose": {
     "title": "Diagnose a memory operation",
     "description": "Follow a failure from the client result to the evidence an operator needs.",
-    "url": "/walkthroughs/diagnose/"
+    "url": "/walkthroughs/diagnose/",
+    "lesson": "/learn/control-diagnosis/"
   },
   "privacy": {
     "title": "Erase an owner’s private memory",
     "description": "Follow governed private erasure from ownership authorization to completion.",
-    "url": "/walkthroughs/privacy/"
+    "url": "/walkthroughs/privacy/",
+    "lesson": "/learn/erase-private-memory/"
   },
   "evaluate": {
     "title": "Run a public QA evaluation",
     "description": "Select published seeds, run hosted scoring, and read the dataset reports.",
-    "url": "/walkthroughs/evaluate/"
+    "url": "/walkthroughs/evaluate/",
+    "lesson": "/learn/evaluate-memory/"
   },
   "contribute": {
     "title": "Deliver and validate a product change",
     "description": "Trace a change through a focused check, PR review, the production-image gate, and release.",
-    "url": "/walkthroughs/contribute/"
+    "url": "/walkthroughs/contribute/",
+    "lesson": "/learn/verify-a-change/"
   },
   "docs": {
     "title": "Deliver a documentation change",
     "description": "Trace a guide edit from its source file to the corresponding Pages deployment.",
-    "url": "/walkthroughs/docs/"
+    "url": "/walkthroughs/docs/",
+    "lesson": "/learn/verify-a-change/"
   },
   "manage-topics": {
     "title": "Review and publish topic changes",
     "description": "Follow a team manager’s draft from preview through publication and recovery.",
-    "url": "/walkthroughs/manage-topics/"
+    "url": "/walkthroughs/manage-topics/",
+    "lesson": "/learn/portal-topics/"
   },
   "demo": {
     "title": "Try the hosted demo",
     "description": "Connect a disposable demo client and trace a small shared-memory result.",
-    "url": "/walkthroughs/demo/"
+    "url": "/walkthroughs/demo/",
+    "lesson": "/learn/clean-up-the-demo/"
   },
   "credentials": {
     "title": "Create and rotate a credential",
     "description": "Follow a team credential through creation, verification, and rotation.",
-    "url": "/walkthroughs/credentials/"
+    "url": "/walkthroughs/credentials/",
+    "lesson": "/learn/portal-credentials/"
   }
 }

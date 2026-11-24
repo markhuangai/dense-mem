@@ -30,6 +30,8 @@ export function setupDiagrams(blocks) {
     const source = document.createElement("details");
     const sourceLabel = document.createElement("summary");
     const title = pre.closest("article")?.querySelector("h1")?.textContent ?? "Guide";
+    let requestedTheme;
+    let renderVersion = 0;
     details.className = "diagram-disclosure";
     label.textContent = "Show diagram";
     view.className = "diagram-render";
@@ -37,21 +39,29 @@ export function setupDiagrams(blocks) {
     pre.before(details);
     details.append(label, view, source);
     source.append(sourceLabel, pre);
-    details.addEventListener("toggle", async () => {
-      if (!details.open || details.dataset.rendering) return;
-      details.dataset.rendering = "true";
+    async function render() {
+      const theme = document.documentElement.dataset.theme === "dark" ? "dark" : "default";
+      if (!details.open || requestedTheme === theme) return;
+      requestedTheme = theme;
+      const version = ++renderVersion;
       try {
         const mermaid = await library();
-        const {svg} = await mermaid.render("wiki-diagram-" + index, fixture);
+        if (version !== renderVersion) return;
+        const themedFixture = `${fixture}\n%%{init: {"theme": "${theme}"}}%%`;
+        const {svg} = await mermaid.render(`wiki-diagram-${index}-${version}`, themedFixture);
+        if (version !== renderVersion) return;
         view.innerHTML = svg;
         const rendered = view.querySelector("svg");
         if (!rendered.hasAttribute("aria-labelledby")) rendered.setAttribute("aria-label", title + " diagram " + (index + 1));
       } catch (error) {
-        delete details.dataset.rendering;
+        if (version !== renderVersion) return;
+        requestedTheme = undefined;
         view.textContent = "The diagram could not render. Its source is available below.";
         source.open = true;
         console.error(error);
       }
-    });
+    }
+    details.addEventListener("toggle", render);
+    document.addEventListener("docs-theme-change", render);
   }
 }

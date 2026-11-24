@@ -25,6 +25,8 @@ class Page(HTMLParser):
         self.links = []
         self.diagrams = 0
         self.steps = []
+        self.lesson = None
+        self.coverage = []
         self.feed(filename.read_text())
 
     def handle_starttag(self, tag, attrs):
@@ -36,6 +38,9 @@ class Page(HTMLParser):
                 self.links.append(attrs[field])
         if "language-mermaid" in attrs.get("class", "").split():
             self.diagrams += 1
+        if tag == "main" and "data-lesson" in attrs:
+            self.lesson = attrs["data-lesson"]
+            self.coverage = attrs["data-covers"].split()
         if tag == "article" and "data-step" in attrs:
             self.steps.append(attrs["id"])
 
@@ -116,6 +121,41 @@ def verify_migration():
     counts["legacy files"] = len(expected)
 
 
+def verify_lessons():
+    contracts = json.loads(Path("_data/contracts.json").read_text())
+    lesson_pages = [page for page in pages.values() if page.lesson]
+    coverage = {item for page in lesson_pages for item in page.coverage}
+    # Supported surfaces checked against the tool registry, portal navigation, and runtime composition.
+    required = set(contracts["tools"]) | set("""
+        ui:sign-in ui:workspace-picker ui:connect ui:search ui:team ui:my-credentials ui:topics
+        control:all-teams control:overview control:credentials control:remember-attempts
+        control:evidence-conflicts control:settings control:search control:recall-feedback control:logs
+        control:maintenance control:sso control:security control:config
+        control-config:general control-config:sso control-config:operation-logs
+        control-config:recall-feedback control-config:telemetry-pricing control-config:decisions
+        control-sso:providers control-sso:mappings control-sso:directory
+        worker:operation-log worker:credential-activity worker:usage-metrics worker:recall-feedback
+        worker:private-memory worker:private-retention worker:telemetry-pricing-refresh
+        worker:search-reconciliation worker:remember-diagnostics worker:topic-maintenance worker:demo-cleanup
+        ops:deploy ops:migrations ops:backup ops:restore ops:monitoring ops:evaluation
+        profile:production profile:demo profile:evaluation
+    """.split())
+    for item in sorted(required - coverage):
+        errors.append(f"Missing lesson coverage for {item}")
+    catalog = pages[resolve("system/")]
+    for page in lesson_pages:
+        route = f"/dense-mem/learn/{page.lesson}/"
+        if route not in catalog.links:
+            errors.append(f"Lesson is missing from the system index: {route}")
+    home = pages[resolve("")]
+    for number, step_id in enumerate(pages[resolve("walkthroughs/atlas/")].steps, start=1):
+        for alias in (step_id, f"step-{number}"):
+            if alias not in home.anchors:
+                errors.append(f"Missing homepage Atlas bookmark: {alias}")
+    counts["lessons"] = len(lesson_pages)
+    counts["documented surfaces"] = len(required)
+
+
 pages = {file: Page(file) for file in ROOT.rglob("*.html")}
 for file, page in pages.items():
     path = file.relative_to(ROOT).as_posix()
@@ -131,8 +171,9 @@ for file, page in pages.items():
     counts["walkthroughs"] += bool(page.steps)
 
 verify_migration()
+verify_lessons()
 search = json.loads((ROOT / "assets/search.json").read_text())
-for entry in [*search["guides"], *search["steps"]]:
+for entry in [*search["guides"], *search["steps"], *search["lessons"], *search["fields"]]:
     check_link(entry["url"], "search/")
 
 if errors:

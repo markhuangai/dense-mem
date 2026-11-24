@@ -1,0 +1,593 @@
+original-content:
+  path: "evidence[0].content"
+  type: "string"
+  from: "Assistant · Remember request"
+  to: "Original submitted item"
+  use: "The assistant sends both lines verbatim. Dense-Mem keeps the original so it can validate the split and trace each passage to its source."
+  fixture: "note"
+  contract: ["remember", "request", "evidence[].content"]
+destination-shared:
+  path: "target_space"
+  type: "enum"
+  from: "Maya’s assistant · Remember request"
+  to: "Authenticated space selection"
+  use: "The assistant sends team_shared when Maya chooses to save for the band. Dense-Mem checks shared write permission in the authenticated team."
+  fixture: "space"
+  contract: ["remember", "request", "target_space"]
+destination-private:
+  path: "target_space"
+  type: "enum"
+  from: "Maya’s assistant · Remember request"
+  to: "Authenticated space selection"
+  use: "Private selects Maya’s authenticated private space. Sam’s search cannot retrieve from that space."
+  fixture: "private_space"
+  contract: ["remember", "request", "target_space"]
+operation:
+  path: "idempotency_key"
+  type: "string"
+  from: "Assistant · retained before sending"
+  to: "Remember replay lookup"
+  use: "The assistant keeps the key and the whole request. If the reply is lost, a retry with both unchanged can recover the original result."
+  fixture: "operation"
+  contract: ["remember", "request", "idempotency_key"]
+start-offset:
+  path: "span_start"
+  type: "integer"
+  from: "Validated split · first position"
+  to: "Remember result and Trace"
+  use: "The first span starts at Unicode code-point offset zero. Dense-Mem stores the offsets with the occurrence so it can recover the exact slice."
+  fixture: "span_start"
+  contract: ["remember", "result", "evidence[].span_start"]
+end-offset:
+  path: "span_end"
+  type: "integer"
+  from: "Dense-Mem · accepted split"
+  to: "Stored span → Trace"
+  use: "The end is exclusive. The first passage includes 22 visible characters and the line break. Trace returns the same bound to locate the passage in the original."
+  fixture: "span_end"
+  contract: ["remember", "result", "evidence[].span_end"]
+question:
+  path: "query"
+  type: "string"
+  from: "Sam’s assistant · Recall request"
+  to: "Search over allowed spaces"
+  use: "The reader’s question becomes a query. Search can match related wording within the reader’s eligible memory."
+  fixture: "question"
+  contract: ["recall_memory", "request", "query"]
+selected-quote:
+  path: "results[0].context"
+  type: "string"
+  from: "Recall · exact evidence"
+  to: "Assistant’s answer"
+  use: "The result carries a slice of the saved words. In this example the assistant uses that slice to answer the question."
+  fixture: "room_span"
+  contract: ["recall_memory", "result", "results[].context"]
+recall-id:
+  path: "results[0].evidence_id"
+  type: "UUID"
+  from: "Recall result"
+  to: "Trace request · evidence_id"
+  use: "The server returns the matching memory’s ID. The assistant can send that same ID to Trace, which checks access before returning its source."
+  fixture: "room_id"
+  contract: ["recall_memory", "result", "results[].evidence_id"]
+trace-id:
+  path: "evidence_id"
+  type: "UUID"
+  from: "Assistant · copied from Recall"
+  to: "Authorized Trace lookup"
+  use: "Trace uses the returned ID to look up the saved passage and its recorded provenance in a space this caller can read."
+  fixture: "room_id"
+  contract: ["trace_memory", "request", "evidence_id"]
+source-item:
+  path: "occurrences[0].partition.source_item_id"
+  type: "UUID"
+  from: "Trace · recorded occurrence"
+  to: "Original submitted item"
+  use: "The occurrence’s partition points to the original item. Its stored bounds locate the slice inside that item."
+  fixture: "source_item"
+  contract: ["trace_memory", "result", "occurrences[].partition.source_item_id"]
+search-current:
+  path: "search_state"
+  type: "enum"
+  from: "Remember terminal result"
+  to: "Assistant · confirms availability"
+  use: "Required search preparation and the write have succeeded. When Topic organization is enabled, Remember also commits any grounded direct memberships for eligible shared Evidence."
+  value: "current"
+  contract: ["remember", "result", "search_state"]
+sample-space:
+  path: "results[0].space_kind"
+  type: "enum"
+  from: "Authorized Recall result"
+  to: "User Portal · Destination"
+  use: "The result tells the portal whether this passage was returned from private or team-shared memory."
+  fixture: "space"
+  contract: ["recall_memory", "result", "results[].space_kind"]
+session-event:
+  path: "events[0].event_id"
+  type: "string"
+  from: "Assistant · current user event"
+  to: "Session staging and provenance"
+  use: "The host supplies a stable identifier for this event, so Dense-Mem can connect an extracted quote to the exact event."
+  value: "practice-chat-01"
+  contract: ["ingest_session", "request", "events[].event_id"]
+session-text:
+  path: "events[0].text"
+  type: "string"
+  from: "Assistant · exact user text"
+  to: "Private session intake"
+  use: "Dense-Mem stages the user event, then validates excerpt boundaries against the text originally submitted."
+  fixture: "note"
+  contract: ["ingest_session", "request", "events[].text"]
+session-empty:
+  path: "memory_outcome"
+  type: "enum"
+  from: "Session processing result"
+  to: "Assistant · closes the operation"
+  use: "The extraction completed with no eligible excerpt. The host can display this distinct result without inventing a saved passage."
+  value: "no_memory"
+  contract: ["ingest_session", "result", "memory_outcome"]
+supersedes:
+  path: "evidence[0].supersedes_evidence_ids"
+  type: "array of IDs"
+  from: "Owner’s assistant · replacement request"
+  to: "Remember · lifecycle update"
+  use: "The owner supplies the ID of the passage being replaced. Dense-Mem checks authority and saves the replacement with the recorded change."
+  value: ["00000000-0000-4000-8000-000000000001"]
+  contract: ["remember", "request", "evidence[].supersedes_evidence_ids"]
+retract-reason:
+  path: "reason"
+  type: "string"
+  from: "Owner · retraction request"
+  to: "Lifecycle history"
+  use: "The owner states why the passage is being withdrawn. The recorded decision explains the change and preserves authorized provenance."
+  value: "Practice was cancelled"
+  contract: ["retract_evidence", "request", "reason"]
+retracted:
+  path: "retracted_evidence_ids"
+  type: "array of IDs"
+  from: "Retraction result"
+  to: "Assistant · confirms withdrawal"
+  use: "The result lists the exact owned IDs whose current Recall eligibility changed."
+  value: ["00000000-0000-4000-8000-000000000001"]
+  contract: ["retract_evidence", "result", "retracted_evidence_ids"]
+export-ids:
+  path: "evidence_ids"
+  type: "array of UUIDs"
+  from: "Assistant · selected authorized IDs"
+  to: "Memory pack builder"
+  use: "Dense-Mem authorizes each ID before collecting the exact Evidence and its bounded provenance."
+  value: ["00000000-0000-4000-8000-000000000001"]
+  contract: ["export_memory_pack", "request", "evidence_ids"]
+pack-hash:
+  path: "content_sha256"
+  type: "SHA-256 hex"
+  from: "Memory pack · canonical content"
+  to: "Recipient’s integrity check"
+  use: "The digest identifies the canonical pack content. Compare the received pack with its reported digest to detect a change."
+  value: "d48daad0dbeca33fa943fac104a06330cb4c01a87f6b73b28bf7c7a2e8d04ade"
+  contract: ["export_memory_pack", "result", "content_sha256"]
+feedback-id:
+  path: "recalls[0].recall_event_id"
+  type: "string"
+  from: "Host · copied from recall_id"
+  to: "Feedback event lookup"
+  use: "The host sends the Recall event ID after observing the outcome. Dense-Mem can link the feedback to the original result set."
+  value: "20000000-0000-4000-8000-000000000003"
+  contract: ["submit_recall_session_feedback", "request", "recalls[].recall_event_id"]
+feedback-used:
+  path: "recalls[0].used"
+  type: "boolean"
+  from: "Host · observed answer behavior"
+  to: "Feedback record and operator review"
+  use: "True records that the host actually used the recalled material. This is an observation attached to the event."
+  value: true
+  contract: ["submit_recall_session_feedback", "request", "recalls[].used"]
+feedback-count:
+  path: "recorded_count"
+  type: "integer"
+  from: "Feedback result"
+  to: "Host · confirms what recorded"
+  use: "A batch can partially succeed. The count tells the host how many observations were recorded."
+  value: 1
+  contract: ["submit_recall_session_feedback", "result", "recorded_count"]
+portal-query:
+  path: "GET /ui/api/recall · query"
+  type: "query parameter"
+  from: "User Portal · Search memory"
+  to: "Recall service"
+  use: "The search form sends the text with the current portal authentication. The server applies visibility before returning the ranked results."
+  fixture: "question"
+workspace:
+  path: "team.id"
+  type: "UUID"
+  from: "GET /ui/api/session"
+  to: "Connect and workspace picker"
+  use: "The server returns the authorized selected team. Connect shows its full identifier and uses the session’s configured public MCP base when available."
+  value: "30000000-0000-4000-8000-000000000001"
+mcp-base:
+  path: "MCP_PUBLIC_BASE_URL"
+  type: "URL"
+  from: "Saved MCP public base setting"
+  to: "User Portal · Connect"
+  use: "The configured public base supplies the address displayed for assistants. When absent, Connect identifies its browser-origin fallback."
+  value: "https://memory.example.org"
+role:
+  path: "membership.role"
+  type: "enum"
+  from: "Authenticated membership · session data"
+  to: "User Portal · Team and Topics"
+  use: "The portal shows management panels when its role check permits. The server checks current role and grants again on management routes."
+  value: "manager"
+credential:
+  path: "credential.id"
+  type: "UUID"
+  from: "Server · stable credential record"
+  to: "My credentials and permitted team actions"
+  use: "Create or rotate by this credential ID. Rotation issues a replacement secret and keeps the same credential identity and private space."
+  value: "30000000-0000-4000-8000-000000000002"
+draft-revision:
+  path: "base_revision"
+  type: "integer"
+  from: "User Portal · draft response"
+  to: "Preview and versioned publication"
+  use: "A draft records the catalog revision it started from. A stale preview or publish must be refreshed before the change can be accepted."
+  value: 12
+topic-id:
+  path: "topic_id"
+  type: "UUID"
+  from: "Recall · related topic hint"
+  to: "Follow-up Recall · topic_ids"
+  use: "The assistant can send this current topic ID to select its direct member passages. Visibility and freshness still apply."
+  fixture: "topic_id"
+  contract: ["recall_memory", "result", "related_topics[].topic_id"]
+topic-filter:
+  path: "topic_ids"
+  type: "array of UUIDs"
+  from: "User Portal or assistant"
+  to: "Direct topic membership filter"
+  use: "The search uses the union of direct memberships for the selected topics. Select a child topic explicitly to include its members."
+  value: ["10000000-0000-4000-8000-000000000001"]
+  contract: ["recall_memory", "request", "topic_ids"]
+control-team:
+  path: "id"
+  type: "UUID"
+  from: "Control API · created team"
+  to: "Control Portal · team workspace"
+  use: "The server assigns a stable team ID. The operator selects that team before viewing its settings and credentials."
+  value: "30000000-0000-4000-8000-000000000001"
+private-read:
+  path: "memory_access.private.read"
+  type: "boolean"
+  from: "Effective credential or membership grants"
+  to: "User Portal · permission summary"
+  use: "The server exposes the derived access of this actor. Private scopes are tied to this credential or SSO membership."
+  value: true
+correlation:
+  path: "correlation_id"
+  type: "string"
+  from: "Dense-Mem · request context"
+  to: "Control Portal · Logs filter"
+  use: "The server attaches a request correlation ID. An operator can use that exact ID to locate its bounded operational records."
+  value: "band-save-01"
+  contract: ["remember", "result", "correlation_id"]
+failure-version:
+  path: "expected_version"
+  type: "integer"
+  from: "Operator · current case version"
+  to: "Conflict resolution check"
+  use: "The version comes from the displayed case. The server rejects a stale decision so the operator can refresh and inspect the latest positions."
+  value: 3
+decision:
+  path: "decision"
+  type: "enum"
+  from: "Operator · conflict resolution request"
+  to: "Recorded conflict decision"
+  use: "Resolve records the operator’s decision on the current case. Exact quoted positions and their sources are retained."
+  value: "resolve"
+failure-code:
+  path: "code"
+  type: "enum"
+  from: "MCP error"
+  to: "Host and operator triage"
+  use: "A required provider failure reports a bounded error. Check the server-provided next action and locate the operation by correlation ID."
+  value: "provider_unavailable"
+convergence:
+  path: "data.drifted_documents"
+  type: "integer"
+  from: "Search readiness · convergence summary"
+  to: "Operator · inspects drift"
+  use: "The status counts sources with a stale or missing current search projection for the active contract. Read it together with the latest run and bounded failure signal."
+  value: 1
+provider:
+  path: "provider_id"
+  type: "UUID"
+  from: "Operator · stored identity provider"
+  to: "SSO sign-in flow"
+  use: "The configured provider identifies which sign-in flow can be selected. Team access comes from server-side mapping and the authenticated identity."
+  value: "40000000-0000-4000-8000-000000000001"
+ban-address:
+  path: "ip"
+  type: "IP address"
+  from: "Control Portal · IP ban record"
+  to: "Security middleware"
+  use: "A ban identifies an address restricted by server policy. Review its current record and private diagnostic context in the operator interface."
+  value: "192.0.2.42"
+boundary:
+  path: "cut_refs"
+  type: "array of IDs"
+  from: "Partition model · proposed boundary"
+  to: "Dense-Mem · validates and slices"
+  use: "The model chooses from server-issued boundary IDs for this item. The server rejects an unknown ID and derives the words and offsets itself."
+  value: ["p_example_n"]
+receipt:
+  path: "processing_state"
+  type: "enum"
+  from: "Remember · final response"
+  to: "Assistant · confirms the save"
+  use: "The final result is safe to acknowledge after required assessment, search preparation, and the durable transaction succeed."
+  value: "completed"
+  contract: ["remember", "result", "processing_state"]
+rejected-boundary:
+  path: "cut_refs"
+  type: "array of IDs"
+  from: "Model · malformed proposal"
+  to: "Dense-Mem · bounded regeneration"
+  use: "This example ID was never offered. The complete result is invalid, so the server requests a replacement response and publishes nothing if validation never succeeds."
+  value: ["unknown-example"]
+rank:
+  path: "results[] order"
+  type: "ranked array"
+  from: "Recall · eligible ranked results"
+  to: "Assistant · first matching result"
+  use: "The order in the result conveys rank. Match paths and optional context influence ordering only within allowable candidates."
+  value: ["00000000-0000-4000-8000-000000000001"]
+query-limit:
+  path: "limit"
+  type: "integer"
+  from: "Assistant · Recall request"
+  to: "Recall result limit"
+  use: "The caller requests at most one Evidence result in this example. Other bounds and visibility rules still apply."
+  value: 1
+  contract: ["recall_memory", "request", "limit"]
+authenticated-team:
+  path: "authenticated team ID"
+  type: "UUID"
+  from: "Server · verified credential or session"
+  to: "Scoped reads and writes"
+  use: "The verified identity selects the team. Use the authenticated team at the storage boundary so the request cannot select another team."
+  value: "30000000-0000-4000-8000-000000000001"
+replay-state:
+  path: "idempotency_key"
+  type: "string"
+  from: "Assistant · unchanged request"
+  to: "Remember · lookup prior result"
+  use: "Retry the same complete request with the retained key when remediation allows. Changing the request under that key can conflict."
+  fixture: "operation"
+  contract: ["remember", "request", "idempotency_key"]
+maintenance-key:
+  path: "operation_key"
+  type: "string"
+  from: "Control Portal · POST /control/api/topic-maintenance/pause"
+  to: "Versioned command and receipt"
+  use: "The portal sends a retained key for this action. The server stores the command and matches an unchanged retry to its prior receipt."
+  value: "pause-band-topics-01"
+maintenance-enabled:
+  path: "data.enabled"
+  type: "boolean"
+  from: "GET /control/api/topic-maintenance/status"
+  to: "Control Portal · Enabled"
+  use: "The server reports whether organization is enabled. The scheduler checks policy and the current window before it admits work."
+  value: true
+maintenance-paused:
+  path: "topic_maintenance_state.paused"
+  type: "boolean"
+  from: "Accepted operator pause command"
+  to: "Worker admission and status"
+  use: "The server commits the Boolean on pause. The worker reads it before admitting its next batch. The status endpoint returns the same state as data.paused."
+  value: true
+maintenance-paused-false:
+  path: "topic_maintenance_state.paused"
+  type: "boolean"
+  from: "Control maintenance state"
+  to: "Worker admission and Control Portal status"
+  use: "An unpaused state permits admission when the policy, window, and source checks also pass. Resume writes this value."
+  value: false
+maintenance-status:
+  path: "data.paused"
+  type: "boolean"
+  from: "GET /control/api/topic-maintenance/status"
+  to: "Control Portal · Paused"
+  use: "The status endpoint reads the committed pause flag. The portal labels the scheduler as paused and shows pending and active work separately."
+  value: true
+maintenance-pending:
+  path: "data.counts.pending"
+  type: "integer"
+  from: "Maintenance status · discovered eligible sources"
+  to: "Control Portal · Pending"
+  use: "The server counts currently eligible sources recorded as pending in maintenance discovery. The portal displays this once the source is discovered."
+  value: 1
+maintenance-active:
+  path: "data.active_work"
+  type: "integer"
+  from: "Maintenance status · admitted work"
+  to: "Control Portal · Active work"
+  use: "The operator can distinguish dispatched work from the pending count. A pause stops new admissions while the admitted batch can finish."
+  value: 1
+search-source-version:
+  path: "source_version"
+  type: "integer"
+  from: "Search document · current source snapshot"
+  to: "Reconciliation write guard"
+  use: "The worker carries the selected source version through embedding. PostgreSQL checks the version again before it accepts the repaired projection."
+  value: 7
+erase-confirm:
+  path: "acknowledge_irreversible"
+  type: "boolean"
+  from: "Owner · explicit erasure request"
+  to: "Private-memory service"
+  use: "The request affirms the permanent effect. The server checks the owner and receives a retained Idempotency-Key before it queues the authorized operation."
+  value: true
+erase-id:
+  path: "operation_id"
+  type: "UUID"
+  from: "Accepted erasure operation"
+  to: "Owner’s status lookup"
+  use: "This identifier lets the owner check the accepted operation until it reaches a terminal outcome."
+  value: "50000000-0000-4000-8000-000000000001"
+erase-status:
+  path: "status"
+  type: "enum"
+  from: "Erasure worker · verified purge"
+  to: "Owner-visible operation status"
+  use: "The worker only records completion after verifying the covered data was purged for the target generation."
+  value: "completed"
+hold-status:
+  path: "last_error_code"
+  type: "string"
+  from: "Erasure worker · applicable hold"
+  to: "Owner-visible operation status"
+  use: "An applicable hold keeps the operation visibly blocked and the targeted private data protected from purge."
+  value: "legal_hold"
+retention-days:
+  path: "PRIVATE_MEMORY_RETENTION_DAYS"
+  type: "integer"
+  from: "Control configuration · retained duration"
+  to: "Private-memory retention scheduler"
+  use: "A positive retention policy lets the scheduler select eligible private memory for erasure. Zero disables automatic retention."
+  value: 30
+diagnostic-expiration:
+  path: "expires_at"
+  type: "timestamp"
+  from: "Remember · diagnostic retention policy"
+  to: "Remember diagnostic purger"
+  use: "The stored deadline makes a protected diagnostic eligible for a later purge pass. Legal holds can retain a covered diagnostic."
+  value: "2026-11-25T14:00:00Z"
+last-used:
+  path: "last_used_at"
+  type: "timestamp"
+  from: "Credential activity writer"
+  to: "Credential details"
+  use: "The writer merges recent uses by credential and persists the newest timestamp, so the portal can show recent activity."
+  value: "2026-11-24T14:00:00Z"
+operation-log:
+  path: "correlation_id"
+  type: "string"
+  from: "Request instrumentation"
+  to: "Operation log writer → Logs"
+  use: "The request identity travels with bounded operational events. The writer stores them for correlated operator inspection."
+  value: "band-save-01"
+metric-tokens:
+  path: "input_tokens"
+  type: "integer"
+  from: "Provider usage observation"
+  to: "Telemetry usage accounting"
+  use: "When the provider reports usage, telemetry can use the reported count to describe this call and estimate cost with applicable pricing."
+  value: 240
+pricing:
+  path: "input_usd_per_million_tokens"
+  type: "decimal"
+  from: "Saved model pricing rule"
+  to: "Telemetry pricing snapshot"
+  use: "This example rate is loaded into the pricing snapshot when enabled. The estimator uses a matching configured rate and reported input tokens."
+  value: 0.4
+demo-expiry:
+  path: "metadata.demo_expires_at"
+  type: "timestamp"
+  from: "Demo provisioner · workspace deadline"
+  to: "Demo cleanup worker"
+  use: "The demo writes the workspace’s expiry. The cleaner selects expired demo teams and applies the team deletion service to those teams."
+  value: "2026-11-24T15:00:00Z"
+control-address:
+  path: "CONTROL_HTTP_ADDR"
+  type: "listener address"
+  from: "Deployment environment"
+  to: "Separate Control Portal listener"
+  use: "The server binds control traffic on this listener. In the documented deployment it is reachable only through the private administrative network or ingress."
+  value: ":8090"
+ready-status:
+  path: "status"
+  type: "string"
+  from: "GET /ready · dependency check result"
+  to: "Deployment health check"
+  use: "Required dependencies must pass before the readiness endpoint reports ready. A failed essential check keeps a new instance out of traffic."
+  value: "ready"
+migration-id:
+  path: "migration version"
+  type: "integer"
+  from: "Ordered Goose migration"
+  to: "Startup migration runner and history"
+  use: "The version identifies the Evidence-only cutover. Startup applies a pending version in order and uses the migration history to distinguish completed work."
+  value: 20261110010000
+routine-backup:
+  path: "PostgreSQL backup target"
+  type: "database"
+  from: "Operator · verified backup configuration"
+  to: "Isolated restore"
+  use: "The database backup and matching WAL or snapshot metadata identify the restore target. Verify the restored state and search contract before routing traffic."
+  value: "dense_mem"
+eval-runner:
+  path: "seed image digest"
+  type: "SHA-256 digest"
+  from: "Hosted evaluation workflow · resolves a selected seed"
+  to: "Fresh PostgreSQL evaluation database"
+  use: "The digest fixes the exact dataset image for a repeatable run. The workflow also pins the production server image separately."
+  value: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+eval-result:
+  path: "Recall@5"
+  type: "metric"
+  from: "Evaluation scoring · illustrative 4 of 5 cases"
+  to: "Dataset report"
+  use: "This example divides cases whose expected support appeared in the first five results by the total scored cases. Read it with the immutable inputs and completion record."
+  value: 0.8
+pages-revision:
+  path: "Pages source commit"
+  type: "Git commit"
+  from: "Merged documentation source"
+  to: "GitHub Pages build and deployment"
+  use: "Check the published Pages run against the merged documentation commit, then open the affected routes and deep links."
+  value: "1e981ce24c3b46b09a78104ce3368893de28d382"
+timezone:
+  path: "APP_TIMEZONE"
+  type: "IANA time zone"
+  from: "Control Portal · General settings"
+  to: "Service activity display"
+  use: "The General settings store the selected time zone for displays that use the service setting."
+  value: "America/New_York"
+log-retention:
+  path: "OPERATION_LOG_RETENTION_DAYS"
+  type: "integer"
+  from: "Control Portal · Operation logs setting"
+  to: "Log retention policy"
+  use: "The retention setting governs how long operation log entries are kept. The operator selects a supported duration."
+  value: 30
+decision-task:
+  path: "data.effective.effective.recall_reranking"
+  type: "boolean"
+  from: "Control Portal · Decisions"
+  to: "Optional decision policy"
+  use: "An optional decision task can remain off. The decision settings report current task and provider configuration."
+  value: false
+private-operation:
+  path: idempotency_key
+  type: string
+  fixture: private_operation
+  from: "Assistant · retained before sending"
+  to: "Remember replay lookup"
+  use: "This private save has its own operation key. A retry of this save reuses this key and its unchanged request."
+  contract: [remember, request, idempotency_key]
+withdraw-id:
+  path: evidence_ids
+  type: array of IDs
+  fixture: replacement_id
+  array: true
+  from: "Maya’s assistant · retraction request"
+  to: "Ownership and lifecycle check"
+  use: "The assistant supplies the current Room 7 passage ID. Dense-Mem checks whether Maya may withdraw that exact passage."
+  contract: [retract_evidence, request, evidence_ids]
+usage-requests:
+  path: data.system.requests
+  type: integer
+  value: 1
+  from: "Usage metrics writer · request buckets"
+  to: "GET /control/api/metrics"
+  use: "The writer persists request counts in usage buckets. The endpoint reads the requested window and returns the total for that window."

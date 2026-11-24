@@ -11,15 +11,14 @@ Public QA evaluation scores five saved PostgreSQL datasets through the
 production runtime and the supported MCP Recall and Trace tools. A full run
 expects 10,000 answers from 5,000 questions across two answer policies.
 
-This guide describes the candidate in [PR #794](https://github.com/markhuangai/dense-mem/pull/794).
-The main-branch workflow takes effect after that change merges.
+The hosted workflow is available on `main`. [PR #794](https://github.com/markhuangai/dense-mem/pull/794)
 
 ## Image Boundary And Tool Surface
 
 The hosted runner uses a digest-pinned Dense-Mem production image. Each dataset
 job boots its own pinned PostgreSQL seed in fresh writable storage. The runner
 verifies authenticated scope, source mappings, canonical Evidence, and search
-state before and after scoring. Ontology stays disabled and drained during the
+state before and after scoring. Topic organization stays disabled and drained during the
 run. Build or refresh the saved seeds with the documented local Docker builder.
 [Repository evaluation guide](https://github.com/markhuangai/dense-mem/blob/main/tests/eval/README.md)
 

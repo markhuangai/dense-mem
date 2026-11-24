@@ -60,7 +60,7 @@ Package-level detail lives with the source. [Capability contracts](https://githu
 | --- | --- |
 | Production | `/app/server`, migrations, user/control browser bundles. |
 | Demo | `/app/demo-server`, bounded temporary-team behavior and user bundle. |
-| Evaluation | Separate build profile with bounded evaluation tools. A runtime flag cannot enable them in production. |
+| Evaluation | The public QA runner uses a pinned production image and the supported MCP Recall and Trace tools on restored dataset seeds. |
 | One server process | Process-local coordination is supported. |
 | Multiple server processes | Redis or an equivalent distributed implementation is required. |
 

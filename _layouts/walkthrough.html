@@ -8,6 +8,7 @@ layout: base
     <div>
       <h1>{{ page.title | escape }}</h1>
       <p>{{ flow.description | escape }}</p>
+      <p><a href="{{ flow.lesson | relative_url }}">Open the interactive lesson</a></p>
     </div>
     <div class="guide-actions" data-player-controls hidden>
       <button class="secondary" type="button" data-read-all aria-pressed="false">Read all steps</button>

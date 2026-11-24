@@ -3,6 +3,7 @@ url: https://markhuangai.github.io
 baseurl: /dense-mem
 source_repository: https://github.com/markhuangai/dense-mem
 source_revision: 5106a69e3d5cce82859d15bbb56acadc434e0135
+lesson_source_revision: 27886c16078959bf2637ad9db5ec2509b010017a
 contract_version: dense-mem.v2.8.0
 markdown: kramdown
 kramdown:
@@ -13,12 +14,20 @@ collections:
     output: false
   guides:
     output: true
+  lessons:
+    output: true
+    permalink: /learn/:name/
 defaults:
   - scope:
       path: ""
       type: guides
     values:
       layout: guide
+  - scope:
+      path: ""
+      type: lessons
+    values:
+      layout: lesson
 exclude:
   - README.md
   - _preview

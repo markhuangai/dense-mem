@@ -1,3 +1,27 @@
+function followBookmark() {
+  const bookmark = document.getElementById(location.hash.slice(1))?.querySelector("[data-bookmark]");
+  if (bookmark) location.replace(bookmark.href);
+}
+if (document.querySelector("[data-bookmark]")) {
+  followBookmark();
+  window.addEventListener("hashchange", followBookmark);
+}
+
+const entrances = document.querySelectorAll(".learn-home [data-enter]");
+if (entrances.length && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+  const enter = new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      entry.target.classList.add("is-in-view");
+      enter.unobserve(entry.target);
+    }
+  }, {threshold: 0.18});
+  for (const element of entrances) enter.observe(element);
+}
+
+const lesson = document.querySelector("[data-lesson]");
+if (lesson) import("./lesson.js").then(module => module.setupLesson(lesson));
+
 const player = document.querySelector("[data-player]");
 if (player) {
   import("./player.js").then(module => module.setupPlayer(player)).catch(error => {
