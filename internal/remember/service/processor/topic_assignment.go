@@ -47,9 +47,12 @@ func (p *rememberSynchronousProcessor) prepareTopics(ctx context.Context, space 
 	ctx, cancel := remember.ContextForPhase(ctx, remember.RememberPhaseAssessment)
 	defer cancel()
 	results, err := p.topicAssignment.Prepare(ctx, assignment.Scope{TeamID: commit.TeamID, SpaceID: commit.SpaceID, Generation: commit.SpaceGeneration, OperationID: commit.IngestID}, slices, settings)
+	var malformed *modelprovider.MalformedResponseError
 	switch {
 	case errors.Is(err, assignment.ErrStorage):
 		return fmt.Errorf("%w: %w", remember.ErrRememberDatabaseFailure, err)
+	case errors.As(err, &malformed) && malformed.FailureClass == "input_budget":
+		return fmt.Errorf("%w: %w", remember.ErrRememberInputBudgetExceeded, err)
 	case errors.Is(err, modelprovider.ErrVerifierMalformedResponse):
 		return fmt.Errorf("%w: %w", remember.ErrRememberProviderResponseInvalid, err)
 	case err != nil:

@@ -182,21 +182,29 @@ func (s *Store) commitPublication(tx *gorm.DB, fence scope, input topic.Publicat
 			return topic.PublicationResult{}, topic.ErrConflict
 		}
 	}
-	// Community placements are version-bound, so inspect the proposed heads after the entire publication has been written.
+	// Check direct edits and definition parents exposed by invalidated placements against the proposed heads.
 	var edges []communityEdge
+	var revisedTopics []string
 	for _, record := range prepared {
+		if record.Kind == topic.Topic && record.Version > 1 {
+			revisedTopics = append(revisedTopics, record.ID)
+		}
 		if record.Retired || record.Definition == nil || record.Definition.ParentID == "" {
 			continue
 		}
-		edges = append(edges, communityEdge{topicID: record.ID, parentID: record.Definition.ParentID})
+		edges = append(edges, communityEdge{TopicID: record.ID, ParentID: record.Definition.ParentID})
 	}
-	conflict, err := conflictingCommunityEdge(tx, fence, edges)
+	exposed, err := exposedCommunityEdges(tx, fence, revisedTopics)
+	if err != nil {
+		return topic.PublicationResult{}, err
+	}
+	conflict, err := conflictingCommunityEdge(tx, fence, append(edges, exposed...))
 	if err != nil {
 		return topic.PublicationResult{}, err
 	}
 	if conflict != nil {
 		return topic.PublicationResult{}, &topic.PublicationRejection{
-			Cause: topic.ErrConflict, Reason: "community_hierarchy_conflict", RecordID: conflict.topicID, ParentID: conflict.parentID,
+			Cause: topic.ErrConflict, Reason: "community_hierarchy_conflict", RecordID: conflict.TopicID, ParentID: conflict.ParentID,
 		}
 	}
 	updated := tx.Exec(`UPDATE topic_catalog_heads SET revision=? WHERE team_id=?::uuid

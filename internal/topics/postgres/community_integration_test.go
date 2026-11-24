@@ -101,6 +101,7 @@ func TestCommunityPlacementChecksRevisionsAndAccountsForProviderWork(t *testing.
 	require.EqualValues(t, 1, status.Usage.UnavailableUsageAttempts)
 
 	t.Run("manager publication rolls back when a later edge closes a mixed cycle", testCommunityMixedHierarchyPublicationRollback)
+	t.Run("parent revision cannot expose a cycle", testCommunityInvalidationRollback)
 	t.Run("rejected hierarchy placement is deferred", testCommunityHierarchyRejectionDeferred)
 	t.Run("admitted decision outlives the preparation lease", testCommunityDecisionRenewsLease)
 }
@@ -293,6 +294,63 @@ func testCommunityMixedHierarchyPublicationRollback(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, seed.Revision+1, accepted.Revision)
 	require.Equal(t, []contract.RevisionRef{{ID: legalChild.ID, Version: 2}}, accepted.Records)
+}
+
+func testCommunityInvalidationRollback(t *testing.T) {
+	ctx := t.Context()
+	f := newOntologyFixture(t)
+	manager := f.actor(0, "manager")
+	window := maintenanceWindow(t, f, maintenanceSettings(t, f))
+	child, definitionParent, communityParent := testTopic("postgresql-backups"), testTopic("postgresql-reliability"), testTopic("postgresql-operations")
+	child.ID = "10000000-0000-4000-8000-000000000001"
+	definitionParent.ID = "10000000-0000-4000-8000-000000000002"
+	communityParent.ID = "10000000-0000-4000-8000-000000000003"
+	child.Definition.Label, definitionParent.Definition.Label, communityParent.Definition.Label = "PostgreSQL backups", "PostgreSQL reliability", "PostgreSQL operations"
+	child.Definition.ParentID = definitionParent.ID
+	seed, err := f.store.PublishManager(manager, f.team, testPublication("fallback-hierarchy-seed", 0,
+		contract.Change{Record: child}, contract.Change{Record: definitionParent}, contract.Change{Record: communityParent}))
+	require.NoError(t, err)
+
+	place := func(childID, parentID string) {
+		t.Helper()
+		turn, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now(), time.Minute)
+		require.NoError(t, err)
+		require.NotNil(t, turn)
+		input, batch, err := f.store.ClaimCommunity(ctx, *turn, window.ID, time.Now())
+		require.NoError(t, err)
+		require.NotNil(t, input)
+		require.NotNil(t, batch)
+		require.Equal(t, childID, input.Topic.ID)
+		require.NoError(t, f.store.CompleteCommunity(ctx, *batch, *input, contract.CommunityOutcome{
+			InputHash: testHash(childID), Method: "generation", Status: "placed", ParentID: parentID,
+		}, "", time.Now()))
+	}
+	place(child.ID, communityParent.ID)
+	place(definitionParent.ID, child.ID)
+
+	const operation = "edit-parent-description"
+	communityParent.Definition.Description = "PostgreSQL operations and administration."
+	edit := contract.Change{Record: communityParent, ExpectedVersion: 1}
+	_, err = f.store.PublishManager(manager, f.team, testPublication(operation, seed.Revision, edit))
+	require.ErrorIs(t, err, contract.ErrConflict)
+	var rejection *contract.PublicationRejection
+	require.ErrorAs(t, err, &rejection)
+	require.Equal(t, "community_hierarchy_conflict", rejection.Reason)
+	require.Equal(t, child.ID, rejection.RecordID)
+	require.Equal(t, definitionParent.ID, rejection.ParentID)
+	view, err := f.store.GetRecord(manager, f.team, child.ID, 0)
+	require.NoError(t, err)
+	require.Equal(t, communityParent.ID, view.CommunityParentID)
+
+	definitionParent.Definition.Description = "PostgreSQL availability and recovery."
+	result, err := f.store.PublishManager(manager, f.team, testPublication(operation, seed.Revision,
+		edit, contract.Change{Record: definitionParent, ExpectedVersion: 1}))
+	require.NoError(t, err)
+	require.Equal(t, seed.Revision+1, result.Revision)
+	view, err = f.store.GetRecord(manager, f.team, child.ID, 0)
+	require.NoError(t, err)
+	require.Empty(t, view.CommunityParentID)
+	require.Equal(t, definitionParent.ID, view.Definition.ParentID)
 }
 
 func TestConcurrentTopicProposalsReuseScopedName(t *testing.T) {

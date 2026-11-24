@@ -167,7 +167,7 @@ func (s *Store) CompleteCommunity(ctx context.Context, claim topic.MaintenanceCl
 			return topic.ErrSourceStale
 		}
 		if outcome.ParentID != "" {
-			edge := communityEdge{topicID: input.Topic.ID, parentID: outcome.ParentID}
+			edge := communityEdge{TopicID: input.Topic.ID, ParentID: outcome.ParentID}
 			conflict, err := conflictingCommunityEdge(tx, fence, []communityEdge{edge})
 			if err != nil {
 				return err
@@ -206,7 +206,27 @@ func (s *Store) CompleteCommunity(ctx context.Context, claim topic.MaintenanceCl
 	})
 }
 
-type communityEdge struct{ topicID, parentID string }
+type communityEdge struct{ TopicID, ParentID string }
+
+func exposedCommunityEdges(tx *gorm.DB, fence scope, revisedTopics []string) ([]communityEdge, error) {
+	if len(revisedTopics) == 0 {
+		return nil, nil
+	}
+	var edges []communityEdge
+	err := tx.Raw(`SELECT work.topic_id::text AS topic_id,payload.body->'definition'->>'parent_id' AS parent_id
+		FROM topic_maintenance_community_work AS work
+		JOIN topic_record_heads AS head ON
+			(head.team_id,head.shared_space_id,head.space_generation,head.record_id,head.version)=
+			(work.team_id,work.shared_space_id,work.space_generation,work.topic_id,work.topic_version)
+		JOIN topic_revision_payloads AS payload ON
+			(payload.team_id,payload.shared_space_id,payload.space_generation,payload.record_id,payload.version)=
+			(head.team_id,head.shared_space_id,head.space_generation,head.record_id,head.version)
+		WHERE work.team_id=?::uuid AND work.shared_space_id=?::uuid AND work.space_generation=?
+		AND work.parent_topic_id=ANY(?::uuid[]) AND NOT head.retired
+		AND NULLIF(payload.body->'definition'->>'parent_id','') IS NOT NULL
+		ORDER BY work.topic_id`, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(revisedTopics)).Scan(&edges).Error
+	return edges, err
+}
 
 func conflictingCommunityEdge(tx *gorm.DB, fence scope, edges []communityEdge) (*communityEdge, error) {
 	if len(edges) == 0 {
@@ -215,8 +235,8 @@ func conflictingCommunityEdge(tx *gorm.DB, fence scope, edges []communityEdge) (
 	topics := make([]string, 0, len(edges))
 	parents := make([]string, 0, len(edges))
 	for _, edge := range edges {
-		topics = append(topics, edge.topicID)
-		parents = append(parents, edge.parentID)
+		topics = append(topics, edge.TopicID)
+		parents = append(parents, edge.ParentID)
 	}
 	var ordinal int
 	err := tx.Raw(`WITH RECURSIVE chain(topic_id,id,ordinal,depth) AS (

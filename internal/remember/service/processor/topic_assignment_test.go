@@ -18,14 +18,20 @@ import (
 )
 
 type topicIntakeFixture struct {
-	scopes    []assignment.Scope
-	slices    []assignment.Slice
-	readError error
-	quote     string
+	scopes       []assignment.Scope
+	slices       []assignment.Slice
+	readError    error
+	quote        string
+	contextLimit int64
+	dispatched   int
 }
 
 func (f *topicIntakeFixture) TopicMaintenanceRuntimeConfig(context.Context) (domain.TopicMaintenanceConfig, error) {
-	return domain.TopicMaintenanceConfig{Enabled: true, ContextWindowTokens: 500000}, nil
+	window := f.contextLimit
+	if window == 0 {
+		window = 500000
+	}
+	return domain.TopicMaintenanceConfig{Enabled: true, ContextWindowTokens: window}, nil
 }
 
 func (f *topicIntakeFixture) ReadAssignmentCandidates(_ context.Context, scope assignment.Scope, slice assignment.Slice) (assignment.Candidates, error) {
@@ -35,6 +41,7 @@ func (f *topicIntakeFixture) ReadAssignmentCandidates(_ context.Context, scope a
 }
 
 func (f *topicIntakeFixture) Complete(_ context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+	f.dispatched++
 	var input struct {
 		RequestID string `json:"request_id"`
 	}
@@ -46,6 +53,28 @@ func (f *topicIntakeFixture) Complete(_ context.Context, request modelprovider.S
 		"proposals": []assignment.Proposal{{Label: "Recovery", Description: "Database recovery", Quote: f.quote}},
 	})
 	return modelprovider.StructuredResult{Content: string(body)}, err
+}
+
+func TestRememberTopicBudgetFailureGuidesOperator(t *testing.T) {
+	limits := assessor.DefaultSemanticAssessmentLimits()
+	fixture := &topicIntakeFixture{contextLimit: int64(limits.MaxOutputTokens) + 1}
+	service := topicassignment.NewService(fixture, fixture, fixture, nil, limits, "fixture", nil)
+	processor := &rememberSynchronousProcessor{topicAssignment: service}
+	input := knowledge.SynchronousRememberCommitInput{
+		TeamID: uuid.NewString(), SpaceID: uuid.NewString(), SpaceGeneration: 1, IngestID: uuid.NewString(),
+		Evidence: []knowledge.EvidenceInput{{Content: "PostgreSQL backups record the last known restore point."}},
+	}
+	err := processor.prepareTopics(t.Context(), domain.MemorySpaceTeamShared, &input, nil, nil)
+	require.ErrorIs(t, err, remember.ErrRememberInputBudgetExceeded)
+	require.Empty(t, input.TopicAssignments)
+	require.Zero(t, fixture.dispatched)
+	code := rememberFailureCode("assessment", err)
+	reason, details := remember.RememberFailureDetails(err, "assessment")
+	failure := remember.TerminalStatusErrorWithDetails(remember.TerminalErrorCode(code), reason, details)
+	require.Equal(t, string(remember.TerminalErrorInputBudgetExceeded), failure.Code)
+	require.False(t, failure.Retryable)
+	require.Equal(t, string(remember.SubmissionNextActionContactOperator), failure.NextAction)
+	require.Equal(t, true, failure.Details["server_owned"])
 }
 
 func TestRememberTopicPreparationUsesCanonicalEvidenceAndFailsAtomically(t *testing.T) {
