@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -29,23 +30,23 @@ func main() {
 	logger := observability.NewConsoleWithProtector(slog.LevelDebug, protector, console)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	if err := execute(ctx, os.Args[1:], logger, protector); err != nil {
+	if err := execute(ctx, os.Args[1:], logger, protector, console); err != nil {
 		logger.ErrorContext(ctx, "evaluation_failed", err)
 		os.Exit(1)
 	}
 }
 
-func execute(ctx context.Context, args []string, logger *observability.Logger, protector *observability.CredentialProtector) error {
+func execute(ctx context.Context, args []string, logger *observability.Logger, protector *observability.CredentialProtector, console io.Writer) error {
 	if len(args) == 2 && args[0] == "freeze-intake-proof" {
 		if os.Getenv("GITHUB_ACTIONS") == "true" {
 			return errors.New("intake proof preparation requires local Docker")
 		}
 		return evalharness.FreezeIntakeProofInputs("tests/eval/datasets.json", args[1])
 	}
-	if len(args) != 2 || (args[0] != "validate" && args[0] != "prepare" && args[0] != "run" && args[0] != "bootstrap" && args[0] != "verify-seed") {
-		return errors.New("usage: eval-runner validate|bootstrap|prepare|verify-seed|run EXECUTION_MANIFEST; workflow-internal only except local seed preparation")
+	if len(args) != 2 || (args[0] != "validate" && args[0] != "prepare" && args[0] != "run" && args[0] != "bootstrap" && args[0] != "verify-seed" && args[0] != "recover") {
+		return errors.New("usage: eval-runner validate|bootstrap|prepare|verify-seed|run|recover EXECUTION_MANIFEST; workflow-internal only except local seed preparation")
 	}
-	if args[0] == "run" {
+	if args[0] == "run" || args[0] == "recover" {
 		if err := evalharness.RequireRunner(); err != nil {
 			return err
 		}
@@ -54,7 +55,13 @@ func execute(ctx context.Context, args []string, logger *observability.Logger, p
 	if err != nil {
 		return err
 	}
-	if args[0] != "validate" && args[0] != manifest.Operation {
+	if args[0] == "recover" {
+		root := filepath.Join(os.Getenv("RUNNER_TEMP"), "dense-mem-eval-"+manifest.RunID)
+		if manifest.Operation != "run" || !filepath.IsAbs(root) || filepath.Clean(args[1]) != filepath.Join(root, "manifest.json") ||
+			manifest.OutputDir != filepath.Join(root, "public") || manifest.DataDir != filepath.Join(root, "data") {
+			return errors.New("score recovery requires the current hosted dataset directory")
+		}
+	} else if args[0] != "validate" && args[0] != manifest.Operation {
 		return errors.New("command differs from the workflow manifest operation")
 	}
 	if args[0] == "bootstrap" {
@@ -75,7 +82,7 @@ func execute(ctx context.Context, args []string, logger *observability.Logger, p
 		return errors.New("registry digest differs from execution manifest")
 	}
 	if args[0] == "validate" && os.Getenv("EVAL_SERVER_LOG_FILE") != "" {
-		return logFile(ctx, os.Getenv("EVAL_SERVER_LOG_FILE"), &evalharness.Capture{Logger: logger.ContextSlog(), Protector: protector, RunID: manifest.RunID})
+		return logFile(ctx, os.Getenv("EVAL_SERVER_LOG_FILE"), evalharness.NewConsoleCapture(console, logger.ContextSlog(), protector, manifest.RunID))
 	}
 	registry, err := evalharness.ReadRegistry(registryPath)
 	if err != nil {
@@ -87,6 +94,15 @@ func execute(ctx context.Context, args []string, logger *observability.Logger, p
 	}
 	corpus, questions, err := evalharness.LoadDataset(dataset, manifest.DataDir)
 	if err != nil {
+		return err
+	}
+	if args[0] == "recover" {
+		report, saved, err := evalharness.RecoverScores(manifest, len(corpus), questions)
+		if saved {
+			logger.WarnContext(ctx, "eval_scores_recovered", observability.String("run_id", manifest.RunID),
+				observability.String("dataset", manifest.Dataset), observability.Int("completed_answers", report.CompletedAnswers),
+				observability.Int("expected_answers", report.ExpectedAnswers), observability.String("failure", report.Failure))
+		}
 		return err
 	}
 	if manifest.IntakeProof {
@@ -103,9 +119,6 @@ func execute(ctx context.Context, args []string, logger *observability.Logger, p
 			}
 		}
 		logger.InfoContext(ctx, "evaluation_validated", observability.String("dataset", dataset.ID), observability.Int("corpus_rows", len(corpus)), observability.Int("questions", len(questions)))
-		if os.Getenv("EVAL_SERVER_LOG_FILE") != "" {
-			return logFile(ctx, os.Getenv("EVAL_SERVER_LOG_FILE"), &evalharness.Capture{Logger: logger.ContextSlog(), Protector: protector, RunID: manifest.RunID})
-		}
 		return nil
 	}
 	if !manifest.ModelDeadline.After(time.Now()) {
@@ -125,7 +138,7 @@ func execute(ctx context.Context, args []string, logger *observability.Logger, p
 	}
 	defer database.Close()
 	database.SetMaxOpenConns(2)
-	capture := &evalharness.Capture{Logger: logger.ContextSlog(), Protector: protector, RunID: manifest.RunID}
+	capture := evalharness.NewConsoleCapture(console, logger.ContextSlog(), protector, manifest.RunID)
 	if manifest.Operation != "run" {
 		capture.RunID += "-" + manifest.Operation
 	}

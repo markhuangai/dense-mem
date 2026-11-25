@@ -71,6 +71,40 @@ func ChunkProtectedDiagnosticBody(body []byte, maxBytes int) []DiagnosticBodyChu
 	return chunkDiagnosticBody(body, chunk)
 }
 
+// CheckDiagnosticChunkSerialization checks the new JSON string boundaries of
+// already-protected fragments. A match makes the capture unavailable because
+// rewriting a fragment would invalidate the protected body and its digest.
+func (p *CredentialProtector) CheckDiagnosticChunkSerialization(chunks []DiagnosticBodyChunk, maxBytes int, authenticatedSecrets ...string) CredentialProtectionUnavailableReason {
+	if p == nil {
+		return CredentialProtectionUnsupported
+	}
+	if p.configurationErr != CredentialProtectionAvailable {
+		return p.configurationErr
+	}
+	if credentialSecretTooLong(authenticatedSecrets) {
+		return CredentialProtectionSecretTooLong
+	}
+	index := p.variantIndex(authenticatedSecrets)
+	if len(index.variants) == 0 {
+		return CredentialProtectionAvailable
+	}
+	budget := &credentialSnapshotBudget{matchWorkLimit: credentialMatchWorkLimit(maxBytes)}
+	for _, chunk := range chunks {
+		encoded, err := json.Marshal(chunk.Body)
+		if err != nil {
+			return CredentialProtectionFormattingFailed
+		}
+		contains, _ := index.contains(string(encoded), budget, false)
+		if budget.matchWorkExceeded {
+			return CredentialProtectionMatchingBudgetExceeded
+		}
+		if contains {
+			return CredentialProtectionFormattingFailed
+		}
+	}
+	return CredentialProtectionAvailable
+}
+
 func chunkDiagnosticBody(protected []byte, chunk DiagnosticBodyChunk) []DiagnosticBodyChunk {
 	digest := sha256.Sum256(protected)
 	chunk.SHA256 = hex.EncodeToString(digest[:])

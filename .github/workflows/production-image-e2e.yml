@@ -364,6 +364,7 @@ jobs:
       mode: ${{ inputs.evaluation }}
       seed_version: ${{ inputs.seed_version || 'latest' }}
       answer_workers: ${{ inputs.answer_workers }}
+      benchmark_base: ${{ needs.authorize.outputs.migration_base_ref }}
       dataset_selection: >-
         {"hotpotqa":${{ inputs.run_hotpotqa }},"musique":${{ inputs.run_musique }},
         "2wikimultihopqa":${{ inputs.run_2wikimultihopqa }},"nq_rear":${{ inputs.run_nq_rear }},
@@ -411,10 +412,14 @@ jobs:
             echo "| Phase | Result |"
             echo "| --- | --- |"
             echo "| Authorization | ${AUTH_RESULT} |"
-            echo "| Rootless controller precheck | ${PRECHECK_RESULT} |"
-            echo "| PostgreSQL precheck shards | ${DATABASE_PRECHECK_RESULT} |"
-            echo "| Scenario matrix | ${SCENARIO_RESULT} |"
-            echo "| Candidate repository CI (manual trials) | ${CI_TRIAL_RESULT} |"
+            if [[ -n "${EVALUATION_MODE}" && "${EVALUATION_MODE}" != none ]]; then
+              echo "| Public RAG evaluation | ${EVALUATION_RESULT} |"
+            else
+              echo "| Rootless controller precheck | ${PRECHECK_RESULT} |"
+              echo "| PostgreSQL precheck shards | ${DATABASE_PRECHECK_RESULT} |"
+              echo "| Scenario matrix | ${SCENARIO_RESULT} |"
+              echo "| Candidate repository CI (manual trials) | ${CI_TRIAL_RESULT} |"
+            fi
           } >> "${GITHUB_STEP_SUMMARY}"
           if [[ "${EVALUATION_MODE}" != "" && "${EVALUATION_MODE}" != none ]]; then
             [[ "${AUTH_RESULT}" == success && "${EVALUATION_RESULT}" == success ]]
@@ -426,3 +431,72 @@ jobs:
           if [[ "${EVENT_NAME}" == workflow_dispatch ]]; then
             [[ "${CI_TRIAL_RESULT}" == success ]] || exit 1
           fi
+
+  evaluation-comment:
+    name: Publish completed public evaluation to PR
+    needs: [authorize, evaluation]
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.evaluation == 'live' &&
+      inputs.run_hotpotqa && inputs.run_musique && inputs.run_2wikimultihopqa && inputs.run_nq_rear && inputs.run_popqa &&
+      needs.authorize.result == 'success' && needs.evaluation.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      pull-requests: write
+    concurrency:
+      group: public-evaluation-comment-${{ github.run_id }}
+      cancel-in-progress: false
+    steps:
+      - name: Publish and verify summary comment
+        uses: actions/github-script@v9
+        env:
+          INPUT_PR: ${{ inputs.pr_number }}
+          EVAL_SOURCE: ${{ needs.authorize.outputs.source_revision }}
+          EVAL_IMAGE: ${{ needs.authorize.outputs.image }}
+          EVAL_REPORT: ${{ needs.evaluation.outputs.complete_report }}
+          EVAL_ARTIFACT_ID: ${{ needs.evaluation.outputs.comparison_artifact_id }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const revision = process.env.EVAL_SOURCE;
+            const number = Number(process.env.INPUT_PR);
+            const artifactId = Number(process.env.EVAL_ARTIFACT_ID);
+            const raw = process.env.EVAL_REPORT;
+            if (context.eventName !== "workflow_dispatch" || Number(context.runAttempt) !== 1 || revision !== context.sha ||
+                !Number.isSafeInteger(number) || number < 1 || !Number.isSafeInteger(artifactId) || artifactId < 1 ||
+                !raw || Buffer.byteLength(raw) > 48_000) {
+              throw new Error("Missing or invalid completed evaluation receipt");
+            }
+            const receipt = JSON.parse(raw);
+            if (receipt?.run_id !== String(context.runId) || receipt.source !== revision || receipt.image !== process.env.EVAL_IMAGE ||
+                receipt.datasets !== 5 || receipt.answers !== 10_000 || typeof receipt.markdown !== "string" || !receipt.markdown.trim()) {
+              throw new Error("Evaluation receipt differs from the authorized full campaign");
+            }
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, { owner, repo, run_id: context.runId, per_page: 100 });
+            if (!artifacts.some((artifact) => artifact.id === artifactId && artifact.name === "evaluation-comparison" && !artifact.expired)) {
+              throw new Error("Completed evaluation comparison artifact is unavailable");
+            }
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+            const marker = `<!-- dense-mem-evaluation-v1:${context.runId} -->`;
+            const bot = "github-actions[bot]";
+            const body = `${marker}\n## Public RAG evaluation\n\n${receipt.markdown}\n[Actions run](${runUrl}) · [Numeric comparison](${runUrl}/artifacts/${artifactId})\n`;
+            if (Buffer.byteLength(body) > 60_000) throw new Error("Evaluation comment exceeds its size limit");
+            const target = { owner, repo, issue_number: number };
+            const matches = (await github.paginate(github.rest.issues.listComments, { ...target, per_page: 100 }))
+              .filter((item) => item.user?.login === bot && item.body?.startsWith(`${marker}\n`));
+            if (matches.length > 1) throw new Error("Multiple comments claim this evaluation run");
+            const { data: pull } = await github.rest.pulls.get({ owner, repo, pull_number: number });
+            if (pull.state !== "open" || pull.draft || pull.base.ref !== "main" || pull.user.login !== context.actor ||
+                pull.head.repo?.full_name !== `${owner}/${repo}` || context.ref !== `refs/heads/${pull.head.ref}` || pull.head.sha !== revision) {
+              throw new Error("The evaluation pull request is no longer the authorized head");
+            }
+            let id = matches[0]?.id;
+            if (!id) {
+              ({ data: { id } } = await github.rest.issues.createComment({ ...target, body }));
+            } else if (matches[0].body !== body) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: id, body });
+            }
+            const { data: posted } = await github.rest.issues.getComment({ owner, repo, comment_id: id });
+            if (posted.body !== body || posted.user?.login !== bot) throw new Error("Evaluation comment readback failed");
+            core.notice(posted.html_url);

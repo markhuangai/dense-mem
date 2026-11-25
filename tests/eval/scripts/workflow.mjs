@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { buildBootableSeed, extractSeed, verifySeedFiles, restoreSeed, dumpSeed, sealSeed, verifySeedCredentialExclusions, seedReference, resolveSeedImage, seedVerificationReason, postgresImage } from "../../../.github/scripts/evaluation-seeds.mjs";
 import { requireRunner, configuration, resolveAnswerWorkers, resolveImportWorkers, requireEvaluationImportSupport, registryMatrix, evaluationDatasets, sha256, aggregate, ownedResource } from "../../../.github/scripts/evaluation-policy.mjs";
+import { evaluationSummary } from "./report.mjs";
 
 const label = "io.dense-mem.eval.run";
 const secret = () => randomBytes(32).toString("base64url");
@@ -369,7 +370,7 @@ export async function diagnostics(env, { scoring = false } = {}) {
   return files.length !== 0;
 }
 
-export async function main(mode, env = process.env) {
+export async function main(mode, env = process.env, signal) {
   requireRunner(env);
   if (!["live", "fixtures"].includes(env.EVAL_MODE)) throw new Error("Invalid evaluation mode");
   const live = env.EVAL_MODE === "live";
@@ -431,6 +432,13 @@ export async function main(mode, env = process.env) {
     const scoring = live || fs.existsSync(location(env, true).stateFile);
     return diagnostics(env, { scoring });
   }
+  if (mode === "recover") {
+    const paths = location(env, true);
+    if (!fs.existsSync(path.join(paths.directory, "score-checkpoint", "verified-seed.json")) ||
+        fs.existsSync(path.join(paths.directory, "public", "scores.json"))) return;
+    await runCommand(env.EVAL_RUNNER_BINARY, ["recover", paths.manifestFile], { env: privateEnvironment({ environment: {} }, env), forwardOutput: true, timeout: 60_000 });
+    return;
+  }
   if (mode === "aggregate") {
     const registry = read(registryPath);
     const datasets = evaluationDatasets(registry, selection);
@@ -454,29 +462,40 @@ export async function main(mode, env = process.env) {
       }
       reports.push({ ...report, owned_cleanup: clean?.complete === true && clean.run_id === report?.identity?.run_id });
     }
+    const source = env.EVAL_SOURCE_REVISION;
+    const image = env.EVAL_IMAGE;
+    const workers = resolveAnswerWorkers(env.EVAL_ANSWER_WORKERS);
     const report = { ...aggregate({ ...registry, datasets }, reports, {
-      runID: env.GITHUB_RUN_ID, source: env.EVAL_SOURCE_REVISION, image: env.EVAL_IMAGE,
-      registryHash: sha256(fs.readFileSync(registryPath)), answerWorkers: resolveAnswerWorkers(env.EVAL_ANSWER_WORKERS),
+      runID: env.GITHUB_RUN_ID, source, image,
+      registryHash: sha256(fs.readFileSync(registryPath)), answerWorkers: workers,
       pins: live ? JSON.parse(env.EVAL_PINNED_SEEDS) : undefined,
     }), full_public_campaign: live && datasets.length === registry.datasets.length };
     fs.mkdirSync(path.join(root, "aggregate"), { recursive: true }); save(path.join(root, "aggregate/comparison.json"), report);
-    const label = live ? datasets.map(({ id }) => id).join(", ") : "Synthetic fixtures";
-    fs.appendFileSync(env.GITHUB_STEP_SUMMARY, `**${label}** completed ${report.completed_answers}/${report.expected_answers} answers. The run ${report.complete ? "passed" : "is incomplete"}.\n`);
-    if (!report.complete) process.exitCode = 1; return;
+    const heading = live ? datasets.map(({ id }) => id).join(", ") : "Synthetic fixtures";
+    const markdown = evaluationSummary(report, { heading, source, image, workers });
+    fs.appendFileSync(env.GITHUB_STEP_SUMMARY, markdown);
+    if (!report.complete) {
+      process.exitCode = 1;
+    } else if (report.full_public_campaign) {
+      const receipt = JSON.stringify({ run_id: env.GITHUB_RUN_ID, source, image, datasets: datasets.length, answers: report.completed_answers, markdown });
+      if (Buffer.byteLength(receipt) > 48_000) throw new Error("Public evaluation summary exceeds its output limit");
+      fs.appendFileSync(env.GITHUB_OUTPUT, `complete_report=${receipt}\n`);
+    }
+    return;
   }
   if (mode !== "run") throw new Error("Unsupported workflow operation");
   if (live) {
-    const runtime = await setup(env);
-    return runBinary("run", runtime, env);
+    const runtime = await setup(env, { signal });
+    return runBinary("run", runtime, env, signal);
   }
-  const { seedImage, apiKey } = await prepareFixtureSeed(env);
-  const runtime = await setup(env, { seedImage, apiKey });
-  return runBinary("run", runtime, env);
+  const { seedImage, apiKey } = await prepareFixtureSeed(env, signal);
+  const runtime = await setup(env, { seedImage, apiKey, signal });
+  return runBinary("run", runtime, env, signal);
 }
 
-export async function prepareFixtureSeed(env) {
-  const prepared = await setup({ ...env, DENSE_MEM_EVAL_IMPORT_WORKERS: "4" }, { operation: "prepare" });
-  await runBinary("prepare", prepared, env);
+export async function prepareFixtureSeed(env, signal) {
+  const prepared = await setup({ ...env, DENSE_MEM_EVAL_IMPORT_WORKERS: "4" }, { operation: "prepare", signal });
+  await runBinary("prepare", prepared, env, signal);
   const postgres = `densemem-eval-${prepared.paths.runID}-postgres`;
   dumpSeed(docker, postgres, prepared.seedDir);
   await sealSeed(prepared.seedDir);
@@ -490,28 +509,34 @@ export async function prepareFixtureSeed(env) {
 export async function runBinary(operation, { paths, state }, env = process.env, signal) {
   signal?.throwIfAborted();
   const child = spawn(env.EVAL_RUNNER_BINARY, [operation, paths.manifestFile], { stdio: "inherit", env: privateEnvironment(state, env) });
-  let stopping = false;
-  const stop = () => {
-    if (stopping) return;
-    stopping = true;
-    child.kill("SIGTERM");
-    try {
+  let shutdown;
+  const stop = (childSignal, cause) => {
+    if (shutdown) return;
+    child.kill(childSignal);
+    process.stdout.write(`${JSON.stringify({ level: "INFO", event: "eval_runner_stop_requested", run_id: paths.runID, dataset: paths.dataset, cause, signal: childSignal })}\n`);
+    shutdown = (async () => {
       const name = `densemem-eval-${paths.runID}-server`;
       const deadline = Date.now() + 120_000;
-      const actual = JSON.parse(docker(["container", "inspect", name], operation === "run" ? { timeout: 120_000 } : undefined))[0];
+      const actual = JSON.parse(await dockerAsync(["container", "inspect", name], { timeout: 120_000 }))[0];
       ownedResource({ Labels: actual.Config.Labels }, paths.runID);
       if (actual.State.Running) {
-        const stopTimeout = operation === "run" ? "--timeout=0" : "--timeout=-1";
-        const budget = operation === "run" ? Math.max(1, deadline - Date.now()) : 120_000;
-        docker(["container", "stop", "--signal=SIGTERM", stopTimeout, actual.Id], { timeout: budget });
+        const stopTimeout = operation === "run" || cause === "external_signal" ? "--timeout=0" : "--timeout=-1";
+        await dockerAsync(["container", "stop", "--signal=SIGTERM", stopTimeout, actual.Id], { timeout: Math.max(1, deadline - Date.now()) });
       }
-    } catch { process.stderr.write("Runner deadline shutdown failed; owned cleanup remains required.\n"); process.exitCode = 1; }
+      return true;
+    })().catch(() => {
+      process.stderr.write(`${JSON.stringify({ level: "ERROR", event: "eval_runner_shutdown_failed", run_id: paths.runID, dataset: paths.dataset, cause })}\n`);
+      return false;
+    });
   };
-  signal?.addEventListener("abort", stop, { once: true });
-  const cutoff = setTimeout(stop, Math.max(1, Number(env.EVAL_MODEL_DEADLINE_EPOCH) * 1000 - Date.now()));
+  const abort = () => stop(signal.reason?.signal === "SIGINT" ? "SIGINT" : "SIGTERM", "external_signal");
+  signal?.addEventListener("abort", abort, { once: true });
+  const cutoff = setTimeout(() => stop("SIGTERM", "model_deadline"), Math.max(1, Number(env.EVAL_MODEL_DEADLINE_EPOCH) * 1000 - Date.now()));
   try {
     const code = await new Promise((resolve, reject) => { child.once("error", reject); child.once("exit", resolve); });
-    if (code !== 0) {
+    clearTimeout(cutoff);
+    const stopped = shutdown ? await shutdown : true;
+    if (code !== 0 || !stopped) {
       const result = path.join(paths.directory, "public", "scores.json");
       if (operation === "run" && fs.existsSync(result)) {
         const { identity, capture_failure } = read(result);
@@ -523,11 +548,26 @@ export async function runBinary(operation, { paths, state }, env = process.env, 
       throw new Error("Runner binary operation failed; inspect protected logs");
     }
     signal?.throwIfAborted();
-  } finally { clearTimeout(cutoff); signal?.removeEventListener("abort", stop); }
+  } finally { clearTimeout(cutoff); signal?.removeEventListener("abort", abort); }
+}
+
+export async function withScoringSignals(run) {
+  const interrupt = new AbortController();
+  const cancel = (signal) => interrupt.abort(Object.assign(new Error("Runner scoring interrupted"), { signal }));
+  process.on("SIGINT", cancel);
+  process.on("SIGTERM", cancel);
+  try {
+    return await run(interrupt.signal);
+  } finally {
+    process.off("SIGINT", cancel);
+    process.off("SIGTERM", cancel);
+  }
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  main(process.argv[2]).catch((error) => {
+  const mode = process.argv[2];
+  const run = mode === "run" ? withScoringSignals((signal) => main(mode, process.env, signal)) : main(mode);
+  run.catch((error) => {
     const message = /^(Missing required Actions setting:|Invalid Actions setting:|Public (?:source|seed)|Runner |Immutable |Dataset |Source validation|Production instance)/.test(error.message) ? error.message : "Evaluation workflow operation failed; inspect protected run logs.";
     process.stderr.write(`${message}\n`); process.exitCode = 1;
   });

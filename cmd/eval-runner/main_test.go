@@ -45,7 +45,7 @@ func TestCLIValidatesPinnedFixturesAndRejectsIncompleteSetup(t *testing.T) {
 	var console bytes.Buffer
 	logger := observability.NewConsoleWithHandler(slog.NewJSONHandler(&console, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	protector := evalharness.NewRunnerCredentialProtector("synthetic-cli-key", "https://provider-canary.example")
-	require.NoError(t, execute(context.Background(), []string{"validate", path}, logger, protector))
+	require.NoError(t, execute(context.Background(), []string{"validate", path}, logger, protector, &console))
 	require.Contains(t, console.String(), "evaluation_validated")
 	require.NotContains(t, console.String(), "synthetic-cli-key")
 	require.NotContains(t, console.String(), "provider-canary")
@@ -70,14 +70,14 @@ func TestCLIValidatesPinnedFixturesAndRejectsIncompleteSetup(t *testing.T) {
 		require.NoError(t, err)
 		require.Contains(t, string(data), `"msg":"evaluation_validated"`)
 	})
-	require.ErrorContains(t, execute(context.Background(), []string{"run", path}, logger, protector), "required runner setting missing: DENSE_MEM_EVAL_API_KEY")
+	require.ErrorContains(t, execute(context.Background(), []string{"run", path}, logger, protector, &console), "required runner setting missing: DENSE_MEM_EVAL_API_KEY")
 	manifest.ModelDeadline = time.Now().Add(-time.Second)
 	writeManifest()
-	require.ErrorContains(t, execute(context.Background(), []string{"run", path}, logger, protector), "model deadline is expired")
+	require.ErrorContains(t, execute(context.Background(), []string{"run", path}, logger, protector, &console), "model deadline is expired")
 	manifest.ModelDeadline = time.Now().Add(time.Minute)
 	manifest.RegistryHash = strings.Repeat("d", 64)
 	writeManifest()
-	require.ErrorContains(t, execute(context.Background(), []string{"validate", path}, logger, protector), "registry digest differs")
+	require.ErrorContains(t, execute(context.Background(), []string{"validate", path}, logger, protector, &console), "registry digest differs")
 
 	manifest.RegistryHash = registryHash
 	manifest.Operation, manifest.Dataset, manifest.RunID = "bootstrap", "bootstrap", "123-bootstrap"
@@ -89,12 +89,12 @@ func TestCLIValidatesPinnedFixturesAndRejectsIncompleteSetup(t *testing.T) {
 	t.Setenv("EVAL_TEAM_ID", "invalid-bootstrap-team")
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	require.ErrorContains(t, execute(cancelled, []string{"bootstrap", path}, logger, protector), "runner container identity cannot be verified")
+	require.ErrorContains(t, execute(cancelled, []string{"bootstrap", path}, logger, protector, &console), "runner container identity cannot be verified")
 	require.NoFileExists(t, filepath.Join(manifest.SeedDir, "scope.json"))
 
 	manifest.Mode, manifest.Operation, manifest.Dataset, manifest.RunID = "intake", "intake", "intake", "123-intake"
 	writeManifest()
-	require.ErrorContains(t, execute(t.Context(), []string{"validate", path}, logger, protector), "invalid runner campaign mode")
+	require.ErrorContains(t, execute(t.Context(), []string{"validate", path}, logger, protector, &console), "invalid runner campaign mode")
 
 	manifest.Mode, manifest.Operation, manifest.Dataset, manifest.RunID = "fixtures", "run", "hotpotqa", "123-hotpotqa-off"
 	manifest.Condition, manifest.SeedImage = "off", "sha256:"+strings.Repeat("d", 64)
@@ -104,16 +104,16 @@ func TestCLIValidatesPinnedFixturesAndRejectsIncompleteSetup(t *testing.T) {
 	require.NoError(t, os.WriteFile(logPath, []byte("startup failure at https://provider-canary.example with synthetic-cli-key\n"), 0o600))
 	t.Setenv("EVAL_SERVER_LOG_FILE", logPath)
 	console.Reset()
-	require.NoError(t, execute(t.Context(), []string{"validate", path}, logger, protector))
+	require.NoError(t, execute(t.Context(), []string{"validate", path}, logger, protector, &console))
 	require.Contains(t, console.String(), "startup failure")
 	require.NotContains(t, console.String(), "synthetic-cli-key")
 	require.NotContains(t, console.String(), "provider-canary")
 	t.Setenv("RUNNER_ENVIRONMENT", "self-hosted")
-	require.ErrorContains(t, execute(t.Context(), []string{"validate", path}, logger, protector), "GitHub-hosted")
+	require.ErrorContains(t, execute(t.Context(), []string{"validate", path}, logger, protector, &console), "GitHub-hosted")
 
-	require.ErrorContains(t, execute(t.Context(), []string{"freeze-intake-proof", t.TempDir()}, logger, protector), "requires local Docker")
+	require.ErrorContains(t, execute(t.Context(), []string{"freeze-intake-proof", t.TempDir()}, logger, protector, &console), "requires local Docker")
 	t.Setenv("GITHUB_ACTIONS", "")
-	require.ErrorIs(t, execute(t.Context(), []string{"freeze-intake-proof", t.TempDir()}, logger, protector), os.ErrNotExist)
+	require.ErrorIs(t, execute(t.Context(), []string{"freeze-intake-proof", t.TempDir()}, logger, protector, &console), os.ErrNotExist)
 
 	localCheckout := t.TempDir()
 	registryFile := filepath.Join(localCheckout, "tests/eval/datasets.json")
@@ -133,29 +133,29 @@ func TestCLIValidatesPinnedFixturesAndRejectsIncompleteSetup(t *testing.T) {
 	writeManifest()
 	admissionPath := filepath.Join(filepath.Dir(path), "seed-admission.json")
 	scopePath := filepath.Join(filepath.Dir(path), "seed-admission-scope.json")
-	require.ErrorIs(t, execute(t.Context(), []string{"validate", path}, logger, protector), os.ErrNotExist)
+	require.ErrorIs(t, execute(t.Context(), []string{"validate", path}, logger, protector, &console), os.ErrNotExist)
 	require.NoFileExists(t, admissionPath)
 	scope := evalharness.Scope{TeamID: uuid.NewString(), CredentialID: uuid.NewString(), OwnerID: uuid.NewString(), SpaceID: uuid.NewString()}
 	body, err := json.Marshal(scope)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(scopePath, body, 0600))
-	require.ErrorContains(t, execute(t.Context(), []string{"validate", path}, logger, protector), "incomplete public seed admission manifest")
+	require.ErrorContains(t, execute(t.Context(), []string{"validate", path}, logger, protector, &console), "incomplete public seed admission manifest")
 	require.NoFileExists(t, admissionPath)
 	scope.Generation = 1
 	body, err = json.Marshal(scope)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(scopePath, body, 0600))
-	require.NoError(t, execute(t.Context(), []string{"validate", path}, logger, protector))
+	require.NoError(t, execute(t.Context(), []string{"validate", path}, logger, protector, &console))
 	admission, err := os.ReadFile(admissionPath)
 	require.NoError(t, err)
 	require.Contains(t, string(admission), scope.CredentialID)
 	require.Contains(t, string(admission), "eval:hotpotqa:row:0")
-	require.ErrorContains(t, execute(t.Context(), []string{"bake-ontology", path}, logger, protector), "workflow-internal")
+	require.ErrorContains(t, execute(t.Context(), []string{"bake-ontology", path}, logger, protector, &console), "workflow-internal")
 
 	manifest.IntakeProof, manifest.Image = true, "sha256:"+strings.Repeat("e", 64)
 	manifest.DataDir = filepath.Join(root, "tests/eval/fixtures")
 	writeManifest()
-	require.ErrorIs(t, execute(t.Context(), []string{"validate", path}, logger, protector), os.ErrNotExist)
+	require.ErrorIs(t, execute(t.Context(), []string{"validate", path}, logger, protector, &console), os.ErrNotExist)
 }
 
 func TestConsoleReportsAnUnavailableOutputDescriptor(t *testing.T) {
@@ -173,6 +173,80 @@ func TestConsoleReportsAnUnavailableOutputDescriptor(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrClosed)
 	_, err = (evaluationPipe{file: file}).Write([]byte("record after exit"))
 	require.Error(t, err)
+}
+
+func TestCLIRecoversOnlyTheCurrentHostedDataset(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	require.NoError(t, err)
+	t.Chdir(root)
+	parent := t.TempDir()
+	for name, value := range map[string]string{"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted", "GITHUB_RUN_ID": "832", "GITHUB_RUN_ATTEMPT": "1", "RUNNER_TEMP": parent} {
+		t.Setenv(name, value)
+	}
+	const fixture = "tests/eval/fixtures"
+	registry, err := evalharness.ReadRegistry(filepath.Join(fixture, "datasets.json"))
+	require.NoError(t, err)
+	dataset, err := registry.Dataset("hotpotqa")
+	require.NoError(t, err)
+	digest, err := evalharness.FileHash(filepath.Join(fixture, "datasets.json"))
+	require.NoError(t, err)
+	dir := filepath.Join(parent, "dense-mem-eval-832-hotpotqa-off")
+	manifest := evalharness.Manifest{
+		Version: 1, RunID: "832-hotpotqa-off", WorkflowRunID: "832", Dataset: "hotpotqa", Mode: "fixtures", Operation: "run",
+		Condition: "off", SourceRevision: strings.Repeat("a", 40), RegistryHash: digest,
+		Image: "ghcr.io/markhuangai/dense-mem@sha256:" + strings.Repeat("b", 64), SeedImage: "sha256:" + strings.Repeat("c", 64),
+		SeedDir: filepath.Join(dir, "seed"), DataDir: filepath.Join(dir, "data"), OutputDir: filepath.Join(dir, "public"),
+		Model: "fixture", EmbeddingModel: "text-embedding-3-small", EmbeddingDimensions: 1536, ContextWindowTokens: 300_000,
+		ModelDeadline: time.Now().Add(-time.Second),
+	}
+	private := filepath.Join(dir, "score-checkpoint")
+	for _, name := range []string{manifest.DataDir, manifest.OutputDir, private} {
+		require.NoError(t, os.MkdirAll(name, 0o700))
+	}
+	for _, name := range []string{dataset.Corpus.Path, dataset.Questions.Path} {
+		bytes, err := os.ReadFile(filepath.Join(fixture, name))
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(filepath.Join(manifest.DataDir, name), bytes, 0o600))
+	}
+	corpus, questions, err := evalharness.LoadDataset(dataset, manifest.DataDir)
+	require.NoError(t, err)
+	writeFixture := func(path string, value any) {
+		data, err := json.Marshal(value)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(path, data, 0o600))
+	}
+	header := evalharness.NewReport(manifest, len(corpus), len(questions))
+	header.ImportedRows = len(corpus)
+	header.Identity.CanonicalHash = strings.Repeat("d", 64)
+	headerPath := filepath.Join(private, "verified-seed.json")
+	writeFixture(headerPath, header)
+	headerDigest, err := evalharness.FileHash(headerPath)
+	require.NoError(t, err)
+	score := evalharness.CaseScore{QuestionID: questions[0].ID, Condition: "off", Policy: "single", Completed: true, EM: 1, F1: 1}
+	scoreBody, err := json.Marshal(score)
+	require.NoError(t, err)
+	writeFixture(filepath.Join(private, "0000-single.json"), map[string]any{
+		"verified_seed_sha256": headerDigest, "question_ordinal": 0, "score": score, "score_sha256": hashBytes(scoreBody),
+	})
+	path := filepath.Join(dir, "manifest.json")
+	writeFixture(path, manifest)
+	foreign := filepath.Join(parent, "manifest.json")
+	writeFixture(foreign, manifest)
+	var output bytes.Buffer
+	protector := evalharness.NewRunnerCredentialProtector()
+	logger := observability.NewConsoleWithProtector(slog.LevelDebug, protector, &output)
+	require.ErrorContains(t, execute(t.Context(), []string{"recover", foreign}, logger, protector, &output), "current hosted dataset directory")
+	require.NoFileExists(t, filepath.Join(manifest.OutputDir, "scores.json"))
+	require.NoError(t, execute(t.Context(), []string{"recover", path}, logger, protector, &output))
+	require.Contains(t, output.String(), `"msg":"eval_scores_recovered"`)
+	data, err := os.ReadFile(filepath.Join(manifest.OutputDir, "scores.json"))
+	require.NoError(t, err)
+	var recovered evalharness.Report
+	require.NoError(t, json.Unmarshal(data, &recovered))
+	require.Equal(t, 4, recovered.ExpectedAnswers)
+	require.Equal(t, 1, recovered.CompletedAnswers)
+	require.False(t, recovered.Complete)
+	require.False(t, recovered.CaptureComplete)
 }
 
 func TestBootstrapRejectsIncompleteSetupBeforeWritingScope(t *testing.T) {
@@ -195,10 +269,10 @@ func TestCLIRejectsRetiredInterfacesAndLocalCampaigns(t *testing.T) {
 	logger := observability.NewConsoleWithHandler(slog.NewJSONHandler(&bytes.Buffer{}, nil))
 	protector := observability.NewCredentialProtector()
 	for _, mode := range []string{"paired", "import", "baseline", "candidate", "resume", "token-diagnostics", "runtime", "report", "replay"} {
-		require.ErrorContains(t, execute(context.Background(), []string{mode, "manifest"}, logger, protector), "workflow-internal")
+		require.ErrorContains(t, execute(context.Background(), []string{mode, "manifest"}, logger, protector, io.Discard), "workflow-internal")
 	}
 	t.Setenv("GITHUB_ACTIONS", "")
-	require.ErrorContains(t, execute(context.Background(), []string{"run", "manifest"}, logger, protector), "GitHub-hosted")
+	require.ErrorContains(t, execute(context.Background(), []string{"run", "manifest"}, logger, protector, io.Discard), "GitHub-hosted")
 }
 
 func TestRuntimeLogCollectorProtectsOutputAndExposesIncompleteCapture(t *testing.T) {
@@ -431,6 +505,10 @@ func runtimeCapturePayloads(t *testing.T, logs []byte) string {
 	return protected.String()
 }
 
+func runtimeEmbeddingVectorFixture() string {
+	return "[" + strings.Repeat("0.00012345678,", 2800) + "0]"
+}
+
 func runtimeProviderLogFixture(t *testing.T) string {
 	t.Helper()
 	var logs bytes.Buffer
@@ -455,6 +533,9 @@ func runtimeProviderLogFixture(t *testing.T) string {
 			var payload any = request
 			if direction == "response" {
 				payload = map[string]any{"usage": item.usage}
+				if item.name == "embedding" {
+					payload.(map[string]any)["data"] = json.RawMessage(runtimeEmbeddingVectorFixture())
+				}
 			}
 			body, err := json.Marshal(payload)
 			require.NoError(t, err)
@@ -466,9 +547,15 @@ func runtimeProviderLogFixture(t *testing.T) string {
 }
 
 func TestRuntimeLogCollectorReconstructsProtectedExchangesAndUsage(t *testing.T) {
-	logs := runtimeProviderLogFixture(t)
+	sql := strings.Repeat("\n\t\tSELECT source_id FROM memory_sources WHERE team_id = $1 ", 64)
+	line, err := json.Marshal(map[string]string{"level": "WARN", "msg": "slow postgres query", "sql": sql})
+	require.NoError(t, err)
+	logs := strings.Repeat(string(line)+"\n", 700) + runtimeProviderLogFixture(t)
 	var output bytes.Buffer
-	capture := &evalharness.Capture{RunID: "collector", Logger: slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug})), Protector: evalharness.NewRunnerCredentialProtector(runtimeLogKeyCanary, runtimeLogURLCanary)}
+	protector := evalharness.NewRunnerCredentialProtector(runtimeLogKeyCanary, runtimeLogURLCanary, "fixture-control-token-832",
+		"https://fixture-embedding.example/v1", "fixture-embedding-secret-832", "fixture-db-password-832", "fixture-mcp-token-832")
+	logger := observability.NewConsoleWithProtector(slog.LevelDebug, protector, &output)
+	capture := evalharness.NewConsoleCapture(&output, logger.ContextSlog(), protector, "collector")
 	usage := map[string]evalharness.UsageTotals{}
 	require.NoError(t, logReader(context.Background(), strings.NewReader(logs), capture, usage))
 	require.Len(t, usage, 5)
@@ -496,9 +583,15 @@ func TestRuntimeLogCollectorReconstructsProtectedExchangesAndUsage(t *testing.T)
 	require.NotContains(t, protected, runtimeLogURLCanary)
 	require.Contains(t, protected, "ordinary benchmark text")
 	events := runtimeCaptureEvents(t, output.Bytes())
-	require.Len(t, events, 12)
+	require.Len(t, events, 712)
+	for _, event := range events[:700] {
+		require.Equal(t, "runtime_log", event.Kind)
+		var payload map[string]string
+		require.NoError(t, json.Unmarshal(event.Payload, &payload))
+		require.Equal(t, string(line), payload["line"])
+	}
 	pairs := make(map[string]map[string]string)
-	for _, event := range events {
+	for _, event := range events[700:] {
 		require.Equal(t, "runtime_wire_exchange", event.Kind)
 		var payload runtimeWireFixture
 		require.NoError(t, json.Unmarshal(event.Payload, &payload))
@@ -511,6 +604,8 @@ func TestRuntimeLogCollectorReconstructsProtectedExchangesAndUsage(t *testing.T)
 	}
 	require.Len(t, pairs, 6)
 	require.Equal(t, `{"input":["Exact public Evidence."]}`, pairs["embedding"]["request"])
+	require.Greater(t, len(pairs["embedding"]["response"]), 36_000)
+	require.Equal(t, `{"data":`+runtimeEmbeddingVectorFixture()+`,"usage":{"completion_tokens":0,"prompt_tokens":7,"total_tokens":7}}`, pairs["embedding"]["response"])
 	for id, pair := range pairs {
 		require.Len(t, pair, 2, id)
 		require.Contains(t, pair["response"], `"usage":`)

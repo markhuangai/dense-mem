@@ -38,7 +38,7 @@ func (c *Capture) startQueue(cancelWork context.CancelFunc) {
 				continue
 			}
 			started := time.Now()
-			err := c.emit(q.ctx, event.phase, event.Kind, event.Payload)
+			err := c.emit(event.context, event.phase, event.Kind, event.Payload)
 			q.sinkNS.Add(time.Since(started).Nanoseconds())
 			q.bytes.Release(int64(len(event.Payload)))
 			if err == nil && event.Kind == "condition_finished" {
@@ -84,6 +84,7 @@ func (q *captureQueue) preservation(ctx context.Context) context.Context {
 }
 
 func (c *Capture) finishQueue(ctx context.Context) error {
+	defer func() { c.saveCheckpointFailure(c.FirstFailure()) }()
 	close(c.queue.events)
 	select {
 	case <-c.queue.done:

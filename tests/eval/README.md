@@ -267,11 +267,17 @@ Model work stops after 330 minutes per dataset. Hosted jobs end after
 The preservation window allows up to two minutes for shutdown and up to twenty
 minutes for capture. A verified pre-cutoff result can finish capture during
 that window. Interrupted model work or incomplete capture fails the dataset.
-Scoring jobs use `fail-fast: false`. Read `evaluation-<dataset>-off` for
-independent scores and cleanup receipts, and `evaluation-comparison` for the
-selected totals. A result is complete when every selected dataset finishes
-both policies and passes restore, capture and cleanup checks. Numeric
-artifacts are available for two days.
+Scoring jobs use `fail-fast: false`. The runner checkpoints numeric scores
+after each policy. If the scoring process is interrupted, the workflow can
+recover committed scores before cleanup and upload. Recovered reports are
+incomplete. A runner loss or failed upload can leave a dataset unavailable.
+
+The Actions summary shows per-policy counts, scores and available usage and
+timings. Read `evaluation-<dataset>-off` for each dataset’s scores and cleanup
+receipt, and `evaluation-comparison` for the aggregate. Both artifacts expire
+after two days. The aggregate reads only artifacts from its own run. When a
+live PR run finishes both policies for all five datasets and passes verification,
+capture and cleanup, the workflow posts the full table in one PR comment.
 
 Replace [baseline.json](baseline.json) only after a newer verified complete
 campaign with `full_public_campaign=true`. Preserve historical evidence.
