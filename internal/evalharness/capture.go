@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/jsonstrict"
@@ -85,7 +86,12 @@ func (c *Capture) recordFailure(failure CaptureFailure) {
 func (c *Capture) saveCheckpointFailure(failure *CaptureFailure) {
 	if checkpoint := c.checkpoint.Load(); checkpoint != nil && failure != nil {
 		if err := checkpoint.saveFailure(*failure); err != nil && c.Logger != nil {
-			c.Logger.Error("eval_checkpoint_write_failed", "run_id", c.RunID, "phase", failure.Phase, "error", c.ProtectError(err))
+			attrs := []any{"run_id", c.RunID, "phase", failure.Phase, "kind", failure.Kind, "sequence", failure.Sequence}
+			var errno syscall.Errno
+			if errors.As(err, &errno) {
+				attrs = append(attrs, "errno", int(errno))
+			}
+			c.Logger.Error("eval_checkpoint_write_failed", attrs...)
 		}
 	}
 }

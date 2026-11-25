@@ -43,6 +43,8 @@ func TestCaptureFailureRetryKeepsTheFirstCause(t *testing.T) {
 	first := CaptureFailure{Kind: "answer_wire_request", Reason: "console_write_failed", Sequence: 12}
 	capture.recordFailure(first)
 	require.Contains(t, logs.String(), "eval_checkpoint_write_failed")
+	require.Contains(t, logs.String(), `"errno":`)
+	require.NotContains(t, logs.String(), checkpoint.directory)
 	require.NoError(t, os.Remove(filename))
 	capture.recordFailure(CaptureFailure{Kind: "queue_drain", Reason: "capture_deadline"})
 	require.NoError(t, capture.finishQueue(t.Context()))

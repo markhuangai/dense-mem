@@ -133,6 +133,9 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 		if err := writeScoreFile(filepath.Join(manifest.OutputDir, "scores.json"), report); err != nil {
 			runErr = errors.Join(runErr, err)
 			report.Complete = false
+			if report.Failure == "" {
+				report.Failure = "score report publication incomplete"
+			}
 		}
 		if logger := client.Capture.Logger; logger != nil {
 			level := slog.LevelInfo
@@ -145,8 +148,8 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 				slog.Bool("model_verified_before_cutoff", report.ModelVerified), slog.Bool("capture_complete", report.CaptureComplete),
 				slog.Bool("complete", report.Complete), slog.Any("timings_ms", report.Timings),
 			}
-			if runErr != nil {
-				fields = append(fields, slog.String("failure", report.Failure), slog.String("error", client.Capture.protectError(ctx, runErr)))
+			if report.Failure != "" {
+				fields = append(fields, slog.String("failure", report.Failure))
 			}
 			if failure := report.CaptureFailure; failure != nil {
 				fields = append(fields, slog.Group("capture_failure", "phase", failure.Phase, "kind", failure.Kind,

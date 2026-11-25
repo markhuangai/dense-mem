@@ -156,22 +156,31 @@ func testRunnerOffCampaign(t *testing.T, scenario string) {
 	kinds := map[string]int{}
 	var outcome struct {
 		CompletedAnswers int                         `json:"completed_answers"`
-		Error            string                      `json:"error"`
+		Failure          string                      `json:"failure"`
 		CaptureFailure   *evalharness.CaptureFailure `json:"capture_failure"`
+	}
+	var campaignFailure struct {
+		Stage string `json:"stage"`
+		Error string `json:"error"`
 	}
 	for _, line := range bytes.Split(bytes.TrimSpace(logs.Bytes()), []byte("\n")) {
 		var event evalharness.Event
 		require.NoError(t, json.Unmarshal(line, &event))
 		kinds[event.Kind]++
+		if event.Kind == "campaign_failed" {
+			require.NoError(t, json.Unmarshal(event.Payload, &campaignFailure))
+		}
 		if bytes.Contains(line, []byte(`"msg":"eval_dataset_outcome"`)) {
 			require.NoError(t, json.Unmarshal(line, &outcome))
 		}
 	}
 	if scenario == "terminal capture failed" {
 		require.Equal(t, report.CompletedAnswers, outcome.CompletedAnswers)
+		require.Equal(t, report.Failure, outcome.Failure)
 		require.Equal(t, report.CaptureFailure, outcome.CaptureFailure)
-		require.True(t, strings.Contains(outcome.Error, "runtime collector unavailable"), "summary omits the collector failure detail")
-		require.Equal(t, 2, strings.Count(outcome.Error, observability.CredentialProtectionRedacted))
+		require.Equal(t, "log capture", campaignFailure.Stage)
+		require.True(t, strings.Contains(campaignFailure.Error, "runtime collector unavailable"), "capture omits the collector failure detail")
+		require.Equal(t, 2, strings.Count(campaignFailure.Error, observability.CredentialProtectionRedacted))
 	}
 	require.Equal(t, 1, kinds["initial_recall"])
 	require.Equal(t, 1, kinds["seed_verified"])
