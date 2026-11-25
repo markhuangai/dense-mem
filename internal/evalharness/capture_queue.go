@@ -84,6 +84,7 @@ func (q *captureQueue) preservation(ctx context.Context) context.Context {
 }
 
 func (c *Capture) finishQueue(ctx context.Context) error {
+	defer func() { c.saveCheckpointFailure(c.FirstFailure()) }()
 	close(c.queue.events)
 	select {
 	case <-c.queue.done:

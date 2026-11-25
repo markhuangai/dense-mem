@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,6 +19,37 @@ import (
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/stretchr/testify/require"
 )
+
+func TestScoreFilePublishesWithDirectoryWriteAndSearchPermission(t *testing.T) {
+	directory := t.TempDir()
+	t.Cleanup(func() { require.NoError(t, os.Chmod(directory, 0o700)) })
+	require.NoError(t, os.Chmod(directory, 0o300))
+	filename := filepath.Join(directory, "scores.json")
+	require.NoError(t, writeScoreFile(filename, Report{Complete: true}))
+	var published Report
+	require.NoError(t, readJSON(filename, &published))
+	require.True(t, published.Complete)
+}
+
+func TestCaptureFailureRetryKeepsTheFirstCause(t *testing.T) {
+	checkpoint, err := newScoreCheckpoint(filepath.Join(t.TempDir(), "public"), Report{})
+	require.NoError(t, err)
+	filename := filepath.Join(checkpoint.directory, scoreCheckpointFailure)
+	require.NoError(t, os.Mkdir(filename, 0o700))
+	var logs bytes.Buffer
+	capture := Capture{Logger: slog.New(slog.NewJSONHandler(&logs, nil))}
+	capture.checkpoint.Store(checkpoint)
+	capture.startQueue(func() {})
+	first := CaptureFailure{Kind: "answer_wire_request", Reason: "console_write_failed", Sequence: 12}
+	capture.recordFailure(first)
+	require.Contains(t, logs.String(), "eval_checkpoint_write_failed")
+	require.NoError(t, os.Remove(filename))
+	capture.recordFailure(CaptureFailure{Kind: "queue_drain", Reason: "capture_deadline"})
+	require.NoError(t, capture.finishQueue(t.Context()))
+	var saved checkpointFailure
+	require.NoError(t, readJSON(filename, &saved))
+	require.Equal(t, checkpointFailure{Seed: checkpoint.hash, Failure: first}, saved)
+}
 
 func TestScoreCheckpointRecoversAfterWorkerKill(t *testing.T) {
 	manifest := Manifest{RunID: "42-hotpotqa-off", WorkflowRunID: "42", Dataset: "hotpotqa", Condition: "off", Model: "fixture", ContextWindowTokens: 300_000}

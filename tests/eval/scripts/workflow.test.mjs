@@ -426,6 +426,7 @@ function frozenReport({ id, questions, corpus }) {
     timings_ms: { ontology_off_scoring: 7000, capture_sink_ms: 80, runtime_log_capture: 2700 },
     comparison_matrix: ["single", "multi_turn"].map((policy) => ({
       policy, condition: "off", expected: questions.rows, completed: questions.rows, failed: 0, missing: 0,
+      provider_calls: questions.rows, usage_unavailable: 0, usage_unreconciled: 0,
       mean: { recall_at_1: 0.5, recall_at_5: 0.6, recall_at_10: 0.7, exact_match: 0.3, f1: 0.4, cited_gold_source_coverage: 0.2 },
       all_support_recovery_rate: 0.25, reported_input_tokens: 3000, reported_output_tokens: 2000, reported_total_tokens: 5000,
     })),
@@ -482,6 +483,10 @@ test("aggregate renders and publishes output only for a verified complete public
     if (index === 0) {
       result.capture_complete = false;
       result.capture_failure = { phase: "log capture", kind: "runtime_log", sequence: 37, reason: "enqueue_interrupted" };
+      const [single, multiTurn] = result.comparison_matrix;
+      Object.assign(single, { provider_calls: 1_000, usage_unavailable: 700, usage_unreconciled: 300,
+        reported_input_tokens: 0, reported_output_tokens: 0, reported_total_tokens: 0 });
+      Object.assign(multiTurn, { provider_calls: 1_200, usage_unreconciled: 200 });
     }
     if (index !== 1) fs.writeFileSync(path.join(folder, "scores.json"), JSON.stringify(result));
   }
@@ -492,7 +497,8 @@ test("aggregate renders and publishes output only for a verified complete public
   assert.match(summary, /musique \| multi_turn \| Unavailable \| 0 \/ 1,000/);
   assert.match(summary, /verification, capture or cleanup incomplete/);
   assert.match(summary, /phase log capture, record runtime_log, sequence 37, reason enqueue_interrupted/);
-  assert.match(summary, /50\.00%.*60\.00%.*70\.00%.*3,000 \/ 2,000 \/ 5,000/);
+  assert.match(summary, /hotpotqa \| single .*50\.00%.*60\.00%.*70\.00%.*\| Unavailable \|/);
+  assert.match(summary, /hotpotqa \| multi_turn .*3,000 \/ 2,000 \/ 5,000 \(1,000 of 1,200 calls\)/);
   assert.match(summary, /hotpotqa \| 7\.00 \| 0\.08 \| 2\.70/);
   assert.equal(fs.existsSync(inputs.GITHUB_OUTPUT), false);
   for (const row of registry.datasets.slice(0, 2)) {

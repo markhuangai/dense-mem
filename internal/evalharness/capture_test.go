@@ -296,41 +296,59 @@ func TestRawCaptureChunksLargeEventsWithoutLosingPublicText(t *testing.T) {
 
 func capturedEvents(t *testing.T, logs []byte) []Event {
 	t.Helper()
+	type chunkIdentity struct {
+		runID    string
+		sequence int
+		kind     string
+		count    int
+		digest   string
+	}
 	var events []Event
 	var payload strings.Builder
-	pending := false
+	var pending *chunkIdentity
+	nextIndex := 0
 	for _, line := range bytes.Split(bytes.TrimSpace(logs), []byte("\n")) {
 		var envelope struct {
-			Kind    string                             `json:"kind"`
-			Payload json.RawMessage                    `json:"payload"`
-			Chunk   *observability.DiagnosticBodyChunk `json:"payload_chunk"`
+			RunID    string                             `json:"run_id"`
+			Sequence int                                `json:"sequence"`
+			Kind     string                             `json:"kind"`
+			Payload  json.RawMessage                    `json:"payload"`
+			Chunk    *observability.DiagnosticBodyChunk `json:"payload_chunk"`
 		}
 		require.NoError(t, json.Unmarshal(line, &envelope))
 		if envelope.Kind == "" {
 			continue
 		}
 		if envelope.Chunk == nil {
+			require.Nil(t, pending)
 			require.NotEmpty(t, envelope.Payload)
 			events = append(events, Event{Kind: envelope.Kind, Payload: envelope.Payload})
 			continue
 		}
-		require.Equal(t, "captured", envelope.Chunk.State)
-		if envelope.Chunk.Index == 0 {
+		chunk := envelope.Chunk
+		require.Equal(t, "captured", chunk.State)
+		identity := chunkIdentity{runID: envelope.RunID, sequence: envelope.Sequence, kind: envelope.Kind, count: chunk.Count, digest: chunk.SHA256}
+		if pending == nil {
+			require.Positive(t, chunk.Count)
 			payload.Reset()
-			pending = true
+			pending = &identity
+			nextIndex = 0
 		}
-		payload.WriteString(envelope.Chunk.Body)
-		if envelope.Chunk.Index == envelope.Chunk.Count-1 {
+		require.Equal(t, *pending, identity)
+		require.Equal(t, nextIndex, chunk.Index)
+		payload.WriteString(chunk.Body)
+		nextIndex++
+		if nextIndex == pending.count {
 			sum := sha256.Sum256([]byte(payload.String()))
-			require.Equal(t, envelope.Chunk.SHA256, hex.EncodeToString(sum[:]))
+			require.Equal(t, pending.digest, hex.EncodeToString(sum[:]))
 			var event Event
 			require.NoError(t, json.Unmarshal([]byte(payload.String()), &event))
 			require.Equal(t, envelope.Kind, event.Kind)
 			events = append(events, event)
-			pending = false
+			pending = nil
 		}
 	}
-	require.False(t, pending, "capture ended inside a chunked event")
+	require.Nil(t, pending, "capture ended inside a chunked event")
 	return events
 }
 

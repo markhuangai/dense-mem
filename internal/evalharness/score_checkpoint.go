@@ -168,12 +168,6 @@ func writeScoreFile(filename string, value any) error {
 	if err := errors.Join(temp.Sync(), temp.Close()); err != nil {
 		return err
 	}
-	if err := os.Rename(temp.Name(), filename); err != nil {
-		return err
-	}
-	directory, err := os.Open(parent)
-	if err != nil {
-		return err
-	}
-	return errors.Join(directory.Sync(), directory.Close())
+	// Recovery runs on the same hosted runner and sees the synced record once rename succeeds.
+	return os.Rename(temp.Name(), filename)
 }

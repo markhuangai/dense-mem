@@ -18,6 +18,16 @@ function seconds(value) {
   return Number.isFinite(value) && value >= 0 ? (value / 1000).toFixed(2) : unavailable;
 }
 
+function reportedTokens(axis) {
+  if (!axis) return unavailable;
+  const { provider_calls: calls, usage_unavailable: missing, usage_unreconciled: unreconciled } = axis;
+  if (![calls, missing, unreconciled].every((value) => Number.isSafeInteger(value) && value >= 0)) return unavailable;
+  const measured = calls - missing - unreconciled;
+  if (measured <= 0) return unavailable;
+  const tokens = [axis.reported_input_tokens, axis.reported_output_tokens, axis.reported_total_tokens].map(number).join(" / ");
+  return measured === calls ? tokens : `${tokens} (${number(measured)} of ${number(calls)} calls)`;
+}
+
 export function evaluationSummary(report, { heading, source, image, workers }) {
   const models = new Set(report.datasets.map((row) => row.identity?.model).filter(Boolean));
   const model = models.size === 1 ? label(models.values().next().value) : models.size > 1 ? "Mixed settings" : unavailable;
@@ -39,7 +49,7 @@ export function evaluationSummary(report, { heading, source, image, workers }) {
     for (const policy of policies) {
       const axis = row.matrix?.find((entry) => entry.policy === policy);
       const mean = axis?.mean;
-      const tokens = axis ? [axis.reported_input_tokens, axis.reported_output_tokens, axis.reported_total_tokens].map(number).join(" / ") : unavailable;
+      const tokens = reportedTokens(axis);
       lines.push(`| ${label(row.dataset)} | ${policy} | ${status} | ${number(axis?.completed ?? 0)} / ${number(row.expected / 2)} | ${number(axis?.failed)} | ${number(axis ? axis.missing : row.expected / 2)} | ${fraction(mean?.recall_at_1)} | ${fraction(mean?.recall_at_5)} | ${fraction(mean?.recall_at_10)} | ${fraction(axis?.all_support_recovery_rate)} | ${fraction(mean?.exact_match)} | ${fraction(mean?.f1)} | ${fraction(mean?.cited_gold_source_coverage)} | ${tokens} |`);
     }
     if (row.unavailable || row.failure) {

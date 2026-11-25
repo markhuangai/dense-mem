@@ -505,6 +505,10 @@ func runtimeCapturePayloads(t *testing.T, logs []byte) string {
 	return protected.String()
 }
 
+func runtimeEmbeddingVectorFixture() string {
+	return "[" + strings.Repeat("0.00012345678,", 2800) + "0]"
+}
+
 func runtimeProviderLogFixture(t *testing.T) string {
 	t.Helper()
 	var logs bytes.Buffer
@@ -530,7 +534,7 @@ func runtimeProviderLogFixture(t *testing.T) string {
 			if direction == "response" {
 				payload = map[string]any{"usage": item.usage}
 				if item.name == "embedding" {
-					payload.(map[string]any)["data"] = json.RawMessage("[" + strings.Repeat("0.00012345678,", 2800) + "0]")
+					payload.(map[string]any)["data"] = json.RawMessage(runtimeEmbeddingVectorFixture())
 				}
 			}
 			body, err := json.Marshal(payload)
@@ -601,6 +605,7 @@ func TestRuntimeLogCollectorReconstructsProtectedExchangesAndUsage(t *testing.T)
 	require.Len(t, pairs, 6)
 	require.Equal(t, `{"input":["Exact public Evidence."]}`, pairs["embedding"]["request"])
 	require.Greater(t, len(pairs["embedding"]["response"]), 36_000)
+	require.Equal(t, `{"data":`+runtimeEmbeddingVectorFixture()+`,"usage":{"completion_tokens":0,"prompt_tokens":7,"total_tokens":7}}`, pairs["embedding"]["response"])
 	for id, pair := range pairs {
 		require.Len(t, pair, 2, id)
 		require.Contains(t, pair["response"], `"usage":`)
