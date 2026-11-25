@@ -85,7 +85,7 @@ func (c *Capture) recordFailure(failure CaptureFailure) {
 func (c *Capture) saveCheckpointFailure(failure *CaptureFailure) {
 	if checkpoint := c.checkpoint.Load(); checkpoint != nil && failure != nil {
 		if err := checkpoint.saveFailure(*failure); err != nil && c.Logger != nil {
-			c.Logger.Error("eval_checkpoint_write_failed", "run_id", c.RunID, "phase", failure.Phase, "error", err)
+			c.Logger.Error("eval_checkpoint_write_failed", "run_id", c.RunID, "phase", failure.Phase, "error", c.ProtectError(err))
 		}
 	}
 }
@@ -334,13 +334,17 @@ func (c *Capture) emit(ctx context.Context, phase, kind string, payload any) err
 }
 
 func (c *Capture) ProtectError(err error) string {
+	return c.protectError(context.Background(), err)
+}
+
+func (c *Capture) protectError(ctx context.Context, err error) string {
 	if err == nil {
 		return ""
 	}
 	if c == nil || c.Protector == nil {
 		return "operation failed"
 	}
-	value, reason := observability.ProtectDiagnosticText(context.Background(), c.Protector, []byte(err.Error()), 1<<20)
+	value, reason := observability.ProtectDiagnosticText(ctx, c.Protector, []byte(err.Error()), 1<<20)
 	if reason != observability.CredentialProtectionAvailable {
 		return "error detail unavailable: " + reason.Code()
 	}

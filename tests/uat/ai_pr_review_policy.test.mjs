@@ -289,7 +289,7 @@ test("review safety controls and CI policy coverage remain enabled", async () =>
   assert.match(workflow, /EXPECTED_HEAD_SHA: \$\{\{ needs\.resolve\.outputs\.head_sha \}\}/);
   assert.match(workflow, /persist-credentials: false/);
   assert.equal(workflow.match(/^    runs-on: ubuntu-latest$/gm)?.length, 2);
-  assert.match(workflow, /effort: xhigh/);
+  assert.match(workflow, /^ +effort: medium$/m);
   assert.match(workflow, /parallel-count: "6"/);
   assert.match(workflow, /max-turns: "200"/);
   assert.match(workflow, /auto-approve: "false"/);

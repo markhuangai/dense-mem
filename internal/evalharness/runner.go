@@ -102,7 +102,7 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 		report.ElapsedMS = elapsedMS(started)
 		if runErr != nil {
 			report.Failure = stage + " incomplete"
-			_ = client.Capture.EmitContext(preserve, "campaign_failed", map[string]any{"stage": stage, "error": client.Capture.ProtectError(runErr)})
+			_ = client.Capture.EmitContext(preserve, "campaign_failed", map[string]any{"stage": stage, "error": client.Capture.protectError(preserve, runErr)})
 			runErr = fmt.Errorf("%s: %w", report.Failure, runErr)
 		}
 		terminal := completion{ImportedRows: report.ImportedRows, CanonicalHash: report.Identity.CanonicalHash, ElapsedMS: report.ElapsedMS, Failure: report.Failure, NativeMeasurements: report.NativeMeasurements, ServerUsage: report.ServerUsage, Timings: report.Timings, ModelVerified: report.ModelVerified}
@@ -146,7 +146,7 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 				slog.Bool("complete", report.Complete), slog.Any("timings_ms", report.Timings),
 			}
 			if runErr != nil {
-				fields = append(fields, slog.String("failure", report.Failure), slog.Any("error", runErr))
+				fields = append(fields, slog.String("failure", report.Failure), slog.String("error", client.Capture.protectError(ctx, runErr)))
 			}
 			if failure := report.CaptureFailure; failure != nil {
 				fields = append(fields, slog.Group("capture_failure", "phase", failure.Phase, "kind", failure.Kind,
