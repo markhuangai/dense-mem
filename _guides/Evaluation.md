@@ -66,12 +66,18 @@ incomplete.
 | --- | --- |
 | `evaluation-<dataset>-off` | Both policies, Recall@1/5/10, all-support recovery, exact match, F1, valid citations, timing and usage. |
 | `evaluation-comparison` | Selected totals, immutable inputs, missing datasets, and the campaign outcome. |
+| Actions summary | Per-policy counts, metrics, timings, and reasons for incomplete results from the same run. |
 | Dataset job logs | Protected wire exchanges, retry decisions, deadlines, and capture failures. |
 
 Numeric artifacts are retained for two days. The model deadline is 330 minutes
 per dataset. A verified pre-cutoff result can finish protected capture within
-the 360-minute job limit. A failed job may still provide partial scores and
-diagnostics.
+the 360-minute job limit. An interrupted job can recover committed numeric
+scores as an incomplete report. If an upload is missing, the aggregate shows
+that dataset as unavailable.
+
+A live PR run posts one combined comment once all five datasets finish both
+policies and pass seed verification, protected capture, and cleanup. The
+comment includes the numeric table and links to the run and aggregate artifact.
 
 ## Change Gate And Artifacts
 
