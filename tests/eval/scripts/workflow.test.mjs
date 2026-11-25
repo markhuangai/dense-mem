@@ -456,6 +456,24 @@ test("a complete single-dataset run keeps its actual denominator and proves clea
   assert.equal(result.completed_answers, 2000);
   assert.deepEqual(result.datasets.map(({ dataset }) => dataset), ["hotpotqa"]);
   assert.match(fs.readFileSync(env.GITHUB_STEP_SUMMARY, "utf8"), /hotpotqa \| single \| Complete \| 1,000 \/ 1,000/);
+
+  const partial = structuredClone(fixture);
+  partial.complete = false;
+  partial.completed_answers = 1998;
+  Object.assign(partial.comparison_matrix[1], { completed: 998, failed: 2 });
+  fs.writeFileSync(path.join(artifact, "scores.json"), JSON.stringify(partial));
+  fs.writeFileSync(env.GITHUB_STEP_SUMMARY, "");
+  await main("aggregate", env);
+  const scoringFailure = JSON.parse(fs.readFileSync(resultPath));
+  assert.equal(scoringFailure.complete, false);
+  assert.equal(scoringFailure.completed_answers, 1998);
+  assert.equal(scoringFailure.datasets[0].owned_cleanup, true);
+  const partialSummary = fs.readFileSync(env.GITHUB_STEP_SUMMARY, "utf8");
+  assert.match(partialSummary, /hotpotqa \| multi_turn \| Incomplete \| 998 \/ 1,000 \| 2 \| 0/);
+  assert.match(partialSummary, /policy answers failed or missing/);
+  assert.doesNotMatch(partialSummary, /verification, capture or cleanup incomplete/);
+
+  fs.writeFileSync(path.join(artifact, "scores.json"), JSON.stringify(fixture));
   fs.writeFileSync(cleanupReceipt, "{");
   await main("aggregate", env);
   const incomplete = JSON.parse(fs.readFileSync(resultPath));
