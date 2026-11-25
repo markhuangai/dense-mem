@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -69,18 +70,23 @@ func (s *Store) commit(ctx context.Context, teamID string, input topic.Publicati
 }
 
 func (s *Store) commitPublication(tx *gorm.DB, fence scope, input topic.Publication, origin, actor, hash, assessmentID string) (topic.PublicationResult, error) {
+	if err := lockOrganizationCatalog(tx, fence); err != nil {
+		return topic.PublicationResult{}, err
+	}
+	return s.writePublication(tx, fence, input, origin, actor, hash, assessmentID, true)
+}
+
+func (s *Store) writePublication(tx *gorm.DB, fence scope, input topic.Publication, origin, actor, hash, assessmentID string, checkRevision bool) (topic.PublicationResult, error) {
+	var names []string
+	for _, change := range input.Changes {
+		names = append(names, topic.DefinitionNames(change.Record)...)
+	}
+	if err := lockTopicNames(tx, fence, names); err != nil {
+		return topic.PublicationResult{}, err
+	}
 	if diagnostic := topic.PublicationDiagnosticFromContext(tx.Statement.Context); diagnostic != nil {
 		diagnostic.Publication = &input
 		diagnostic.AssessmentID = assessmentID
-	}
-	if err := tx.Exec(`INSERT INTO topic_catalog_heads(team_id,shared_space_id,space_generation)
-		VALUES (?::uuid,?::uuid,?) ON CONFLICT DO NOTHING`, fence.TeamID, fence.SpaceID, fence.Generation).Error; err != nil {
-		return topic.PublicationResult{}, err
-	}
-	var revision int64
-	if err := tx.Raw(`SELECT revision FROM topic_catalog_heads WHERE team_id=?::uuid
-		AND shared_space_id=?::uuid AND space_generation=? FOR UPDATE`, fence.TeamID, fence.SpaceID, fence.Generation).Row().Scan(&revision); err != nil {
-		return topic.PublicationResult{}, err
 	}
 	existing, found, err := replayPublication(tx, fence, input.OperationKey, hash)
 	if err != nil {
@@ -89,9 +95,14 @@ func (s *Store) commitPublication(tx *gorm.DB, fence scope, input topic.Publicat
 	if found {
 		return existing, nil
 	}
-	notePublicationRevision(tx, revision)
-	if revision != input.ExpectedRevision {
-		return topic.PublicationResult{}, topic.PublicationVersionRejection("catalog_revision", "", input.ExpectedRevision, revision)
+	if checkRevision {
+		revision, err := catalogRevision(tx, fence)
+		if err != nil {
+			return topic.PublicationResult{}, err
+		}
+		if revision != input.ExpectedRevision {
+			return topic.PublicationResult{}, topic.PublicationVersionRejection("catalog_revision", "", input.ExpectedRevision, revision)
+		}
 	}
 	records := make([]topic.Record, 0, len(input.Changes))
 	var changedDefinitions []string
@@ -135,7 +146,10 @@ func (s *Store) commitPublication(tx *gorm.DB, fence scope, input topic.Publicat
 	} else {
 		return topic.PublicationResult{}, topic.ErrInvalid
 	}
-	result := topic.PublicationResult{ID: uuid.NewString(), Revision: revision + 1, Records: []topic.RevisionRef{}}
+	result := topic.PublicationResult{ID: uuid.NewString(), Records: []topic.RevisionRef{}}
+	if err := tx.Raw(`SELECT nextval('topic_publication_revision')`).Row().Scan(&result.Revision); err != nil {
+		return topic.PublicationResult{}, err
+	}
 	for _, record := range prepared {
 		result.Records = append(result.Records, topic.RevisionRef{ID: record.ID, Version: record.Version})
 	}
@@ -165,6 +179,9 @@ func (s *Store) commitPublication(tx *gorm.DB, fence scope, input topic.Publicat
 		}
 	}
 	for _, record := range prepared {
+		if err := writeRelationalRecord(tx, fence, record); err != nil {
+			return topic.PublicationResult{}, err
+		}
 		names := topic.DefinitionNames(record)
 		if names == nil {
 			names = []string{}
@@ -182,23 +199,14 @@ func (s *Store) commitPublication(tx *gorm.DB, fence scope, input topic.Publicat
 			return topic.PublicationResult{}, topic.ErrConflict
 		}
 	}
-	// Check direct edits and definition parents exposed by invalidated placements against the proposed heads.
 	var edges []communityEdge
-	var revisedTopics []string
 	for _, record := range prepared {
-		if record.Kind == topic.Topic && record.Version > 1 {
-			revisedTopics = append(revisedTopics, record.ID)
-		}
 		if record.Retired || record.Definition == nil || record.Definition.ParentID == "" {
 			continue
 		}
 		edges = append(edges, communityEdge{TopicID: record.ID, ParentID: record.Definition.ParentID})
 	}
-	exposed, err := exposedCommunityEdges(tx, fence, revisedTopics)
-	if err != nil {
-		return topic.PublicationResult{}, err
-	}
-	conflict, err := conflictingCommunityEdge(tx, fence, append(edges, exposed...))
+	conflict, err := conflictingCommunityEdge(tx, fence, edges)
 	if err != nil {
 		return topic.PublicationResult{}, err
 	}
@@ -206,14 +214,6 @@ func (s *Store) commitPublication(tx *gorm.DB, fence scope, input topic.Publicat
 		return topic.PublicationResult{}, &topic.PublicationRejection{
 			Cause: topic.ErrConflict, Reason: "community_hierarchy_conflict", RecordID: conflict.TopicID, ParentID: conflict.ParentID,
 		}
-	}
-	updated := tx.Exec(`UPDATE topic_catalog_heads SET revision=? WHERE team_id=?::uuid
-		AND shared_space_id=?::uuid AND space_generation=? AND revision=?`, result.Revision, fence.TeamID, fence.SpaceID, fence.Generation, revision)
-	if updated.Error != nil {
-		return topic.PublicationResult{}, updated.Error
-	}
-	if updated.RowsAffected != 1 {
-		return topic.PublicationResult{}, topic.ErrConflict
 	}
 	return result, nil
 }
@@ -253,6 +253,16 @@ func insertDependencies(tx *gorm.DB, fence scope, record topic.Record) error {
 		if err := tx.Exec(`INSERT INTO topic_revision_dependencies(team_id,shared_space_id,space_generation,
 			record_id,record_version,dependency_id,dependency_version)
 			VALUES (?::uuid,?::uuid,?,?::uuid,?,?::uuid,?)`, fence.TeamID, fence.SpaceID, fence.Generation, record.ID, record.Version, ref.ID, ref.Version).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func lockTopicNames(tx *gorm.DB, fence scope, names []string) error {
+	slices.Sort(names)
+	for _, name := range slices.Compact(names) {
+		if err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtextextended(?::text,25023))`, fence.SpaceID+":"+name).Error; err != nil {
 			return err
 		}
 	}

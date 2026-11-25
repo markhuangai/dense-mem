@@ -193,30 +193,6 @@ func ontologySchemaSnapshot(t *testing.T, db *gorm.DB) map[string]string {
 	return snapshot
 }
 
-func (f *ontologyFixture) restoreOntologySchema(t *testing.T) {
-	t.Helper()
-	require.NotEmpty(t, f.schema)
-	_, err := ontologyMigrationProvider(t, f.admin).Up(context.Background())
-	require.NoError(t, err)
-	current := ontologySchemaSnapshot(t, f.admin)
-	keys := make([]string, 0, len(f.schema))
-	for key := range f.schema {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	// Ontology rollback also removes later private-memory hooks; restore their exact migrated definitions.
-	for _, key := range keys {
-		if current[key] != f.schema[key] {
-			require.NoError(t, f.admin.Exec(f.schema[key]).Error, key)
-		}
-	}
-	current = ontologySchemaSnapshot(t, f.admin)
-	require.Len(t, current, len(f.schema))
-	for _, key := range keys {
-		require.Equal(t, f.schema[key], current[key], key)
-	}
-}
-
 // Exercise ontology rollback guards without crossing unrelated irreversible migration boundaries.
 func ontologyMigrationProvider(t *testing.T, db *gorm.DB) *goose.Provider {
 	t.Helper()

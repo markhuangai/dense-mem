@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/markhuangai/dense-mem/internal/topics"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -147,7 +148,7 @@ func TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads(t *testing.T)
 			require.NoError(t, logger.AttachSink(logs))
 			client := observability.DiagnosticHTTPClient(upstream.Client(), rootDiagnosticLogger(logger), protector)
 			provider := structured.NewOpenAI(&config.Config{AIVerifierAPIURL: upstream.URL, AIVerifierAPIKey: secret, AIVerifierModel: "fixture-model"}, client)
-			maintenance := buildTopicMaintenance(topicpg.NewStore(app, rls), configuration, provider, assessor.DefaultSemanticAssessmentLimits(), "fixture-model", time.Minute, 0, nil, rootSlogLogger(logger), topicMaintenanceDiagnostics(logs, protector, rootDiagnosticLogger(logger)))
+			maintenance := buildTopicMaintenance(topicpg.NewStore(app, rls), configuration, provider, assessor.DefaultSemanticAssessmentLimits(), "fixture-model", time.Minute, 0, nil, rootSlogLogger(logger), topics.MaintenanceDiagnostics(logs, protector, rootDiagnosticLogger(logger)))
 			var failure *domain.OperationLog
 			for range 12 {
 				_, runErr := maintenance.RunTurn(ctx)

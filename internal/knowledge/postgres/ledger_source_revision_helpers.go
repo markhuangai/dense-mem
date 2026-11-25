@@ -14,35 +14,6 @@ type sourceRevisionBatch struct {
 	SourceRevisionEnvelope        string
 }
 
-func sourceRevisionBatchKey(item EvidenceInput) string {
-	if item.SourceKey == "" {
-		return ""
-	}
-	current := sourceRevisionBatch{
-		RevisionToken:                 item.SourceRevisionToken,
-		ExpectedPreviousRevisionToken: item.ExpectedPreviousRevisionToken,
-		SourceRevisionContentHash:     item.SourceRevisionContentHash,
-	}
-	return item.SourceKey + "\x00" + current.RevisionToken + "\x00" + current.ExpectedPreviousRevisionToken + "\x00" + current.SourceRevisionContentHash
-}
-
-func normalizeUUIDStringList(values []string) []string {
-	out := make([]string, 0, len(values))
-	seen := map[string]struct{}{}
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	return out
-}
-
 func normalizeUUIDStrings(values []string) []string {
 	out := make([]string, len(values))
 	for i, value := range values {

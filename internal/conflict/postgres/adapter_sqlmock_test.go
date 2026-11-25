@@ -21,7 +21,7 @@ func TestGetEvidenceConflictHydratesEventsAndCursorWithSQLMock(t *testing.T) {
 		require.NoError(t, db.Close())
 		require.NoError(t, mock.ExpectationsWereMet())
 	}()
-	store := conflictpostgres.NewStore(gormDB, conflictListSQLMockRLS{}, nil)
+	store := conflictpostgres.NewStore(gormDB, conflictListSQLMockRLS{})
 	teamID := uuid.NewString()
 	conflictID := uuid.NewString()
 	updatedAt := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)

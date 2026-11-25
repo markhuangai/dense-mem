@@ -2,11 +2,11 @@ package access
 
 import (
 	"context"
+	accesscontract "github.com/markhuangai/dense-mem/internal/access/contract"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -21,10 +21,7 @@ func TestSSOServiceDeleteMappingRequiresProviderID(t *testing.T) {
 func TestSSOServiceMapsAtomicOAuthIssuerConflict(t *testing.T) {
 	issuer := "https://issuer.example.test"
 	repo := &ssoRepositoryStub{
-		createProviderErr: &pgconn.PgError{
-			Code:           "23505",
-			ConstraintName: "idx_sso_providers_active_oauth_issuer_unique",
-		},
+		createProviderErr: accesscontract.ErrOAuthIssuerConflict,
 	}
 	svc := NewSSOService(repo, SSOConfig{})
 	_, err := svc.CreateProvider(t.Context(), domain.SSOProvider{
@@ -368,6 +365,20 @@ func (r *ssoRepositoryStub) ListProviders(ctx context.Context) ([]*domain.SSOPro
 		items = append(items, &copy)
 	}
 	return items, nil
+}
+
+func (r *ssoRepositoryStub) ListEnabledOAuthIssuer(ctx context.Context, issuer string) ([]*domain.SSOProvider, error) {
+	providers, err := r.ListEnabledProviders(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var result []*domain.SSOProvider
+	for _, provider := range providers {
+		if provider != nil && provider.IssuerURL == issuer && provider.ProtectedResource.Enabled {
+			result = append(result, provider)
+		}
+	}
+	return result, nil
 }
 
 func (r *ssoRepositoryStub) ListEnabledProviders(ctx context.Context) ([]*domain.SSOProvider, error) {

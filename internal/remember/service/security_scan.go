@@ -135,13 +135,6 @@ func buildOverridePattern() string {
 	return `(?i)\b` + verb + `\b(?:` + between + `(?:all|the))*` + between + first + between + second + `\b`
 }
 
-// ScanSubmissionEvidence deterministically examines one evidence payload
-// before it is staged, hashed, or sent to a provider. It never decodes more
-// than one representation layer and never returns submitted content.
-func ScanSubmissionEvidence(content string) (SubmissionSecurityScan, error) {
-	return scanSubmissionEvidence(content, false)
-}
-
 func scanSubmissionEvidence(content string, reviewContext bool) (SubmissionSecurityScan, error) {
 	signals := make([]SubmissionSecuritySignal, 0, submissionSecurityMaxSignals)
 	identity := identitySecurityView(content)

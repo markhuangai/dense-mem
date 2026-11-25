@@ -4,15 +4,19 @@ import (
 	"context"
 	"time"
 
+	audit "github.com/markhuangai/dense-mem/internal/audit/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
+
+// PrepareConfigUpdate projects the transaction's before and after states and optionally prepares its audit.
+type PrepareConfigUpdate func(before, after map[string]domain.AppConfigEntry, changed bool) (*audit.Entry, error)
 
 // AppConfigRepository is the persistence boundary for system application
 // settings. The settings application owns normalization and effective values.
 type AppConfigRepository interface {
 	GetUpdateTime(context.Context) (string, error)
 	List(context.Context) (map[string]domain.AppConfigEntry, error)
-	UpdateValues(context.Context, map[string]string, string, time.Time) (bool, error)
+	UpdateValues(context.Context, map[string]string, string, time.Time, ...PrepareConfigUpdate) (bool, error)
 }
 
 // SecurityRepository persists global security settings, failure counters, and

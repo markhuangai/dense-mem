@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	sessionpostgres "github.com/markhuangai/dense-mem/internal/session/postgres"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
-	processor "github.com/markhuangai/dense-mem/internal/remember/service/processor"
+	processor "github.com/markhuangai/dense-mem/internal/remember/service"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
 	"github.com/markhuangai/dense-mem/internal/session/extraction"
 	service "github.com/markhuangai/dense-mem/internal/session/service"
@@ -39,12 +40,12 @@ func TestSessionContextIndexBoundsPrivateLookupAcrossUnrelatedHistory(t *testing
 	for i := range session.MaxEvents {
 		intake.Request.Events = append(intake.Request.Events, session.Event{EventID: fmt.Sprintf("target-%d", i), Text: "Thanks. Let's continue."})
 	}
-	store := NewStore(app, rls)
+	store := newSessionFixtureStore(app, rls)
 	completeSessionContextFixture(t, ctx, store, intake.Request)
 	read := func(actor context.Context, scope session.Scope, req session.Request) *session.Submission {
 		result := &session.Submission{}
 		require.NoError(t, store.withTeamProfileTx(actor, scope.TeamID, scope.OwnerProfileID, func(tx *gorm.DB) error {
-			return loadPriorSessionEvents(actor, tx, scope, req, result)
+			return sessionpostgres.LoadPriorSessionEvents(actor, tx, scope, req, result)
 		}))
 		return result
 	}
@@ -82,7 +83,7 @@ func TestSessionContextIndexBoundsPrivateLookupAcrossUnrelatedHistory(t *testing
 		}
 		var encoded []byte
 		require.NoError(t, store.withTeamProfileTx(actor, scope.TeamID, scope.OwnerProfileID, func(tx *gorm.DB) error {
-			return tx.Raw("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "+priorSessionEventsSQL,
+			return tx.Raw("EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) "+sessionpostgres.PriorSessionEventsSQL,
 				scope.TeamID, scope.SpaceID, scope.OwnerProfileID, scope.SpaceGeneration,
 				req.Framework, req.AppName, req.UserID, req.SessionID,
 				req.Framework, req.AppName, req.UserID, req.SessionID, session.ContextEvents).Row().Scan(&encoded)
@@ -105,7 +106,7 @@ func TestSessionContextIndexBoundsPrivateLookupAcrossUnrelatedHistory(t *testing
 	require.Equal(t, before.Prior, admitted.Prior)
 }
 
-func completeSessionContextFixture(t *testing.T, ctx context.Context, store *Store, request session.Request) {
+func completeSessionContextFixture(t *testing.T, ctx context.Context, store *sessionFixtureStore, request session.Request) {
 	t.Helper()
 	api := service.NewService(service.Dependencies{Enabled: true, Repository: store, Preparer: processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store}), Tokenizer: "o200k_base", Extractor: extraction.NewProvider(&sessionOutbound{}, "fixture", assessor.DefaultSemanticAssessmentLimits())})
 	result, err := api.Ingest(ctx, request)
@@ -193,7 +194,7 @@ func TestSessionContextIndexMigrationRetainsIntakeAndRepairsInterruptedBuild(t *
 	team := createLedgerTeam(t, admin, rls, "session-context-migration")
 	owner := createLedgerProfile(t, admin, rls, team, "owner")
 	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
-	store := NewStore(app, rls)
+	store := newSessionFixtureStore(app, rls)
 	completeSessionContextFixture(t, ctx, store, intake.Request)
 	snapshot := func() string {
 		var rows string

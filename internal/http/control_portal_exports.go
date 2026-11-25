@@ -20,7 +20,7 @@ type DiagnosticBundleReader interface {
 	Bundle(context.Context) ([]byte, error)
 }
 
-func (h *controlPortalHandler) exportAudit(c *echo.Context) error {
+func (h *controlDiagnosticsHandler) exportAudit(c *echo.Context) error {
 	query := c.QueryParams()
 	for name, values := range query {
 		if (name != "team_id" && name != "cursor" && name != "limit") || len(values) != 1 {
@@ -52,7 +52,7 @@ func (h *controlPortalHandler) exportAudit(c *echo.Context) error {
 	return writeControlDownload(c, "application/x-ndjson", "audit.ndjson", raw)
 }
 
-func (h *controlPortalHandler) diagnosticBundle(c *echo.Context) error {
+func (h *controlDiagnosticsHandler) diagnosticBundle(c *echo.Context) error {
 	if len(c.QueryParams()) != 0 {
 		return httperr.New(httperr.VALIDATION_ERROR, "diagnostic bundle does not accept query parameters")
 	}

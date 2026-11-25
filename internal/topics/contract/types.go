@@ -33,12 +33,13 @@ const (
 )
 
 var (
-	ErrInvalid      = errors.New("invalid topic input")
-	ErrConflict     = errors.New("topic revision or operation conflict")
-	ErrSourceStale  = errors.New("topic source is unavailable or stale")
-	ErrNotFound     = errors.New("topic record not found")
-	ErrUnauthorized = errors.New("topic operation is not authorized")
-	ErrOverride     = errors.New("topic change conflicts with manager override")
+	ErrInvalid        = errors.New("invalid topic input")
+	ErrLegacyMutation = errors.New("legacy topic mutation is retired")
+	ErrConflict       = errors.New("topic revision or operation conflict")
+	ErrSourceStale    = errors.New("topic source is unavailable or stale")
+	ErrNotFound       = errors.New("topic record not found")
+	ErrUnauthorized   = errors.New("topic operation is not authorized")
+	ErrOverride       = errors.New("topic change conflicts with manager override")
 )
 
 type SourceHandle struct {
@@ -128,6 +129,7 @@ type PublicationResult struct {
 type RecordView struct {
 	Record
 	Current            bool   `json:"current"`
+	EditVersion        int64  `json:"edit_version,omitempty"`
 	StaleReason        string `json:"stale_reason,omitempty"`
 	CommunityParentID  string `json:"community_parent_id,omitempty"`
 	CommunityPlacement string `json:"community_placement,omitempty"`

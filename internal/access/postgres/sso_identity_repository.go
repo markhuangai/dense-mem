@@ -12,11 +12,11 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-func (r *SSORepositoryImpl) GetSSOOwnedCredentialByID(ctx context.Context, teamID, ownerID, credentialID uuid.UUID) (*domain.Credential, error) {
+func (r *sSORepository) GetSSOOwnedCredentialByID(ctx context.Context, teamID, ownerID, credentialID uuid.UUID) (*domain.Credential, error) {
 	return NewCredentialRepository(r.db, r.rls, nil).GetSSOOwnedCredentialByID(ctx, teamID, ownerID, credentialID)
 }
 
-func (r *SSORepositoryImpl) DirectoryAuthorityActive(ctx context.Context, providerID uuid.UUID) (bool, error) {
+func (r *sSORepository) DirectoryAuthorityActive(ctx context.Context, providerID uuid.UUID) (bool, error) {
 	var active bool
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		var err error
@@ -29,7 +29,7 @@ func (r *SSORepositoryImpl) DirectoryAuthorityActive(ctx context.Context, provid
 	return active, nil
 }
 
-func (r *SSORepositoryImpl) DirectoryMembershipEntitled(ctx context.Context, providerID, identityID, teamID uuid.UUID, groupID string) (bool, error) {
+func (r *sSORepository) DirectoryMembershipEntitled(ctx context.Context, providerID, identityID, teamID uuid.UUID, groupID string) (bool, error) {
 	if providerID == uuid.Nil || identityID == uuid.Nil || teamID == uuid.Nil || strings.TrimSpace(groupID) == "" {
 		return false, nil
 	}
@@ -80,7 +80,7 @@ func (r *SSORepositoryImpl) DirectoryMembershipEntitled(ctx context.Context, pro
 	return entitled, nil
 }
 
-func (r *SSORepositoryImpl) UpsertIdentity(ctx context.Context, identity *domain.SSOIdentity) error {
+func (r *sSORepository) UpsertIdentity(ctx context.Context, identity *domain.SSOIdentity) error {
 	now := time.Now().UTC()
 	if identity.LastLoginAt == nil {
 		identity.LastLoginAt = &now
@@ -253,15 +253,15 @@ func directoryIdentityActiveTx(tx *gorm.DB, identityID uuid.UUID) (bool, error) 
 	return active, nil
 }
 
-func (r *SSORepositoryImpl) GetIdentity(ctx context.Context, id uuid.UUID) (*domain.SSOIdentity, error) {
+func (r *sSORepository) GetIdentity(ctx context.Context, id uuid.UUID) (*domain.SSOIdentity, error) {
 	return r.getIdentity(ctx, `WHERE id = $1`, id)
 }
 
-func (r *SSORepositoryImpl) GetIdentityByProviderSubject(ctx context.Context, providerID uuid.UUID, subject string) (*domain.SSOIdentity, error) {
+func (r *sSORepository) GetIdentityByProviderSubject(ctx context.Context, providerID uuid.UUID, subject string) (*domain.SSOIdentity, error) {
 	return r.getIdentity(ctx, `WHERE provider_id = $1 AND subject = $2`, providerID, subject)
 }
 
-func (r *SSORepositoryImpl) getIdentity(ctx context.Context, where string, args ...any) (*domain.SSOIdentity, error) {
+func (r *sSORepository) getIdentity(ctx context.Context, where string, args ...any) (*domain.SSOIdentity, error) {
 	var identity *domain.SSOIdentity
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`

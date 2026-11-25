@@ -325,59 +325,6 @@ func insertRememberSemanticAssessment(ctx context.Context, tx *gorm.DB, input Sy
 		strings.TrimSpace(fmt.Sprint(input.Commit.Payload["response_hash"])), time.Now().UTC()).Error
 }
 
-func validateRememberTerminalSourceRevisions(ctx context.Context, tx *gorm.DB, input SynchronousRememberCommitInput, createInput CreateIngestInput) error {
-	for _, item := range createInput.Evidence {
-		if item.SourceKey == "" {
-			continue
-		}
-		if err := validateTerminalSourceRevisionInTx(ctx, tx, AdvanceSourceRevisionInput{
-			TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: input.IngestID,
-			SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, SourceKey: item.SourceKey,
-			SourceKind: sourceKindForEvidence(item.SourceType), Authority: item.Authority,
-			RevisionToken: item.SourceRevisionToken, ExpectedPreviousRevisionToken: item.ExpectedPreviousRevisionToken,
-			ContentHash: item.SourceRevisionContentHash, Envelope: item.SourceRevisionEnvelope,
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func insertRememberTerminalEvidence(ctx context.Context, tx *gorm.DB, input SynchronousRememberCommitInput, createInput CreateIngestInput) ([]EvidenceFragment, error) {
-	evidence := make([]EvidenceFragment, 0, len(createInput.Evidence))
-	for index, item := range createInput.Evidence {
-		fragment, err := insertEvidenceFragment(ctx, tx, createInput, input.IngestID, index, item, nil)
-		if err != nil {
-			return nil, err
-		}
-		evidence = append(evidence, fragment)
-		if item.InitialEvent != nil {
-			eventInput := SecurityEventInput{
-				TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, IngestID: input.IngestID,
-				FragmentID: fragment.FragmentID, SecurityEventDraft: *item.InitialEvent,
-			}
-			if _, err := insertSecurityEvent(ctx, tx, eventInput); err != nil {
-				return nil, err
-			}
-			if item.InitialEvent.Decision == "quarantine" {
-				if err := insertEvidenceQuarantine(ctx, tx, createInput, input.IngestID, fragment.FragmentID, item.InitialEvent.Reason); err != nil {
-					return nil, err
-				}
-			}
-		}
-	}
-	return evidence, nil
-}
-
-func rememberEvidenceExists(evidence []EvidenceFragment, fragmentID string) bool {
-	for _, item := range evidence {
-		if item.FragmentID == strings.TrimSpace(fragmentID) {
-			return true
-		}
-	}
-	return false
-}
-
 func rememberCorrelationID(metadata map[string]any) string {
 	if metadata == nil {
 		return ""

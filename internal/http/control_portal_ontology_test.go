@@ -19,7 +19,7 @@ import (
 func TestControlTopicMaintenanceValidationUsesTopicNames(t *testing.T) {
 	router := echo.New()
 	router.HTTPErrorHandler = httperr.ErrorHandler
-	registerTopicMaintenanceRoutes(router.Group("/control/api"), &controlPortalHandler{
+	registerTopicMaintenanceRoutes(router.Group("/control/api"), &controlConfigHandler{
 		appConfig:        settings.NewAppConfigService(nil, nil),
 		topicMaintenance: topics.NewMaintenanceService(topics.MaintenanceDependencies{}),
 	})

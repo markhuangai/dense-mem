@@ -20,9 +20,14 @@ type exportSemanticStub struct {
 	inputs []tracecontract.Input
 }
 
-func (s *exportSemanticStub) TraceEvidence(_ context.Context, input tracecontract.Input) (*tracecontract.EvidenceTraceResult, error) {
-	s.inputs = append(s.inputs, input)
-	return s.trace, s.err
+func (s *exportSemanticStub) TraceEvidenceBatch(_ context.Context, input tracecontract.Input, ids []string) ([]*tracecontract.EvidenceTraceResult, error) {
+	result := make([]*tracecontract.EvidenceTraceResult, 0, len(ids))
+	for _, id := range ids {
+		input.EvidenceID = id
+		s.inputs = append(s.inputs, input)
+		result = append(result, s.trace)
+	}
+	return result, s.err
 }
 func exportFixture() (context.Context, *exportSemanticStub, MemoryPackService, string) {
 	team, owner := uuid.New(), uuid.New()

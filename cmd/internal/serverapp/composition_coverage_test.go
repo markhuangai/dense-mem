@@ -159,11 +159,8 @@ func TestCompositionHelpersCoverTelemetryAndMaintenanceBranches(t *testing.T) {
 	if err == nil || searchStore != nil || !strings.Contains(err.Error(), "database") {
 		t.Fatalf("invalid search database result = %v, store=%v", err, searchStore)
 	}
-	if got := controlListenerClose(nil); got != nil {
+	if got := closeOptionalListener(nil); got != nil {
 		t.Fatalf("nil control listener close = %v", got)
-	}
-	if got := telemetryListenerClose(nil); got != nil {
-		t.Fatalf("nil telemetry listener close = %v", got)
 	}
 	if !isExpectedServerClose(nil) || !isExpectedServerClose(http.ErrServerClosed) || isExpectedServerClose(errors.New("unexpected")) {
 		t.Fatal("server close classification was incorrect")

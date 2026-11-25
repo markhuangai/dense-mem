@@ -664,15 +664,6 @@ func credentialEncodingPrefixIsValid(text string) bool {
 	}
 }
 
-func credentialTextContainsVariant(text string, variants []credentialVariant) bool {
-	contains, _ := credentialTextContainsVariantDetailed(text, variants)
-	return contains
-}
-
-func credentialTextContainsVariantDetailed(text string, variants []credentialVariant) (bool, bool) {
-	return credentialTextContainsVariantDetailedWithBudget(text, variants, nil)
-}
-
 func credentialTextContainsVariantDetailedWithBudget(text string, variants []credentialVariant, budget *credentialSnapshotBudget) (bool, bool) {
 	starts := credentialCandidateStarts(variants)
 	for index := 0; index < len(text); {

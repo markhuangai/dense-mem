@@ -79,24 +79,42 @@ func NewCredentialProtector(configuredSecrets ...string) *CredentialProtector {
 // authentication secrets are combined with the configured values without
 // mutating the protector. Unsupported, cyclic, invalid, or over-budget values
 // return a bounded reason and never return a raw or partial Value.
-func (p *CredentialProtector) Snapshot(value any, maxBytes int, authenticatedSecrets ...string) (result ProtectedDiagnostic) {
+func (p *CredentialProtector) Snapshot(value any, maxBytes int, authenticatedSecrets ...string) ProtectedDiagnostic {
+	return p.snapshotter(authenticatedSecrets).snapshot(value, maxBytes)
+}
+
+type credentialSnapshotter struct {
+	variants    []credentialVariant
+	unavailable CredentialProtectionUnavailableReason
+}
+
+func (p *CredentialProtector) snapshotter(authenticatedSecrets []string) credentialSnapshotter {
+	if p != nil && p.configurationErr != CredentialProtectionAvailable {
+		return credentialSnapshotter{unavailable: p.configurationErr}
+	}
+	if credentialSecretTooLong(authenticatedSecrets) {
+		return credentialSnapshotter{unavailable: CredentialProtectionSecretTooLong}
+	}
 	var variants []credentialVariant
-	result = ProtectedDiagnostic{Value: nil}
+	if p != nil {
+		variants = p.variants
+	}
+	if len(authenticatedSecrets) != 0 {
+		variants = mergeCredentialVariants(append([]credentialVariant(nil), variants...), credentialVariants(authenticatedSecrets))
+	}
+	return credentialSnapshotter{variants: variants}
+}
+
+func (s credentialSnapshotter) snapshot(value any, maxBytes int) (result ProtectedDiagnostic) {
 	defer func() {
 		if recover() != nil {
 			result = unavailableDiagnostic(CredentialProtectionFormattingFailed)
 		}
 	}()
-	if p != nil && p.configurationErr != CredentialProtectionAvailable {
-		return unavailableDiagnostic(p.configurationErr)
+	if s.unavailable != CredentialProtectionAvailable {
+		return unavailableDiagnostic(s.unavailable)
 	}
-	if credentialSecretTooLong(authenticatedSecrets) {
-		return unavailableDiagnostic(CredentialProtectionSecretTooLong)
-	}
-	if p != nil {
-		variants = append(variants, p.variants...)
-	}
-	variants = mergeCredentialVariants(variants, credentialVariants(authenticatedSecrets))
+	variants := s.variants
 
 	if maxBytes <= 0 {
 		return unavailableDiagnostic(CredentialProtectionInvalidBudget)

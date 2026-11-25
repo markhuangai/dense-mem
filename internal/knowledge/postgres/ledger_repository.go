@@ -40,11 +40,6 @@ type Store struct {
 
 	rememberIdempotencyLockMu sync.Mutex
 	rememberIdempotencyLocks  map[string]*rememberIdempotencyLockEntry
-
-	rememberDiagnosticLifecycleMu sync.Mutex
-	rememberDiagnosticCancel      context.CancelFunc
-	rememberDiagnosticDone        chan struct{}
-	rememberDiagnosticPurgeFn     func(context.Context) (int, error)
 }
 
 var _ LedgerRepository = (*Store)(nil)
@@ -85,21 +80,6 @@ func (r *Store) withTeamProfileTx(ctx context.Context, teamID, profileID string,
 		return errors.New("ledger: rls helper is required")
 	}
 	return r.rls.WithTeamProfileTx(ctx, r.db, teamID, profileID, func(tx *gorm.DB) error {
-		if err := ensureActiveTeamForMutation(ctx, tx, teamID); err != nil {
-			return err
-		}
-		return fn(tx)
-	})
-}
-
-func (r *Store) withTeamTx(ctx context.Context, teamID string, fn func(*gorm.DB) error) error {
-	if r == nil || r.db == nil {
-		return errors.New("ledger: database is required")
-	}
-	if r.rls == nil {
-		return errors.New("ledger: rls helper is required")
-	}
-	return r.rls.WithTeamTx(ctx, r.db, teamID, func(tx *gorm.DB) error {
 		if err := ensureActiveTeamForMutation(ctx, tx, teamID); err != nil {
 			return err
 		}

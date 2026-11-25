@@ -15,7 +15,7 @@ func bindRecallTool(tool Tool, deps Dependencies) Tool {
 		if deps.RecallBindings.Service == nil {
 			return nil, ErrToolUnavailable
 		}
-		if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
+		if err := validateBindingInput(ctx, tool, input); err != nil {
 			return nil, fmt.Errorf("recall_memory: invalid input: %w", err)
 		}
 		var req recall.RecallRequest
@@ -41,7 +41,7 @@ func bindRecallFeedbackTool(tool Tool, deps Dependencies) Tool {
 		if deps.Core.RecallFeedbackEvents == nil {
 			return nil, ErrToolUnavailable
 		}
-		if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
+		if err := validateBindingInput(ctx, tool, input); err != nil {
 			return nil, fmt.Errorf("submit_recall_session_feedback: invalid input: %w", err)
 		}
 		return submitRecallFeedback(ctx, deps, input)

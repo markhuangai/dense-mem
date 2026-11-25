@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"strings"
 	"time"
 
@@ -312,7 +313,7 @@ func (r *Store) SelectSearchReconciliationDocuments(
 				continue
 			}
 			if known && expected != nil {
-				if searchDocumentMatchesCanonical(item, *expected) && item.SearchState == string(domain.SearchProjectionCurrent) && observed.vectorCurrent {
+				if storagepostgres.SearchDocumentMatchesCanonical(item, *expected) && item.SearchState == string(domain.SearchProjectionCurrent) && observed.vectorCurrent {
 					continue
 				}
 				item = *expected
@@ -644,4 +645,9 @@ func (r *Store) FinishSearchReconciliationRun(
 		return fmt.Errorf("search: finish reconciliation run: %w", err)
 	}
 	return nil
+}
+
+func searchTimePointer(value time.Time) *time.Time {
+	value = value.UTC()
+	return &value
 }

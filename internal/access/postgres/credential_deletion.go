@@ -12,11 +12,11 @@ import (
 
 type CredentialDeletionAuditInput = privacycontract.CredentialDeletionAuditInput
 
-func (r *CredentialRepositoryImpl) deletionStore() privacycontract.CredentialDeletionStore {
+func (r *credentialRepository) deletionStore() privacycontract.CredentialDeletionStore {
 	return r.deletion
 }
 
-func (r *CredentialRepositoryImpl) DeleteForTeam(ctx context.Context, teamID, id uuid.UUID) (int64, error) {
+func (r *credentialRepository) DeleteForTeam(ctx context.Context, teamID, id uuid.UUID) (int64, error) {
 	deletion := r.deletionStore()
 	if deletion == nil {
 		return 0, fmt.Errorf("credential deletion store is unavailable")
@@ -34,7 +34,7 @@ func (r *CredentialRepositoryImpl) DeleteForTeam(ctx context.Context, teamID, id
 	return rows, nil
 }
 
-func (r *CredentialRepositoryImpl) DeleteForTeamWithAudit(ctx context.Context, teamID, id uuid.UUID, input privacycontract.CredentialDeletionAuditInput) (int64, error) {
+func (r *credentialRepository) DeleteForTeamWithAudit(ctx context.Context, teamID, id uuid.UUID, input privacycontract.CredentialDeletionAuditInput) (int64, error) {
 	deletion := r.deletionStore()
 	if deletion == nil {
 		return 0, fmt.Errorf("credential deletion store is unavailable")

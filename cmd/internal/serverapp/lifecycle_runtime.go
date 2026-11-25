@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"time"
@@ -68,6 +69,29 @@ func (l *runtimeLifecycle) start(name string, run func(context.Context)) {
 		defer close(done)
 		run(l.Context())
 	}()
+}
+
+func (l *runtimeLifecycle) startDiagnosticRetention(purge func(context.Context) (int, error), interval time.Duration, logger *slog.Logger) {
+	l.start("remember diagnostics", func(ctx context.Context) {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				deleted, err := purge(ctx)
+				if ctx.Err() != nil || logger == nil {
+					continue
+				}
+				if err != nil {
+					logger.ErrorContext(ctx, "remember attempt diagnostic purge failed", "error_code", "diagnostic_purge_failed", "error", err)
+				} else if deleted > 0 {
+					logger.InfoContext(ctx, "remember attempt diagnostics purged", "count", deleted)
+				}
+			}
+		}
+	})
 }
 
 func (l *runtimeLifecycle) shutdown(ctx context.Context) error {

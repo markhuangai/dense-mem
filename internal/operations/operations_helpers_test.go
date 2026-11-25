@@ -47,18 +47,6 @@ func TestCheckActiveAuthorityRequiresCompatibleMarker(t *testing.T) {
 	}
 }
 
-func TestInvariantScanCompatibilityReportsRemovedService(t *testing.T) {
-	service := NewInvariantScanService(nil, nil)
-
-	result, err := service.Scan(context.Background())
-	require.ErrorIs(t, err, ErrInvariantScanRemoved)
-	require.Equal(t, "removed", result.Status)
-
-	result, err = service.ScanWithAudit(context.Background(), nil, "", "", "")
-	require.ErrorIs(t, err, ErrInvariantScanRemoved)
-	require.Equal(t, "removed", result.Status)
-}
-
 func TestCheckSearchReadinessReportsBoundedReasons(t *testing.T) {
 	require.ErrorContains(t, CheckSearchReadiness(context.Background(), nil), "search repository is required")
 

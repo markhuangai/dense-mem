@@ -17,6 +17,14 @@ import (
 
 var (
 	ErrTeamInactive                     = knowledgecontract.ErrTeamInactive
+	ErrCredentialNameConflict           = errors.New("credential name is already in use")
+	ErrCredentialOwnerConflict          = errors.New("credential owner is already in use")
+	ErrOAuthIssuerConflict              = errors.New("OAuth issuer is already in use")
+	ErrTeamNotFound                     = errors.New("team not found")
+	ErrTeamNameConflict                 = errors.New("team name already exists")
+	ErrDirectoryResourceNotFound        = errors.New("directory resource not found")
+	ErrControlIdentityNotFound          = errors.New("control identity resource not found")
+	ErrControlIdentityInvalid           = errors.New("control identity resource is invalid")
 	ErrDirectoryIdentityNotProvisioned  = errors.New("directory identity is not provisioned and active")
 	ErrDirectoryManagedMapping          = errors.New("directory-managed sso mappings are read-only")
 	ErrDirectoryResourceConflict        = errors.New("directory resource conflict")

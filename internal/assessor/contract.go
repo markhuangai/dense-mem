@@ -27,10 +27,6 @@ func nullableStringSchema(maxLength int) map[string]any {
 	return map[string]any{"type": []any{"string", "null"}, "maxLength": maxLength}
 }
 
-func nullableDateTimeSchema() map[string]any {
-	return map[string]any{"type": []any{"string", "null"}, "format": "date-time"}
-}
-
 func numberSchema(minimum float64, maximum float64) map[string]any {
 	return map[string]any{"type": "number", "minimum": minimum, "maximum": maximum}
 }

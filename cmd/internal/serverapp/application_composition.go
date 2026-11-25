@@ -17,16 +17,18 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
 	settings "github.com/markhuangai/dense-mem/internal/settings"
-	"github.com/markhuangai/dense-mem/internal/topicassignment"
+	"github.com/markhuangai/dense-mem/internal/topics"
 	traceapp "github.com/markhuangai/dense-mem/internal/trace"
 )
 
 type applicationCompositionDependencies struct {
-	TopicAssignment             *topicassignment.Service
+	TopicAssignment             *topics.AssignmentService
 	PublicSeedAdmission         *rememberapp.PublicSeedAdmission
 	Knowledge                   *knowledgepostgres.Store
+	SessionRepository           session.Repository
 	RememberPersistence         remembercontract.Persistence
 	TraceStore                  traceapp.SemanticTraceStore
+	MemoryPackReader            memorypack.MemoryPackSemanticReader
 	Search                      searchcontract.SearchRepository
 	RecallSearch                recallcontract.SearchRepository
 	RecallFeedbackEvents        recallcontract.FeedbackEventRepository
@@ -81,7 +83,7 @@ func buildApplicationBundle(deps applicationCompositionDependencies) application
 		Decisions: deps.Decisions, DecisionSettings: deps.DecisionSettings,
 		EmbeddingExecutor: embeddingExecutor, Limits: deps.AssessmentLimits, Metrics: deps.Metrics,
 		Logger: deps.Logger, DiagnosticProtector: deps.DiagnosticProtector, Audit: deps.Audit,
-	}, deps.Knowledge, deps.GeneratorTransport, deps.RememberModel, deps.SessionEnabled)
+	}, deps.SessionRepository, deps.GeneratorTransport, deps.RememberModel, deps.SessionEnabled)
 	recallService := buildRecallApplication(recallApplicationDependencies{
 		DiagnosticProtector:    deps.DiagnosticProtector,
 		Search:                 deps.RecallSearch,
@@ -103,7 +105,7 @@ func buildApplicationBundle(deps applicationCompositionDependencies) application
 		Recall:         recallService,
 		Lifecycle:      lifecycleService,
 		Context:        contextService,
-		MemoryPack:     buildMemoryPackApplication(memoryPackApplicationDependencies{Trace: deps.TraceStore, Logger: deps.Logger}),
+		MemoryPack:     buildMemoryPackApplication(memoryPackApplicationDependencies{Trace: deps.MemoryPackReader, Logger: deps.Logger}),
 		RecallFeedback: buildRecallFeedbackApplication(recallFeedbackApplicationDependencies{Events: deps.RecallFeedbackEvents, Config: deps.AppConfig}),
 	}
 }

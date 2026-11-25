@@ -31,7 +31,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
-	rememberprocessor "github.com/markhuangai/dense-mem/internal/remember/service/processor"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
@@ -139,7 +138,7 @@ func TestRememberProgressPostgres(t *testing.T) {
 	model, dimensions := ensureRememberProcessorIntegrationSearchContract(t, admin, rls)
 	provider := &progressPostgresAssessor{}
 	embedder := &progressPostgresEmbedder{rememberProcessorIntegrationSearchEmbedder: rememberProcessorIntegrationSearchEmbedder{model: model, dimensions: dimensions}}
-	processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
+	processor := rememberapp.NewSynchronousProcessor(rememberapp.ProcessorDependencies{
 		Ledger: knowledgepostgres.NewStore(app, rls), Assessor: provider,
 		EmbeddingExecutor: semanticwrite.NewProviderExecutor(embedding.NewRetryEmbeddingProvider(embedder, nil)), Limits: assessor.DefaultSemanticAssessmentLimits(),
 		CommitFailureStage: knowledgepostgres.RememberCommitFailureStage,

@@ -62,28 +62,6 @@ func (r *Store) withSystemTx(ctx context.Context, fn func(*gorm.DB) error) error
 	return r.rls.WithSystemTx(ctx, r.db, fn)
 }
 
-func (r *Store) withActiveSystemTeamTx(ctx context.Context, teamID string, fn func(*gorm.DB) error) error {
-	if _, err := r.database(); err != nil {
-		return err
-	}
-	if r.rls == nil {
-		return errors.New("search: rls helper is required")
-	}
-	return r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
-		if err := tx.Exec("SELECT set_config('app.current_team_id', ?, true)", teamID).Error; err != nil {
-			return fmt.Errorf("failed to set app.current_team_id: %w", err)
-		}
-		if err := ensureActiveTeamForMutation(ctx, tx, teamID); err != nil {
-			return err
-		}
-		return fn(tx)
-	})
-}
-
-func ensureActiveTeamForMutation(ctx context.Context, tx *gorm.DB, teamID string) error {
-	return storagepostgres.EnsureActiveTeamForMutation(ctx, tx, teamID)
-}
-
 func (r *Store) sqlDB() (*sql.DB, error) {
 	db, err := r.database()
 	if err != nil {

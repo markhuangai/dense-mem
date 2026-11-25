@@ -15,7 +15,7 @@ import (
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
-func (h *controlPortalHandler) listRememberAttemptDiagnostics(c *echo.Context) error {
+func (h *controlDiagnosticsHandler) listRememberAttemptDiagnostics(c *echo.Context) error {
 	if h.rememberAttempts == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "remember attempt diagnostics unavailable")
 	}
@@ -33,7 +33,7 @@ func (h *controlPortalHandler) listRememberAttemptDiagnostics(c *echo.Context) e
 	return response.PaginatedOK(c, page.Items, response.Pagination{Limit: filter.Limit, Offset: filter.Offset, Total: page.Total})
 }
 
-func (h *controlPortalHandler) getRememberAttemptDiagnostic(c *echo.Context) error {
+func (h *controlDiagnosticsHandler) getRememberAttemptDiagnostic(c *echo.Context) error {
 	if h.rememberAttempts == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "remember attempt diagnostics unavailable")
 	}

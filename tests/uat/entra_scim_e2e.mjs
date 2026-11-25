@@ -1,7 +1,12 @@
+import { spawnSync } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
+
 const controlURL = requiredURL("DENSE_MEM_CONTROL_URL");
 const userURL = requiredURL("DENSE_MEM_USER_URL");
 const controlToken = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
 const entraMockURL = requiredURL("DENSE_MEM_ENTRA_MOCK_URL");
+const composeProject = requiredEnv("DENSE_MEM_E2E_COMPOSE_PROJECT");
+const composeFile = requiredEnv("DENSE_MEM_E2E_COMPOSE_FILE");
 
 const controlHeaders = { Authorization: `Bearer ${controlToken}` };
 
@@ -14,6 +19,7 @@ const user = await provisionUser(connector.id, scimToken);
 const managerGroup = await provisionManagerGroup(connector.id, scimToken, user.id);
 const unassignedGroup = await provisionUnassignedManagerGroup(connector.id, scimToken);
 await verifyDirectoryPagination(connector.id, scimToken, user, [unassignedGroup, managerGroup]);
+await verifyDirectoryStorageError(connector.id);
 await activateDirectoryConnector(connector.id);
 await createControlAdminGroup(provider.id);
 await verifyConfiguredProviders(provider.id);
@@ -171,6 +177,66 @@ async function verifyDirectoryPagination(connectorID, token, user, groups) {
     }
   }
   console.log("Entra SCIM pagination positive and adverse cases passed.");
+}
+
+function compose(args) {
+  const result = spawnSync("docker", ["compose", "-p", composeProject, "-f", composeFile, ...args], {
+    encoding: "utf8", maxBuffer: 20 * 1024 * 1024,
+  });
+  assert(!result.error && result.status === 0, "directory scenario Compose command failed");
+  return result.stdout;
+}
+
+function setDirectoryFault(enabled) {
+  const sql = enabled ? `
+    CREATE FUNCTION public.dense_mem_e2e_directory_fault() RETURNS trigger
+    LANGUAGE plpgsql AS $fault$ BEGIN
+      RAISE EXCEPTION 'directory activation storage fixture';
+    END $fault$;
+    CREATE TRIGGER dense_mem_e2e_directory_fault BEFORE UPDATE OF status ON sso_directory_connectors
+      FOR EACH ROW WHEN (NEW.status = 'active')
+      EXECUTE FUNCTION public.dense_mem_e2e_directory_fault();
+  ` : `
+    DROP TRIGGER IF EXISTS dense_mem_e2e_directory_fault ON sso_directory_connectors;
+    DROP FUNCTION IF EXISTS public.dense_mem_e2e_directory_fault();
+  `;
+  compose(["exec", "-T", "postgres", "sh", "-ec",
+    'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "$1"', "directory-fault", sql]);
+}
+
+async function verifyDirectoryStorageError(connectorID) {
+  const path = `/control/api/sso/directory/connectors/${connectorID}`;
+  const preview = await controlEnvelope(`${path}/preview`);
+  const correlationID = randomUUID();
+  setDirectoryFault(true);
+  try {
+    const error = await jsonResponse(`${controlURL}${path}/status`, {
+      method: "POST",
+      headers: { ...controlHeaders, "X-Correlation-ID": correlationID },
+      body: { status: "active", preview_version: preview.version },
+    }, 500);
+    assert(!JSON.stringify(error).includes("directory activation storage fixture"), "public error includes the PostgreSQL cause");
+  } finally {
+    setDirectoryFault(false);
+  }
+  const log = compose(["logs", "--no-color", "--no-log-prefix", "server"]);
+  const events = log.trim().split("\n").map((line) => {
+    try { return JSON.parse(line); } catch { return null; }
+  }).filter((record) => record?.msg === "directory_operation_failed" && record.correlation_id === correlationID);
+  assert(events.length === 1 && JSON.stringify(events[0]).includes("directory activation storage fixture"),
+    "console did not associate the database failure with the activation request");
+  assert(!JSON.stringify(events[0]).includes(controlToken), "directory diagnostic contains a credential");
+  const event = events[0];
+  assert.equal(event.connector_id, connectorID);
+  assert.equal(event.preview_version, preview.version);
+  assert(event.elapsed_ms >= 0);
+  const hash = createHash("sha256").update(JSON.stringify(event)).digest("hex");
+  console.log(JSON.stringify({
+    event: "directory_activation_diagnosed", correlation_id: correlationID, connector_id: connectorID,
+    preview_version: event.preview_version, elapsed_ms: event.elapsed_ms, outcome: event.outcome,
+    count: events.length, chunk_count: 0, verified_sha256: hash,
+    cause: "postgres_write_failed", corrective_action: "restore PostgreSQL write availability and retry the current preview",
+  }));
 }
 
 async function activateDirectoryConnector(connectorID) {

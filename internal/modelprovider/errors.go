@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -115,6 +118,34 @@ func (e *ProviderError) Is(target error) bool {
 // Unwrap returns the underlying cause.
 func (e *ProviderError) Unwrap() error {
 	return e.Cause
+}
+
+const maxRetryAfterSeconds = 300
+
+// RetryAfterSeconds parses a provider delay or HTTP date and caps the wait.
+func RetryAfterSeconds(value string, now time.Time) int {
+	value = strings.TrimSpace(value)
+	if seconds, err := strconv.Atoi(value); err == nil {
+		if seconds >= maxRetryAfterSeconds {
+			return int(providerFailureMaxRetryAfter / time.Second)
+		}
+		if seconds > 0 {
+			return seconds
+		}
+		return 0
+	}
+	retryAt, err := http.ParseTime(value)
+	if err != nil {
+		return 0
+	}
+	delay := retryAt.Sub(now)
+	if delay <= 0 {
+		return 0
+	}
+	if delay >= maxRetryAfterSeconds*time.Second {
+		return int(providerFailureMaxRetryAfter / time.Second)
+	}
+	return int((delay + time.Second - 1) / time.Second)
 }
 
 // RateLimitError wraps ErrVerifierRateLimit with additional context.

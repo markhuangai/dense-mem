@@ -205,8 +205,8 @@ func (s *PrometheusTelemetryService) Snapshot(ctx context.Context, filter Teleme
 		stateSeries := buildTelemetrySeries(initialStateSpecs, nil, featureStates, from, to, windowedCardsWithInternal, scope)
 		windowedCards := visibleTelemetryCards(windowedCardsWithInternal)
 		currentCards := visibleTelemetryCards(currentCardsWithInternal)
-		markTelemetryUnavailableForNonLedger(windowedCards, initialWindowedSpecs, "source_unconfigured")
-		markTelemetryUnavailableForNonLedger(currentCards, initialCurrentSpecs, "source_unconfigured")
+		markTelemetryUnavailable(windowedCards, "source_unconfigured")
+		markTelemetryUnavailable(currentCards, "source_unconfigured")
 		markTelemetryUnavailableSeries(activitySeries, "source_unconfigured")
 		markTelemetryUnavailableSeries(stateSeries, "source_unconfigured")
 		snapshot.WindowedCards = windowedCards
@@ -266,7 +266,6 @@ type telemetryQuerySpec struct {
 	Label    string
 	Unit     string
 	Query    string
-	Ledger   bool
 	Internal bool
 	Catalog  telemetryCatalogEntry
 }

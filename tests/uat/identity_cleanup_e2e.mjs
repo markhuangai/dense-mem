@@ -211,6 +211,18 @@ const portalCookies = await createPortalSession(apiKey);
 
 const sameTeam = await createCredential(teamID, `${runID}-same-team`);
 const otherTeam = await createTeam(`${runID}-other-team`);
+const duplicateTeam = await fetch(`${controlURL}/control/api/teams`, {
+  method: "POST",
+  headers: { Authorization: `Bearer ${controlToken}`, "Content-Type": "application/json" },
+  body: JSON.stringify({ name: `${runID}-other-team`.toUpperCase() }),
+});
+if (duplicateTeam.status !== 409) {
+  throw new Error(`duplicate active team should return 409, got ${duplicateTeam.status}`);
+}
+const duplicateTeamError = await duplicateTeam.json();
+if (duplicateTeamError.reason_code !== "team_name_conflict") {
+  throw new Error("duplicate team conflict did not include its stable reason");
+}
 const crossTeam = await createCredential(otherTeam.id, `${runID}-cross-team`);
 
 const receipt = await mcpSuccess(apiKey, "remember", rememberInput());

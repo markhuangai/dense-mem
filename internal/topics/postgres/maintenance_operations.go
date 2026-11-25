@@ -211,17 +211,18 @@ func (s *Store) MaintenanceStatus(ctx context.Context, now time.Time) (topic.Mai
 		 SELECT 1 FROM topic_maintenance_markers AS marker WHERE marker.team_id=team.id AND marker.shared_space_id=space.id AND marker.space_generation=space.generation)))`).Row().Scan(&result.DiscoveryComplete); err != nil {
 			return err
 		}
-		if err := tx.Raw(`SELECT count(*) FILTER (WHERE latest.status='placed'),
-			count(*) FILTER (WHERE latest.status='standalone'),count(*) FILTER (WHERE latest.status IS NULL),
-			count(*) FILTER (WHERE latest.status='failed')
-			FROM topic_record_heads AS head JOIN teams AS team ON team.id=head.team_id AND team.status='active' AND team.deleted_at IS NULL
-			JOIN memory_spaces AS space ON space.team_id=head.team_id AND space.id=head.shared_space_id
-			 AND space.generation=head.space_generation AND space.lifecycle_state='active' AND space.kind='team_shared'
-			LEFT JOIN LATERAL (SELECT status FROM community_placement_outcomes AS result
-			  WHERE result.team_id=head.team_id AND result.shared_space_id=head.shared_space_id AND result.space_generation=head.space_generation
-			  AND result.topic_id=head.record_id AND result.topic_version=head.version AND `+currentCommunityParent+`
-			  ORDER BY created_at DESC,outcome_id LIMIT 1) AS latest ON true
-			WHERE head.kind='topic' AND NOT head.retired`).Row().Scan(&result.Communities.Placed, &result.Communities.Standalone, &result.Communities.Pending, &result.Communities.Failed); err != nil {
+		if err := tx.Raw(`SELECT count(*) FILTER (WHERE current.placement='placed'),
+            count(*) FILTER (WHERE current.placement='standalone'),
+            count(*) FILTER (WHERE current.placement='declared' AND latest.status IS DISTINCT FROM 'failed'),
+            count(*) FILTER (WHERE latest.status='failed')
+            FROM topics AS current JOIN teams AS team ON team.id=current.team_id AND team.status='active' AND team.deleted_at IS NULL
+            JOIN memory_spaces AS space ON space.team_id=current.team_id AND space.id=current.shared_space_id
+                AND space.generation=current.space_generation AND space.lifecycle_state='active' AND space.kind='team_shared'
+            LEFT JOIN LATERAL (SELECT status FROM community_placement_outcomes AS result
+                WHERE (result.team_id,result.shared_space_id,result.space_generation,result.topic_id,result.topic_version)=
+                    (current.team_id,current.shared_space_id,current.space_generation,current.topic_id,current.definition_version)
+                ORDER BY created_at DESC,outcome_id LIMIT 1) AS latest ON true
+            WHERE NOT current.retired`).Row().Scan(&result.Communities.Placed, &result.Communities.Standalone, &result.Communities.Pending, &result.Communities.Failed); err != nil {
 			return err
 		}
 		result.CoverageComplete = result.DiscoveryComplete && result.Counts.Pending == 0 && result.Counts.Failed == 0 && result.Counts.Ambiguous == 0 && result.Communities.Pending == 0 && result.Communities.Failed == 0

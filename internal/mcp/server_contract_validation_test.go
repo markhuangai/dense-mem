@@ -143,7 +143,7 @@ func TestServerInputRejectionPreservesSecretRedactionContext(t *testing.T) {
 	authenticationSecret := "dm_live_client-a"
 	ctx := correlation.WithClientProvidedID(context.Background(), correlationSecret)
 	ctx = observability.WithAuthenticationSecrets(ctx, authenticationSecret)
-	server := NewServer(reg, teamID.String(), testLoggerAdapter{delegate: root})
+	server := NewServer(reg, teamID.String(), root.ContextSlog())
 
 	_, rpcErr := server.invokeTool(testMemoryContext(ctx, nil), registry.ToolRemember, map[string]any{
 		"team_id": uuid.NewString(),

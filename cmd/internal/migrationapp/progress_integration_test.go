@@ -29,7 +29,6 @@ import (
 )
 
 type progressLog struct {
-	mu     sync.Mutex
 	file   *os.File
 	logger *slog.Logger
 }

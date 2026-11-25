@@ -255,5 +255,30 @@ func ValidateStartupMigrationState(ctx context.Context, db *sql.DB, migrationsDi
 			return err
 		}
 	}
+	if state.DatabaseLatest >= RelationalTopicCutoverVersion {
+		tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err := tx.ExecContext(ctx, `SELECT set_config('app.tx_mode','system',true)`); err != nil {
+			return err
+		}
+		var valid bool
+		err = tx.QueryRowContext(ctx, `SELECT
+            EXISTS(SELECT 1 FROM data_migration_runs WHERE migration_version=$1 AND phase='complete' AND source_fingerprint IS NOT NULL)
+            AND to_regclass('public.topics') IS NOT NULL AND to_regclass('public.topic_memberships') IS NOT NULL
+            AND to_regclass('public.evidence_equivalences') IS NOT NULL
+            AND NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname IN ('offline_upgrade_fence','feature_storage_write_gate'))`,
+			RelationalTopicDataVersion).Scan(&valid)
+		if err != nil {
+			return err
+		}
+		if !valid {
+			return fmt.Errorf("%w: relational Topic migration is incomplete", ErrInvalidMigrationState)
+		}
+		return tx.Commit()
+	}
+
 	return nil
 }

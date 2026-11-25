@@ -16,66 +16,28 @@ import (
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
-type SSORepository interface {
-	GetSSOOwnedCredentialByID(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*domain.Credential, error)
-	ListProviders(ctx context.Context) ([]*domain.SSOProvider, error)
-	ListEnabledProviders(ctx context.Context) ([]*domain.SSOProvider, error)
-	GetProvider(ctx context.Context, id uuid.UUID) (*domain.SSOProvider, error)
-	CreateProvider(ctx context.Context, provider *domain.SSOProvider) error
-	UpdateProvider(ctx context.Context, provider *domain.SSOProvider) error
-	UpdateProviderPreservingProtectedResource(ctx context.Context, provider *domain.SSOProvider) error
-	DeleteProvider(ctx context.Context, id uuid.UUID) error
-
-	ListMappings(ctx context.Context, providerID uuid.UUID) ([]*domain.SSOGroupMapping, error)
-	CreateMapping(ctx context.Context, mapping *domain.SSOGroupMapping) error
-	UpdateMapping(ctx context.Context, mapping *domain.SSOGroupMapping) error
-	DeleteMapping(ctx context.Context, providerID, id uuid.UUID) error
-	ListMappingsForGroups(ctx context.Context, providerID uuid.UUID, groups []string) ([]*domain.SSOGroupMapping, error)
-	DirectoryAuthorityActive(ctx context.Context, providerID uuid.UUID) (bool, error)
-	DirectoryMembershipEntitled(ctx context.Context, providerID, identityID, teamID uuid.UUID, groupID string) (bool, error)
-
-	UpsertIdentity(ctx context.Context, identity *domain.SSOIdentity) error
-	GetIdentity(ctx context.Context, id uuid.UUID) (*domain.SSOIdentity, error)
-	GetIdentityByProviderSubject(ctx context.Context, providerID uuid.UUID, subject string) (*domain.SSOIdentity, error)
-
-	UpsertTeamMembershipForMapping(ctx context.Context, identity domain.SSOIdentity, mapping domain.SSOGroupMapping, name string) (*domain.Membership, error)
-	ListTeamMembershipsForIdentity(ctx context.Context, identityID uuid.UUID) ([]*domain.SSOTeamMembership, error)
-	GetTeamMembershipByOwnerID(ctx context.Context, id uuid.UUID) (*domain.SSOTeamMembership, error)
-
-	GetEntitlementCache(ctx context.Context, providerID uuid.UUID, subject string) (*domain.SSOEntitlementCache, error)
-	SetEntitlementCache(ctx context.Context, cache domain.SSOEntitlementCache) error
-
-	CreateOAuthState(ctx context.Context, state domain.SSOOAuthState) error
-	ConsumeOAuthState(ctx context.Context, stateHash string) (*domain.SSOOAuthState, error)
-	DeleteExpiredOAuthStates(ctx context.Context, now time.Time) error
-
-	CreateSession(ctx context.Context, session domain.SSOSession) error
-	GetSession(ctx context.Context, sessionHash string) (*domain.SSOSession, error)
-	UpdateSessionTeam(ctx context.Context, sessionHash string, teamID uuid.UUID) error
-	DeleteSession(ctx context.Context, sessionHash string) error
-	DeleteExpiredSessions(ctx context.Context, now time.Time) error
-}
-
-type SSORepositoryImpl struct {
+type sSORepository struct {
 	db  *gorm.DB
 	rls storagepostgres.RLSHelper
 }
 
-var _ SSORepository = (*SSORepositoryImpl)(nil)
-
-func NewSSORepository(db *gorm.DB, rls storagepostgres.RLSHelper) *SSORepositoryImpl {
-	return &SSORepositoryImpl{db: db, rls: rls}
+func NewSSORepository(db *gorm.DB, rls storagepostgres.RLSHelper) *sSORepository {
+	return &sSORepository{db: db, rls: rls}
 }
 
-func (r *SSORepositoryImpl) ListProviders(ctx context.Context) ([]*domain.SSOProvider, error) {
-	return r.listProviders(ctx, false)
+func (r *sSORepository) ListProviders(ctx context.Context) ([]*domain.SSOProvider, error) {
+	return r.listProviders(ctx, false, "")
 }
 
-func (r *SSORepositoryImpl) ListEnabledProviders(ctx context.Context) ([]*domain.SSOProvider, error) {
-	return r.listProviders(ctx, true)
+func (r *sSORepository) ListEnabledProviders(ctx context.Context) ([]*domain.SSOProvider, error) {
+	return r.listProviders(ctx, true, "")
 }
 
-func (r *SSORepositoryImpl) listProviders(ctx context.Context, enabledOnly bool) ([]*domain.SSOProvider, error) {
+func (r *sSORepository) ListEnabledOAuthIssuer(ctx context.Context, issuer string) ([]*domain.SSOProvider, error) {
+	return r.listProviders(ctx, true, issuer)
+}
+
+func (r *sSORepository) listProviders(ctx context.Context, enabledOnly bool, oauthIssuer string) ([]*domain.SSOProvider, error) {
 	providers := make([]*domain.SSOProvider, 0)
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		query := `
@@ -84,9 +46,13 @@ func (r *SSORepositoryImpl) listProviders(ctx context.Context, enabledOnly bool)
 		if enabledOnly {
 			query += ` WHERE enabled = true AND retired_at IS NULL`
 		}
+		var args []any
+		if oauthIssuer != "" {
+			query += ` AND protected_resource_config @> '{"enabled":true}'::jsonb AND issuer_url=?`
+			args = append(args, oauthIssuer)
+		}
 		query += ` ORDER BY name ASC, id ASC`
-
-		rows, err := tx.Raw(query).Rows()
+		rows, err := tx.Raw(query, args...).Rows()
 		if err != nil {
 			return err
 		}
@@ -106,7 +72,7 @@ func (r *SSORepositoryImpl) listProviders(ctx context.Context, enabledOnly bool)
 	return providers, nil
 }
 
-func (r *SSORepositoryImpl) GetProvider(ctx context.Context, id uuid.UUID) (*domain.SSOProvider, error) {
+func (r *sSORepository) GetProvider(ctx context.Context, id uuid.UUID) (*domain.SSOProvider, error) {
 	var provider *domain.SSOProvider
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
@@ -134,7 +100,7 @@ func (r *SSORepositoryImpl) GetProvider(ctx context.Context, id uuid.UUID) (*dom
 	return provider, nil
 }
 
-func (r *SSORepositoryImpl) CreateProvider(ctx context.Context, provider *domain.SSOProvider) error {
+func (r *sSORepository) CreateProvider(ctx context.Context, provider *domain.SSOProvider) error {
 	if provider.ID == uuid.Nil {
 		provider.ID = uuid.New()
 	}
@@ -164,20 +130,20 @@ func (r *SSORepositoryImpl) CreateProvider(ctx context.Context, provider *domain
 		return enforceSSOProtectedResourceProfileLimitTx(tx)
 	})
 	if err != nil {
-		return fmt.Errorf("failed to create sso provider: %w", err)
+		return fmt.Errorf("failed to create sso provider: %w", oauthProviderWriteError(err))
 	}
 	return nil
 }
 
-func (r *SSORepositoryImpl) UpdateProvider(ctx context.Context, provider *domain.SSOProvider) error {
+func (r *sSORepository) UpdateProvider(ctx context.Context, provider *domain.SSOProvider) error {
 	return r.updateProvider(ctx, provider, false)
 }
 
-func (r *SSORepositoryImpl) UpdateProviderPreservingProtectedResource(ctx context.Context, provider *domain.SSOProvider) error {
+func (r *sSORepository) UpdateProviderPreservingProtectedResource(ctx context.Context, provider *domain.SSOProvider) error {
 	return r.updateProvider(ctx, provider, true)
 }
 
-func (r *SSORepositoryImpl) updateProvider(ctx context.Context, provider *domain.SSOProvider, preserveProtectedResource bool) error {
+func (r *sSORepository) updateProvider(ctx context.Context, provider *domain.SSOProvider, preserveProtectedResource bool) error {
 	now := time.Now().UTC()
 	provider.UpdatedAt = now
 	protectedResource, err := json.Marshal(provider.ProtectedResource)
@@ -221,12 +187,12 @@ func (r *SSORepositoryImpl) updateProvider(ctx context.Context, provider *domain
 		return enforceSSOProtectedResourceProfileLimitTx(tx)
 	})
 	if err != nil {
-		return fmt.Errorf("failed to update sso provider: %w", err)
+		return fmt.Errorf("failed to update sso provider: %w", oauthProviderWriteError(err))
 	}
 	return nil
 }
 
-func (r *SSORepositoryImpl) DeleteProvider(ctx context.Context, id uuid.UUID) error {
+func (r *sSORepository) DeleteProvider(ctx context.Context, id uuid.UUID) error {
 	now := time.Now().UTC()
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		if err := lockSSOProtectedResourceProviderSetTx(tx); err != nil {
@@ -333,7 +299,7 @@ func bumpDirectoryConnectorReconcileVersionForProviderTx(tx *gorm.DB, providerID
 	`, now, providerID).Error
 }
 
-func (r *SSORepositoryImpl) ListMappings(ctx context.Context, providerID uuid.UUID) ([]*domain.SSOGroupMapping, error) {
+func (r *sSORepository) ListMappings(ctx context.Context, providerID uuid.UUID) ([]*domain.SSOGroupMapping, error) {
 	mappings := make([]*domain.SSOGroupMapping, 0)
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
@@ -363,7 +329,7 @@ func (r *SSORepositoryImpl) ListMappings(ctx context.Context, providerID uuid.UU
 	return mappings, nil
 }
 
-func (r *SSORepositoryImpl) CreateMapping(ctx context.Context, mapping *domain.SSOGroupMapping) error {
+func (r *sSORepository) CreateMapping(ctx context.Context, mapping *domain.SSOGroupMapping) error {
 	if mapping.ID == uuid.Nil {
 		mapping.ID = uuid.New()
 	}
@@ -434,7 +400,7 @@ func (r *SSORepositoryImpl) CreateMapping(ctx context.Context, mapping *domain.S
 	return nil
 }
 
-func (r *SSORepositoryImpl) UpdateMapping(ctx context.Context, mapping *domain.SSOGroupMapping) error {
+func (r *sSORepository) UpdateMapping(ctx context.Context, mapping *domain.SSOGroupMapping) error {
 	now := time.Now().UTC()
 	mapping.UpdatedAt = now
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
@@ -491,7 +457,7 @@ func (r *SSORepositoryImpl) UpdateMapping(ctx context.Context, mapping *domain.S
 	return nil
 }
 
-func (r *SSORepositoryImpl) DeleteMapping(ctx context.Context, providerID, id uuid.UUID) error {
+func (r *sSORepository) DeleteMapping(ctx context.Context, providerID, id uuid.UUID) error {
 	now := time.Now().UTC()
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		if err := lockDirectoryConnectorForProviderTx(tx, providerID); err != nil {
@@ -535,7 +501,7 @@ func (r *SSORepositoryImpl) DeleteMapping(ctx context.Context, providerID, id uu
 	return nil
 }
 
-func (r *SSORepositoryImpl) ListMappingsForGroups(ctx context.Context, providerID uuid.UUID, groups []string) ([]*domain.SSOGroupMapping, error) {
+func (r *sSORepository) ListMappingsForGroups(ctx context.Context, providerID uuid.UUID, groups []string) ([]*domain.SSOGroupMapping, error) {
 	if len(groups) == 0 {
 		return []*domain.SSOGroupMapping{}, nil
 	}
@@ -572,7 +538,7 @@ func (r *SSORepositoryImpl) ListMappingsForGroups(ctx context.Context, providerI
 	return mappings, nil
 }
 
-func (r *SSORepositoryImpl) UpsertTeamMembershipForMapping(ctx context.Context, identity domain.SSOIdentity, mapping domain.SSOGroupMapping, name string) (*domain.Membership, error) {
+func (r *sSORepository) UpsertTeamMembershipForMapping(ctx context.Context, identity domain.SSOIdentity, mapping domain.SSOGroupMapping, name string) (*domain.Membership, error) {
 	now := time.Now().UTC()
 	var result *domain.Membership
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
@@ -677,7 +643,7 @@ func setActiveSSOTeamMutationScope(ctx context.Context, tx *gorm.DB, teamID stri
 	return ensureActiveTeamForMutation(ctx, tx, teamID)
 }
 
-func (r *SSORepositoryImpl) ListTeamMembershipsForIdentity(ctx context.Context, identityID uuid.UUID) ([]*domain.SSOTeamMembership, error) {
+func (r *sSORepository) ListTeamMembershipsForIdentity(ctx context.Context, identityID uuid.UUID) ([]*domain.SSOTeamMembership, error) {
 	memberships := make([]*domain.SSOTeamMembership, 0)
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
@@ -734,7 +700,7 @@ func (r *SSORepositoryImpl) ListTeamMembershipsForIdentity(ctx context.Context, 
 	return memberships, nil
 }
 
-func (r *SSORepositoryImpl) GetTeamMembershipByOwnerID(ctx context.Context, id uuid.UUID) (*domain.SSOTeamMembership, error) {
+func (r *sSORepository) GetTeamMembershipByOwnerID(ctx context.Context, id uuid.UUID) (*domain.SSOTeamMembership, error) {
 	var result *domain.SSOTeamMembership
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
@@ -786,7 +752,7 @@ func (r *SSORepositoryImpl) GetTeamMembershipByOwnerID(ctx context.Context, id u
 	return result, nil
 }
 
-func (r *SSORepositoryImpl) GetEntitlementCache(ctx context.Context, providerID uuid.UUID, subject string) (*domain.SSOEntitlementCache, error) {
+func (r *sSORepository) GetEntitlementCache(ctx context.Context, providerID uuid.UUID, subject string) (*domain.SSOEntitlementCache, error) {
 	var cache *domain.SSOEntitlementCache
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
@@ -814,7 +780,7 @@ func (r *SSORepositoryImpl) GetEntitlementCache(ctx context.Context, providerID 
 	return cache, nil
 }
 
-func (r *SSORepositoryImpl) SetEntitlementCache(ctx context.Context, cache domain.SSOEntitlementCache) error {
+func (r *sSORepository) SetEntitlementCache(ctx context.Context, cache domain.SSOEntitlementCache) error {
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			INSERT INTO sso_entitlement_cache (provider_id, subject, groups, status, checked_at, expires_at, error)
@@ -833,7 +799,7 @@ func (r *SSORepositoryImpl) SetEntitlementCache(ctx context.Context, cache domai
 	return nil
 }
 
-func (r *SSORepositoryImpl) CreateOAuthState(ctx context.Context, state domain.SSOOAuthState) error {
+func (r *sSORepository) CreateOAuthState(ctx context.Context, state domain.SSOOAuthState) error {
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			INSERT INTO sso_oauth_states (state_hash, provider_id, pkce_verifier, nonce, redirect_path, expires_at, created_at)
@@ -846,7 +812,7 @@ func (r *SSORepositoryImpl) CreateOAuthState(ctx context.Context, state domain.S
 	return nil
 }
 
-func (r *SSORepositoryImpl) ConsumeOAuthState(ctx context.Context, stateHash string) (*domain.SSOOAuthState, error) {
+func (r *sSORepository) ConsumeOAuthState(ctx context.Context, stateHash string) (*domain.SSOOAuthState, error) {
 	var state *domain.SSOOAuthState
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
@@ -874,7 +840,7 @@ func (r *SSORepositoryImpl) ConsumeOAuthState(ctx context.Context, stateHash str
 	return state, nil
 }
 
-func (r *SSORepositoryImpl) DeleteExpiredOAuthStates(ctx context.Context, now time.Time) error {
+func (r *sSORepository) DeleteExpiredOAuthStates(ctx context.Context, now time.Time) error {
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		return tx.Exec(`DELETE FROM sso_oauth_states WHERE expires_at <= $1`, now).Error
 	})
@@ -884,7 +850,7 @@ func (r *SSORepositoryImpl) DeleteExpiredOAuthStates(ctx context.Context, now ti
 	return nil
 }
 
-func (r *SSORepositoryImpl) CreateSession(ctx context.Context, session domain.SSOSession) error {
+func (r *sSORepository) CreateSession(ctx context.Context, session domain.SSOSession) error {
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		result := tx.Exec(`
 			INSERT INTO sso_sessions (session_hash, identity_id, provider_id, membership_id, team_id, csrf_hash, expires_at, created_at, last_seen_at)
@@ -910,7 +876,7 @@ func (r *SSORepositoryImpl) CreateSession(ctx context.Context, session domain.SS
 	return nil
 }
 
-func (r *SSORepositoryImpl) GetSession(ctx context.Context, sessionHash string) (*domain.SSOSession, error) {
+func (r *sSORepository) GetSession(ctx context.Context, sessionHash string) (*domain.SSOSession, error) {
 	var session *domain.SSOSession
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
@@ -945,7 +911,7 @@ func (r *SSORepositoryImpl) GetSession(ctx context.Context, sessionHash string) 
 	return session, nil
 }
 
-func (r *SSORepositoryImpl) UpdateSessionTeam(ctx context.Context, sessionHash string, teamID uuid.UUID) error {
+func (r *sSORepository) UpdateSessionTeam(ctx context.Context, sessionHash string, teamID uuid.UUID) error {
 	now := time.Now().UTC()
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		res := tx.Exec(`
@@ -975,7 +941,7 @@ func (r *SSORepositoryImpl) UpdateSessionTeam(ctx context.Context, sessionHash s
 	return nil
 }
 
-func (r *SSORepositoryImpl) DeleteSession(ctx context.Context, sessionHash string) error {
+func (r *sSORepository) DeleteSession(ctx context.Context, sessionHash string) error {
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		return tx.Exec(`DELETE FROM sso_sessions WHERE session_hash = $1`, sessionHash).Error
 	})
@@ -985,7 +951,7 @@ func (r *SSORepositoryImpl) DeleteSession(ctx context.Context, sessionHash strin
 	return nil
 }
 
-func (r *SSORepositoryImpl) DeleteExpiredSessions(ctx context.Context, now time.Time) error {
+func (r *sSORepository) DeleteExpiredSessions(ctx context.Context, now time.Time) error {
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		return tx.Exec(`DELETE FROM sso_sessions WHERE expires_at <= $1`, now).Error
 	})

@@ -24,6 +24,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 func TestEvidenceOnlyPostgresTopicsUseDirectMembershipAndDeterministicHints(t *testing.T) {
@@ -40,18 +42,26 @@ func TestEvidenceOnlyPostgresTopicsUseDirectMembershipAndDeterministicHints(t *t
 		f.assignment(t, sibling.ID, first), f.assignment(t, sibling.ID, unseen[1]), f.assignment(t, sibling.ID, unseen[2]))
 	ctx := f.actor(2, "member")
 	input := RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, SpaceKind: "team_shared", OrganizationEnabled: true, Limit: 10}
-	hints, err := f.search.recall.RelatedEvidenceTopics(ctx, input, []string{first.ID, second.ID, parentEvidence.ID}, 2)
+	tracer := &relatedTopicEligibilityTrace{Interface: f.app.Logger}
+	measured := newSearchFixtureStore(f.app.Session(&gorm.Session{Logger: tracer}), f.rls)
+	measured.recall.WithTopics(f.topicStore.NewTopicReader())
+	hints, err := measured.recall.RelatedEvidenceTopics(ctx, input, []string{first.ID, second.ID, parentEvidence.ID}, 2)
 	require.NoError(t, err)
 	require.Equal(t, []recallcontract.RelatedTopic{
 		{TopicID: child.ID, Name: child.Definition.Label, Description: child.Definition.Description, Rank: 1, EligibleEvidenceCount: 3, MatchingResultCount: 2, AdditionalEvidenceCount: 1},
 		{TopicID: sibling.ID, Name: sibling.Definition.Label, Description: sibling.Definition.Description, Rank: 2, EligibleEvidenceCount: 3, MatchingResultCount: 1, AdditionalEvidenceCount: 2},
 	}, hints.Topics)
+	require.Equal(t, []string{"fragment.fragment_id::text"}, tracer.projections)
 	require.True(t, hints.Truncated)
 	input.TopicIDs = []string{parent.ID}
 	result, err := f.search.RecallEvidence(ctx, input)
 	require.NoError(t, err)
 	require.Len(t, result.Results, 1)
 	require.Equal(t, parentEvidence.ID, result.Results[0].EvidenceID, "a parent filter cannot expand its descendants")
+	for _, excluded := range []topiccontract.SourceHandle{first, second, unseen[0]} {
+		require.NotEqual(t, excluded.ID, result.Results[0].EvidenceID)
+		require.NotContains(t, result.Results[0].EquivalentEvidenceIDs, excluded.ID)
+	}
 	input.TopicIDs = []string{parent.ID, child.ID}
 	result, err = f.search.RecallEvidence(ctx, input)
 	require.NoError(t, err)
@@ -77,6 +87,20 @@ func TestEvidenceOnlyPostgresTopicsUseDirectMembershipAndDeterministicHints(t *t
 		}
 		require.NotEqual(t, sibling.ID, hint.TopicID, "known results cannot make a topic hint eligible")
 	}
+}
+
+type relatedTopicEligibilityTrace struct {
+	logger.Interface
+	projections []string
+}
+
+func (l *relatedTopicEligibilityTrace) Trace(ctx context.Context, started time.Time, query func() (string, int64), err error) {
+	sql, _ := query()
+	if strings.Contains(sql, "JOIN search_documents AS document ON document.team_id=fragment.team_id") {
+		head, _, _ := strings.Cut(strings.TrimSpace(sql), "FROM evidence_fragments")
+		l.projections = append(l.projections, strings.TrimSpace(strings.TrimPrefix(head, "SELECT")))
+	}
+	l.Interface.Trace(ctx, started, query, err)
 }
 
 func TestEvidenceOnlyPostgresTopicsRejectUnavailableAndReauthorizeCurrentMembership(t *testing.T) {

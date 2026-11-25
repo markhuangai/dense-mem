@@ -10,10 +10,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-func searchDocumentHash(text string) string {
-	return strings.TrimPrefix(sha256Hex(strings.TrimSpace(text)), "sha256:")
-}
-
 func applyInlineSubmissionEmbeddings(ctx context.Context, tx *gorm.DB, input CommitSubmissionAssessmentInput, semanticResult *submissionSemanticCommitState, inlineEmbeddings []InlineEmbeddingResult) error {
 	searchDocumentIDs := make([]string, 0, len(semanticResult.SearchDocuments))
 	for _, document := range semanticResult.SearchDocuments {

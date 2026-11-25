@@ -4,9 +4,9 @@ package postgres
 
 import (
 	"context"
-	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"testing"
-	"time"
+
+	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -127,50 +127,4 @@ func upsertRecallEvidenceSearchDocumentForTest(
 	} else {
 		require.Equal(t, "pending", doc.SearchState)
 	}
-}
-
-func databaseNowForTest(
-	t *testing.T,
-	db *gorm.DB,
-	rls interface {
-		WithSystemTx(context.Context, *gorm.DB, func(*gorm.DB) error) error
-	},
-) time.Time {
-	t.Helper()
-	var now time.Time
-	err := rls.WithSystemTx(context.Background(), db, func(tx *gorm.DB) error {
-		return tx.Raw(`SELECT now()`).Row().Scan(&now)
-	})
-	require.NoError(t, err)
-	return now.UTC()
-}
-
-func insertRelationshipProjectionGenerationForTest(
-	t *testing.T,
-	db *gorm.DB,
-	rls interface {
-		WithTeamTx(context.Context, *gorm.DB, string, func(*gorm.DB) error) error
-	},
-	teamID string,
-	generationID string,
-	generation int,
-	state string,
-) {
-	t.Helper()
-	require.NoError(t, rls.WithTeamTx(context.Background(), db, teamID, func(tx *gorm.DB) error {
-		return tx.Exec(`
-			INSERT INTO search_projection_generations (
-			    team_id, projection_generation_id, source_kind, generation,
-			    projection_format_version, state, eligible_count, projected_count,
-			    current_vector_count, drifted_count, completed_at, activated_at
-			) VALUES (
-			    ?::uuid, ?::uuid, 'relationship', ?,
-			    2, ?, 1, 1,
-			    CASE WHEN ? = 'current' THEN 1 ELSE 0 END,
-			    CASE WHEN ? = 'failed' THEN 1 ELSE 0 END,
-			    CASE WHEN ? IN ('current', 'failed') THEN now() ELSE NULL END,
-			    CASE WHEN ? = 'current' THEN now() ELSE NULL END
-			)
-		`, teamID, generationID, generation, state, state, state, state, state).Error
-	}))
 }

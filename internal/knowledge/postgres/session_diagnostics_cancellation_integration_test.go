@@ -14,7 +14,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	privacy "github.com/markhuangai/dense-mem/internal/privacy/postgres"
-	processor "github.com/markhuangai/dense-mem/internal/remember/service/processor"
+	processor "github.com/markhuangai/dense-mem/internal/remember/service"
 	"github.com/markhuangai/dense-mem/internal/session/extraction"
 	service "github.com/markhuangai/dense-mem/internal/session/service"
 	"github.com/stretchr/testify/require"
@@ -29,7 +29,7 @@ func TestSessionCancelledDiagnosticsCannotReviveSealedOrErasedGeneration(t *test
 			team := createLedgerTeam(t, admin, rls, "cancelled-diagnostic")
 			owner := createLedgerProfile(t, admin, rls, team, "owner")
 			base, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
-			store := NewStore(app, rls)
+			store := newSessionFixtureStore(app, rls)
 			outbound := &sessionOutbound{block: true, entered: make(chan struct{}, 1)}
 			var logs bytes.Buffer
 			api := service.NewService(service.Dependencies{Enabled: true, Repository: store, Preparer: processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store}), Tokenizer: "o200k_base",

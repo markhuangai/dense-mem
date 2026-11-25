@@ -26,7 +26,6 @@ import (
 
 	recallpostgres "github.com/markhuangai/dense-mem/internal/recall/postgres"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
-	"github.com/markhuangai/dense-mem/internal/remember/service/processor"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	searchpostgres "github.com/markhuangai/dense-mem/internal/search/postgres"
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
@@ -186,7 +185,7 @@ func TestDecisionRememberPostgresAtomicityReplayIsolationAndSettingsSnapshot(t *
 	decisions, err := decisionprovider.New(config.DecisionProviderConfig{Provider: "openai", APIURL: server.URL + "/v1", APIKey: "decision-fixture-key", Model: "gpt-6-luna", MaxInputTokens: 32000, MaxQuestionInputTokens: 32000, MaxConcurrency: 2, TimeoutSeconds: 10}, "o200k_base", server.Client(), logger, protector, nil)
 	require.NoError(t, err)
 	generative := structured.NewOpenAI(&config.Config{AIVerifierAPIURL: server.URL + "/v1", AIVerifierAPIKey: "decision-fixture-key", AIVerifierModel: "fixture", AIVerifierMaxConcurrency: 2}, server.Client())
-	api := processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store, Assessor: generative, Decisions: decisions, DecisionSettings: controls, EmbeddingExecutor: semanticwrite.NewProviderExecutor(&sessionFactsEmbedder{}), Limits: assessor.DefaultSemanticAssessmentLimits(), Logger: logger, DiagnosticProtector: protector})
+	api := rememberapp.NewSynchronousProcessor(rememberapp.ProcessorDependencies{Ledger: store, Assessor: generative, Decisions: decisions, DecisionSettings: controls, EmbeddingExecutor: semanticwrite.NewProviderExecutor(&sessionFactsEmbedder{}), Limits: assessor.DefaultSemanticAssessmentLimits(), Logger: logger, DiagnosticProtector: protector})
 	input := rememberapp.RememberProcessRequest{TeamID: team, OwnerProfileID: ownerA, SpaceID: shared, SpaceGeneration: generation, SpaceKind: domain.MemorySpaceTeamShared, IdempotencyKey: "decision-initial", RequestHash: "decision-initial", Evidence: rememberapp.RepositoryEvidenceInputs([]rememberapp.RememberEvidenceInput{{Content: "Decision shared evidence uses PostgreSQL.", SourceType: "manual"}})}
 	var unauthorized atomic.Bool
 	fixture.onDecision = func(raw string) {
@@ -244,11 +243,11 @@ func TestDecisionRememberPostgresAtomicityReplayIsolationAndSettingsSnapshot(t *
 		failedInput := input
 		failedInput.IdempotencyKey, failedInput.RequestHash = fmt.Sprintf("decision-failure-%d", status), fmt.Sprint(status)
 		failedInput.Evidence = rememberapp.RepositoryEvidenceInputs([]rememberapp.RememberEvidenceInput{{Content: fmt.Sprintf("Decision failure %d", status), SourceType: "manual"}, {Content: "Second evidence cannot partially commit.", SourceType: "manual"}})
-		failed, failure := api.ProcessRemember(rememberCtx, failedInput)
+		_, failure := api.ProcessRemember(rememberCtx, failedInput)
 		require.Error(t, failure)
 		var processingFailure *rememberapp.RememberProcessError
 		require.ErrorAs(t, failure, &processingFailure)
-		failed = processingFailure.Status
+		failed := processingFailure.Status
 		require.NotNil(t, failed)
 		require.Equal(t, "failed", failed.ProcessingState)
 		require.Zero(t, duplicateCount(t, admin, rls, `SELECT count(*) FROM knowledge_ingests WHERE team_id=?::uuid AND ingest_id=?::uuid`, team, failed.SubmissionID))
@@ -265,11 +264,11 @@ func TestDecisionRememberPostgresAtomicityReplayIsolationAndSettingsSnapshot(t *
 	stale := reused
 	stale.IdempotencyKey, stale.RequestHash = "decision-stale", "decision-stale"
 	stale.Evidence = rememberapp.RepositoryEvidenceInputs([]rememberapp.RememberEvidenceInput{{Content: "Decision shared evidence uses the PostgreSQL database.", SourceType: "manual"}})
-	staleResult, staleErr := api.ProcessRemember(rememberCtx, stale)
+	_, staleErr := api.ProcessRemember(rememberCtx, stale)
 	require.Error(t, staleErr)
 	var staleFailure *rememberapp.RememberProcessError
 	require.ErrorAs(t, staleErr, &staleFailure)
-	staleResult = staleFailure.Status
+	staleResult := staleFailure.Status
 	require.NotNil(t, staleResult)
 	require.Equal(t, "failed", staleResult.ProcessingState)
 	require.Zero(t, duplicateCount(t, admin, rls, `SELECT count(*) FROM knowledge_ingests WHERE team_id=?::uuid AND ingest_id=?::uuid`, team, staleResult.SubmissionID))

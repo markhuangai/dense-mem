@@ -20,7 +20,7 @@ func bindSessionTool(tool Tool, deps Dependencies) Tool {
 		if deps.SessionBindings.Service == nil || !deps.SessionBindings.Service.Available(ctx) {
 			return nil, ErrToolDisabled
 		}
-		if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
+		if err := validateBindingInput(ctx, tool, input); err != nil {
 			return nil, err
 		}
 		var req session.Request

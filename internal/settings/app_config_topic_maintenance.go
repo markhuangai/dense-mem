@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -18,16 +17,23 @@ const DefaultTopicCadenceHours = 12
 const DefaultTopicStartTime = "03:00"
 
 func (s *AppConfigServiceImpl) GetTopicMaintenanceSettings(ctx context.Context) (*domain.TopicMaintenanceSettings, error) {
-	entries, err := s.repo.List(ctx)
+	cache, err := s.loadCache(ctx, true)
 	if err != nil {
 		return nil, err
 	}
+	if cache.refreshErr != nil {
+		return nil, fmt.Errorf("verify current topic maintenance settings: %w", cache.refreshErr)
+	}
+	value, err := topicMaintenanceSettingsFromEntries(cache.entries)
+	return &value, err
+}
+
+func topicMaintenanceSettingsFromEntries(entries map[string]domain.AppConfigEntry) (domain.TopicMaintenanceSettings, error) {
 	general, err := generalRuntimeConfigFromEntries(entries)
 	if err != nil {
-		return nil, err
+		return domain.TopicMaintenanceSettings{}, err
 	}
-	value, err := topicMaintenanceConfigFromEntries(entries, general.Effective.Timezone)
-	return &value, err
+	return topicMaintenanceConfigFromEntries(entries, general.Effective.Timezone)
 }
 
 func (s *AppConfigServiceImpl) TopicMaintenanceRuntimeConfig(ctx context.Context) (domain.TopicMaintenanceConfig, error) {
@@ -43,24 +49,9 @@ func (s *AppConfigServiceImpl) UpdateTopicMaintenanceSettings(ctx context.Contex
 	if err != nil {
 		return nil, err
 	}
-	before, err := s.GetTopicMaintenanceSettings(ctx)
-	if err != nil {
-		return nil, err
-	}
-	now := s.now().UTC()
-	changed, err := s.repo.UpdateValues(ctx, normalized, now.Format(time.RFC3339Nano), now)
-	if err != nil {
-		return nil, err
-	}
-	s.invalidate()
-	updated, err := s.GetTopicMaintenanceSettings(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if changed {
-		s.appendAudit("APP_CONFIG_UPDATE", "app_config", "topic_maintenance", actorRole, clientIP, correlationID, topicMaintenanceSettingsPayload(before), topicMaintenanceSettingsPayload(updated), map[string]any{"section": "topic_maintenance"})
-	}
-	return updated, nil
+	updated, _, err := updateConfigSection(ctx, s,
+		configSectionUpdate{"topic_maintenance", normalized, actorRole, clientIP, correlationID}, topicMaintenanceSettingsFromEntries, topicMaintenanceSettingsPayload)
+	return updated, err
 }
 
 func editableTopicMaintenanceConfigKeys() []string {

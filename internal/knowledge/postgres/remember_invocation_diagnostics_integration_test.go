@@ -19,7 +19,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	privacypostgres "github.com/markhuangai/dense-mem/internal/privacy/postgres"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
-	"github.com/markhuangai/dense-mem/internal/remember/service/processor"
 )
 
 func TestRememberInvocationDiagnosticsTrimsAgainstJSONBTextLimit(t *testing.T) {
@@ -104,7 +103,7 @@ func TestRememberProcessorPersistsInvocationDiagnosticsThroughPostgres(t *testin
 	require.NoError(t, err)
 	spaceGeneration := privateSpaceGeneration(t, ctx, adminDB, rls, space.ID)
 	repo := NewStore(appDB, rls)
-	rememberProcessor := processor.NewSynchronousProcessor(processor.ProcessorDependencies{
+	rememberProcessor := rememberapp.NewSynchronousProcessor(rememberapp.ProcessorDependencies{
 		Ledger: repo, Logger: observability.New(slog.LevelError),
 		DiagnosticProtector: observability.NewCredentialProtector("admitted-secret"),
 	})
@@ -392,7 +391,7 @@ func TestRememberInvocationLeavesCanonicalAttemptEmptyAfterRollback(t *testing.T
 		require.NoError(t, adminDB.Exec(`DROP TRIGGER reject_remember_failure_for_test ON remember_attempts; DROP FUNCTION reject_remember_failure_for_test();`).Error)
 	}()
 	repo := NewStore(appDB, rls)
-	rememberProcessor := processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: repo, DiagnosticProtector: observability.NewCredentialProtector()})
+	rememberProcessor := rememberapp.NewSynchronousProcessor(rememberapp.ProcessorDependencies{Ledger: repo, DiagnosticProtector: observability.NewCredentialProtector()})
 	_, err = rememberProcessor.ProcessRemember(ctx, rememberapp.RememberProcessRequest{
 		TeamID: teamID, OwnerProfileID: ownerID, SpaceID: space.ID.String(), SpaceGeneration: generation,
 		IdempotencyKey: "canonical-failure", RequestHash: "sha256:canonical-failure", SecurityRejected: true, InitialSecurityRejected: true,

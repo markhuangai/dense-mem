@@ -77,7 +77,76 @@ func testTopicStorageUpgrade(t *testing.T) {
 	require.ErrorContains(t, NewMigratorWithDB(db).RunUp(ctx), "recall_capture migrated prefix")
 	updateCapture("null")
 
+	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, 20261124010004))
+	parent := uuid.NewString()
+	standalone := uuid.NewString()
+	fallback := uuid.NewString()
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		writeTopic := func(id, key, declared string, version int) error {
+			if _, err := tx.ExecContext(ctx, `SELECT dense_mem_insert_topic_revision($1,$2,$3,$4,jsonb_build_object(
+                'id',$5::uuid,'version',$6::integer,'kind','topic','retired',false,'fingerprint',$7::text,
+                'definition',jsonb_build_object('key',$8::text,'label',$8::text,'description','relational cutover witness','parent_id',$9::text)))`,
+				fixture.team, fixture.space, fixture.generation, publication, id, version, "sha256:"+strings.Repeat("b", 64), key, declared); err != nil {
+				return err
+			}
+			_, err := tx.ExecContext(ctx, `INSERT INTO topic_record_heads(team_id,shared_space_id,space_generation,record_id,version,kind,retired,names)
+                VALUES($1,$2,$3,$4,$5,'topic',false,ARRAY[$6::text])
+                ON CONFLICT(team_id,shared_space_id,space_generation,record_id) DO UPDATE SET version=excluded.version`,
+				fixture.team, fixture.space, fixture.generation, id, version, key)
+			return err
+		}
+		if err := writeTopic(parent, "earlier-automatic-parent", "", 1); err != nil {
+			return err
+		}
+		if err := writeTopic(standalone, "settled-standalone", topic, 1); err != nil {
+			return err
+		}
+		if err := writeTopic(fallback, "declared-fallback", topic, 1); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO community_placement_outcomes(team_id,shared_space_id,space_generation,topic_id,topic_version,input_hash,method,status,parent_topic_id,parent_topic_version,created_at)
+            VALUES ($1,$2,$3,$4,1,'witness','migration-fixture','standalone',NULL,NULL,clock_timestamp()-interval '1 minute'),
+            ($1,$2,$3,$4,1,'witness','migration-fixture','placed',$6,1,clock_timestamp()),
+            ($1,$2,$3,$5,1,'witness','migration-fixture','placed',$6,1,clock_timestamp())`,
+			fixture.team, fixture.space, fixture.generation, standalone, fallback, parent)
+		if err != nil {
+			return err
+		}
+		return writeTopic(parent, "earlier-automatic-parent", "", 2)
+	}))
+
+	interruptedRelational, stopRelational := context.WithCancel(ctx)
+	defer stopRelational()
+	var relationalCopy MigrationSnapshot
+	observed, progress = ObserveMigration(interruptedRelational, func(s MigrationSnapshot) {
+		if s.MigrationVersion == RelationalTopicDataVersion && s.Phase == "copy" && s.State == "batch_committed" {
+			relationalCopy = s
+			stopRelational()
+		}
+	})
+	require.Error(t, NewMigratorWithDB(db).RunUp(observed))
+	progress.Close()
+	require.Equal(t, RelationalTopicDataVersion, relationalCopy.MigrationVersion)
+	require.ErrorContains(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE teams SET updated_at=updated_at WHERE id=$1`, fixture.team)
+		return err
+	}), "offline_upgrade_blocked")
 	require.NoError(t, NewMigratorWithDB(db).RunUp(ctx))
+	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
+		var parentID sql.NullString
+		var placement string
+		if err := tx.QueryRowContext(ctx, `SELECT parent_topic_id::text,placement FROM topics WHERE topic_id=$1`, standalone).Scan(&parentID, &placement); err != nil {
+			return err
+		}
+		require.False(t, parentID.Valid)
+		require.Equal(t, "standalone", placement)
+		if err := tx.QueryRowContext(ctx, `SELECT parent_topic_id::text,placement FROM topics WHERE topic_id=$1`, fallback).Scan(&parentID, &placement); err != nil {
+			return err
+		}
+		require.Equal(t, topic, parentID.String)
+		require.Equal(t, "declared", placement)
+		return nil
+	}))
 	require.NoError(t, ValidateStartupMigrationState(ctx, db, MigrationsDir()))
 	require.Equal(t, before, featureStorageSnapshot(t, db, "evidence_fragments"))
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {

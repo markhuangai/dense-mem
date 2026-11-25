@@ -18,8 +18,11 @@ func migrateFeatureStorage(ctx context.Context, migrator *postgres.Migrator, log
 func reportFeatureStorageProgress(ctx context.Context, logger infoLogger, s postgres.MigrationSnapshot) {
 	attrs := progressAttrs(s)
 	event := "feature_storage_migration"
-	if s.MigrationVersion == postgres.TopicStorageDataVersion {
+	switch s.MigrationVersion {
+	case postgres.TopicStorageDataVersion:
 		event = "topic_storage_migration"
+	case postgres.RelationalTopicDataVersion:
+		event = "relational_topic_migration"
 	}
 	switch s.State {
 	case "failed":

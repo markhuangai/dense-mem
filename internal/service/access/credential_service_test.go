@@ -3,13 +3,12 @@ package access
 import (
 	"context"
 	"errors"
+	accesscontract "github.com/markhuangai/dense-mem/internal/access/contract"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -524,8 +523,7 @@ func TestCredentialServiceUpdateNameForTeamDuplicate(t *testing.T) {
 		name string
 		err  error
 	}{
-		{name: "pgx", err: &pgconn.PgError{Code: "23505"}},
-		{name: "pq", err: &pq.Error{Code: "23505"}},
+		{name: "name", err: accesscontract.ErrCredentialNameConflict},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -702,19 +700,7 @@ func TestCredentialServiceScopeNameAndConstructorHelpers(t *testing.T) {
 	_, err = normalizeCredentialName(strings.Repeat("x", 101))
 	require.ErrorContains(t, err, "credential name must be at most 100 characters")
 	assert.Nil(t, credentialNameConflict(errors.New("not unique"), "name"))
-	assert.Equal(t, "idx_credentials_owner_team_active_unique", uniqueViolationName(&pgconn.PgError{
-		Code:           "23505",
-		ConstraintName: "idx_credentials_owner_team_active_unique",
-	}))
-	assert.Equal(t, "idx_credentials_owner_team_active_unique", uniqueViolationName(&pq.Error{
-		Code:       "23505",
-		Constraint: "idx_credentials_owner_team_active_unique",
-	}))
-	assert.Empty(t, uniqueViolationName(&pq.Error{Code: "23503"}))
-	require.ErrorContains(t, credentialCreateConflict(&pgconn.PgError{
-		Code:           "23505",
-		ConstraintName: "idx_credentials_owner_team_active_unique",
-	}, "name"), "api credential already exists")
+	require.ErrorContains(t, credentialCreateConflict(accesscontract.ErrCredentialOwnerConflict, "name"), "api credential already exists")
 	svc := NewCredentialServiceWithLogger(nil, nil, nil, nil, nil)
 	require.Nil(t, svc.logger)
 	svc.logAuditError(errors.New("audit failed"), "CREATE", "key-1", "corr")

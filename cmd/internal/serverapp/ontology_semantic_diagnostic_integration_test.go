@@ -47,7 +47,7 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 				return captureOntologyPublicationConsole(t, func() {
 					root = observability.NewWithProtector(level, protector)
 					require.NoError(t, root.AttachSink(logs))
-					store.WithPublicationDiagnostics(topicPublicationDiagnostics(root.ContextSlog(), protector))
+					store.WithPublicationDiagnostics(application.PublicationDiagnostics(root.ContextSlog(), protector))
 					run()
 				})
 			}
@@ -125,7 +125,7 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 				require.NoError(t, admin.Exec(`DROP TRIGGER IF EXISTS reject_semantic_publication_audit ON audit_log; DROP FUNCTION IF EXISTS reject_semantic_publication_audit()`).Error)
 			})
 			console, _ = capture(func() {
-				service.WithPublicationDiagnostics(topicPublicationDiagnostics(root.ContextSlog(), protector))
+				service.WithPublicationDiagnostics(application.PublicationDiagnostics(root.ContextSlog(), protector))
 				_, err := service.CommandDraft(ctx, draft.ID, "publish", contract.DraftCommand{OperationKey: uuid.NewString(), ExpectedVersion: draft.Version, ExpectedRevision: 1, Reason: draft.Reason})
 				require.ErrorIs(t, err, contract.ErrAuditUnavailable)
 			})
@@ -200,7 +200,7 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 			t.Run("manager_workflow", func(t *testing.T) {
 				observe := func(run func()) (string, []map[string]any) {
 					return capture(func() {
-						service.WithPublicationDiagnostics(topicPublicationDiagnostics(root.ContextSlog(), protector))
+						service.WithPublicationDiagnostics(application.PublicationDiagnostics(root.ContextSlog(), protector))
 						run()
 					})
 				}

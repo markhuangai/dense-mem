@@ -95,6 +95,7 @@ type PrivateMemoryRepositoryImpl struct {
 	clockMu    sync.RWMutex
 	manifestMu sync.RWMutex
 	ordered    []string
+	lineage    map[string]*privateMigrationTable
 }
 
 var _ PrivateMemoryRepository = (*PrivateMemoryRepositoryImpl)(nil)
@@ -131,9 +132,14 @@ func (r *PrivateMemoryRepositoryImpl) Prepare(ctx context.Context) error {
 		return fmt.Errorf("%w: repository is unavailable", ErrPrivateMemoryManifest)
 	}
 	var ordered []string
+	var lineage map[string]*privateMigrationTable
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		var err error
 		ordered, err = validatePrivateMemoryManifestTx(ctx, tx)
+		if err != nil {
+			return err
+		}
+		lineage, err = inspectPrivateMigrationSchema(tx)
 		return err
 	})
 	if err != nil {
@@ -141,6 +147,7 @@ func (r *PrivateMemoryRepositoryImpl) Prepare(ctx context.Context) error {
 	}
 	r.manifestMu.Lock()
 	r.ordered = append([]string(nil), ordered...)
+	r.lineage = lineage
 	r.manifestMu.Unlock()
 	return nil
 }

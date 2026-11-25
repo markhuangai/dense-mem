@@ -39,14 +39,6 @@ func semanticEvidenceByID(evidence []SemanticReviewEvidence) map[string]Semantic
 	return out
 }
 
-func semanticAssessmentAllEvidence(req SemanticAssessmentRequest) map[string]SemanticReviewEvidence {
-	out := semanticEvidenceByID(req.Evidence)
-	for _, item := range req.KnownEvidence {
-		out[strings.TrimSpace(item.EvidenceID)] = item
-	}
-	return out
-}
-
 func semanticSecuritySignalSpanMatchesKind(kind, quote string, allowCommentMarker bool) bool {
 	if strings.TrimSpace(kind) != "hidden_control_markup" {
 		return true
@@ -94,15 +86,6 @@ func semanticWhitespaceEquivalent(a string, b string) bool {
 	return strings.Join(strings.FieldsFunc(a, unicode.IsSpace), " ") == strings.Join(strings.FieldsFunc(b, unicode.IsSpace), " ")
 }
 
-func semanticKindAllowed(kind string, allowed []string) bool {
-	for _, candidate := range allowed {
-		if strings.TrimSpace(candidate) == kind {
-			return true
-		}
-	}
-	return false
-}
-
 func semanticSecurityKindAllowed(kind string) bool {
 	switch strings.TrimSpace(kind) {
 	case "role_control_spoofing", "instruction_override", "prompt_secret_extraction", "tool_exfiltration", "obfuscated_instruction", "hidden_control_markup":
@@ -121,16 +104,6 @@ func semanticSecurityKinds() []string {
 		"obfuscated_instruction",
 		"hidden_control_markup",
 	}
-}
-
-func semanticOneOf(value string, allowed ...string) bool {
-	value = strings.TrimSpace(value)
-	for _, candidate := range allowed {
-		if value == candidate {
-			return true
-		}
-	}
-	return false
 }
 
 func semanticErr(field string, message string) SemanticValidationError {

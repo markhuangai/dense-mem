@@ -382,14 +382,13 @@ test("real Go coverage parts retain cross-package and testless execution and rej
     "internal/privacy/postgres": ["TestEvidenceOnlyPostgresPrivacy"],
     "internal/operations/postgres": ["TestEvidenceOnlyPostgresTelemetry"],
     "cmd/internal/serverapp": ["TestServerLifecycleCore", "TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads", "TestOntologySemanticPublicationLogOnlyDiagnostics", "TestEvidenceOnlyPostgresIntake", "TestRunnerCampaignConditionsAndCapture", "TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity", "TestRememberEvaluationImporterAdmission"],
-    "internal/evalretire": ["TestEvaluationRetirementFixture"],
     "cmd/eval-runner": ["TestRuntimeLogDockerFixture", "TestBootstrapSeedIdentityAndCredentialRejection"],
     "internal/service": ["TestAuditFixture"],
     "internal/knowledge/postgres": ["TestSessionFixture", "TestDecisionWorkflowFixture", "TestEvidenceOnlyPostgresSession"],
     "internal/settings": ["TestDecisionSettingsFixture"],
   };
   for (const [directory, names] of Object.entries(targets)) {
-    const buildTag = ["internal/evalretire", "cmd/eval-runner"].includes(directory) ? "" : "//go:build integration\n\n";
+    const buildTag = directory === "cmd/eval-runner" ? "" : "//go:build integration\n\n";
     writeFixture(fixture, `${directory}/value.go`, buildTag + 'package fixture\nimport ("example.com/fixture/internal/example"; "example.com/fixture/internal/testless")\nfunc Value() int { return example.Choose(true) + testless.Value() }\n');
     const decisionImport = names.some((name) => name.startsWith("TestDecision")) ? '; "example.com/fixture/internal/decisiononly"' : "";
     const diagnosticImport = names.some((name) => name.startsWith("TestOntologyCoverage") || name.startsWith("TestOntologyFailureCapture")) ? '; "example.com/fixture/internal/diagnosticonly"' : "";
@@ -436,7 +435,6 @@ test("real Go coverage parts retain cross-package and testless execution and rej
   assert.deepEqual(readFixture(selectionLog).trim().split("\n").sort(), Object.values(targets).flat().sort());
   assert.match(readFixture(join(outputDir, "postgres/go-postgres-complete.raw")), /fixture\/internal\/testless\/value.go:[^\n]+ [1-9]/m);
   assert.match(readFixture(join(outputDir, "postgres/go-postgres-complete.raw")), /fixture\/internal\/parallelonly\/value.go:[^\n]+ [1-9]/m);
-  assert.match(readFixture(join(outputDir, "postgres/go-postgres-complete.raw")), /fixture\/internal\/evalretire\/value.go:[^\n]+ [1-9]/m);
   for (const line of [2, 3]) assert.match(readFixture(join(outputDir, "postgres/go-postgres-complete.raw")), new RegExp(`fixture/internal/diagnosticonly/value.go:${line}\\.[^\\n]+ [1-9]`, "m"));
   assert.doesNotMatch(readFixture(join(outputDir, "postgres/profiles.sha256")), /go-(audit|session|evidence-only)-complete/);
   for (const line of [2, 3]) assert.match(readFixture(join(outputDir, "core/postgres-support/go-session-complete.raw")), new RegExp(`fixture/internal/decisiononly/value.go:${line}\\.[^\\n]+ [1-9]`, "m"));

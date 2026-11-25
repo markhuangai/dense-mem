@@ -1,6 +1,6 @@
 import type { MemoryAccess } from "../credentialPermissions";
 import { ApiError, requestJson } from "../http";
-import type { TopicCoverage, TopicDraft, TopicDraftCommand, TopicDraftPage, TopicKind, TopicPreview, TopicPublication, TopicPublicationPage, TopicRecord, TopicRecordPage, TopicSourcePage, SaveTopicDraft, SourceKind } from "./topic-types";
+import type { TopicCoverage, TopicDraftPage, TopicKind, TopicPublication, TopicPublicationPage, TopicRecord, TopicRecordPage, TopicSourcePage, SaveTopicEdits, SourceKind } from "./topic-types";
 export { ApiError } from "../http";
 
 export type UserTeam = {
@@ -167,24 +167,13 @@ export class UserApi {
   }
   async topicStatus(): Promise<TopicCoverage> { return (await this.request<Envelope<TopicCoverage>>("/ui/api/topics/status")).data; }
   async topicDrafts(cursor = ""): Promise<TopicDraftPage> { return (await this.request<Envelope<TopicDraftPage>>(`/ui/api/topics/drafts?${new URLSearchParams({ cursor, limit: "50" })}`)).data; }
-  async topicDraft(id: string): Promise<TopicDraft> { return (await this.request<Envelope<TopicDraft>>(`/ui/api/topics/drafts/${encodeURIComponent(id)}`)).data; }
-  async saveTopicDraft(id: string, input: SaveTopicDraft): Promise<TopicDraft> {
-    return (await this.request<Envelope<TopicDraft>>(`/ui/api/topics/drafts${id ? `/${encodeURIComponent(id)}` : ""}`, { method: id ? "PUT" : "POST", body: input })).data;
-  }
-  async previewTopicDraft(id: string, version: number): Promise<TopicPreview> {
-    return (await this.request<Envelope<TopicPreview>>(`/ui/api/topics/drafts/${encodeURIComponent(id)}/preview`, { method: "POST", body: { expected_version: version } })).data;
-  }
-  async commandTopicDraft(id: string, action: "publish" | "discard", input: TopicDraftCommand): Promise<TopicDraft> {
-    return (await this.request<Envelope<TopicDraft>>(`/ui/api/topics/drafts/${encodeURIComponent(id)}/${action}`, { method: "POST", body: input })).data;
+  async saveTopicEdits(input: SaveTopicEdits): Promise<TopicPublication> {
+    return (await this.request<Envelope<TopicPublication>>("/ui/api/topics/edits", { method: "POST", body: input })).data;
   }
   async topicPublications(after = 0): Promise<TopicPublicationPage> {
     return (await this.request<Envelope<TopicPublicationPage>>(`/ui/api/topics/publications?after=${after}&limit=50`)).data;
   }
   async topicPublication(id: string): Promise<TopicPublication> { return (await this.request<Envelope<TopicPublication>>(`/ui/api/topics/publications/${encodeURIComponent(id)}`)).data; }
-  async rollbackTopicPublication(id: string, input: Omit<TopicDraftCommand, "expected_version">): Promise<TopicPublication> {
-    return (await this.request<Envelope<TopicPublication>>(`/ui/api/topics/publications/${encodeURIComponent(id)}/rollback`, { method: "POST", body: input })).data;
-  }
-
   async session(): Promise<UserSession> {
     const payload = await this.request<Envelope<UserSession>>("/ui/api/session");
     return payload.data;

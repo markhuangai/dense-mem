@@ -227,10 +227,13 @@ func TestFeatureStoragePostgresRestartAndWriterFence(t *testing.T) {
 		})
 	}
 	require.ErrorContains(t, write(FeatureStorageLayout), "incompatible writer")
-	require.NoError(t, NewMigratorWithDB(db).RunUp(context.Background()))
-	require.JSONEq(t, before, featureStorageSnapshot(t, db, "topic_revision_records"))
+	migrator := NewMigratorWithDB(db)
+	require.NoError(t, migrator.RunUpTo(t.Context(), FeatureStorageCutoverVersion))
 	require.ErrorContains(t, write(""), "incompatible writer")
 	require.NoError(t, write(FeatureStorageLayout))
+	require.NoError(t, migrator.RunUp(t.Context()))
+	require.JSONEq(t, before, featureStorageSnapshot(t, db, "topic_revision_records"))
+	require.NoError(t, write(""), "current writers use no layout setting")
 }
 
 func TestFeatureStoragePostgresRejectsChangedSourcesAndPayloads(t *testing.T) {

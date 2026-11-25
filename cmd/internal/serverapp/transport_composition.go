@@ -3,7 +3,6 @@ package serverapp
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -82,146 +81,6 @@ type transportComposition struct {
 	telemetryServerAddr string
 }
 
-// httpLoggerAdapter keeps the transport's logging contract independent from
-// the application logger implementation. Redaction and sink behavior remain
-// owned by observability.Logger.
-type httpLoggerAdapter struct {
-	delegate observability.LogProvider
-}
-
-func (a httpLoggerAdapter) Info(message string, attrs ...httpcontract.LogAttr) {
-	if a.delegate != nil {
-		a.delegate.Info(message, observabilityAttrs(attrs)...)
-	}
-}
-
-func (a httpLoggerAdapter) InfoContext(ctx context.Context, message string, attrs ...httpcontract.LogAttr) {
-	if contextual, ok := a.delegate.(interface {
-		InfoContext(context.Context, string, ...observability.LogAttr)
-	}); ok {
-		contextual.InfoContext(ctx, message, observabilityAttrs(attrs)...)
-		return
-	}
-	a.Info(message, attrs...)
-}
-
-func (a httpLoggerAdapter) Error(message string, err error, attrs ...httpcontract.LogAttr) {
-	if a.delegate != nil {
-		a.delegate.Error(message, err, observabilityAttrs(attrs)...)
-	}
-}
-
-func (a httpLoggerAdapter) ErrorContext(ctx context.Context, message string, err error, attrs ...httpcontract.LogAttr) {
-	if contextual, ok := a.delegate.(interface {
-		ErrorContext(context.Context, string, error, ...observability.LogAttr)
-	}); ok {
-		contextual.ErrorContext(ctx, message, err, observabilityAttrs(attrs)...)
-		return
-	}
-	a.Error(message, err, attrs...)
-}
-
-func (a httpLoggerAdapter) Warn(message string, attrs ...httpcontract.LogAttr) {
-	if a.delegate != nil {
-		a.delegate.Warn(message, observabilityAttrs(attrs)...)
-	}
-}
-
-func (a httpLoggerAdapter) WarnContext(ctx context.Context, message string, attrs ...httpcontract.LogAttr) {
-	if contextual, ok := a.delegate.(interface {
-		WarnContext(context.Context, string, ...observability.LogAttr)
-	}); ok {
-		contextual.WarnContext(ctx, message, observabilityAttrs(attrs)...)
-		return
-	}
-	a.Warn(message, attrs...)
-}
-
-func (a httpLoggerAdapter) Debug(message string, attrs ...httpcontract.LogAttr) {
-	if a.delegate != nil {
-		a.delegate.Debug(message, observabilityAttrs(attrs)...)
-	}
-}
-
-func (a httpLoggerAdapter) Trace(message string, attrs ...httpcontract.LogAttr) {
-	if contextual, ok := a.delegate.(interface {
-		Trace(string, ...observability.LogAttr)
-	}); ok {
-		contextual.Trace(message, observabilityAttrs(attrs)...)
-		return
-	}
-	a.Debug(message, attrs...)
-}
-
-func (a httpLoggerAdapter) Fatal(message string, attrs ...httpcontract.LogAttr) {
-	if contextual, ok := a.delegate.(interface {
-		Fatal(string, ...observability.LogAttr)
-	}); ok {
-		contextual.Fatal(message, observabilityAttrs(attrs)...)
-		return
-	}
-	a.Error(message, nil, attrs...)
-}
-
-func (a httpLoggerAdapter) DebugContext(ctx context.Context, message string, attrs ...httpcontract.LogAttr) {
-	if contextual, ok := a.delegate.(interface {
-		DebugContext(context.Context, string, ...observability.LogAttr)
-	}); ok {
-		contextual.DebugContext(ctx, message, observabilityAttrs(attrs)...)
-		return
-	}
-	a.Debug(message, attrs...)
-}
-
-func (a httpLoggerAdapter) TraceContext(ctx context.Context, message string, attrs ...httpcontract.LogAttr) {
-	if contextual, ok := a.delegate.(interface {
-		TraceContext(context.Context, string, ...observability.LogAttr)
-	}); ok {
-		contextual.TraceContext(ctx, message, observabilityAttrs(attrs)...)
-		return
-	}
-	a.DebugContext(ctx, message, attrs...)
-}
-
-func (a httpLoggerAdapter) FatalContext(ctx context.Context, message string, attrs ...httpcontract.LogAttr) {
-	if contextual, ok := a.delegate.(interface {
-		FatalContext(context.Context, string, ...observability.LogAttr)
-	}); ok {
-		contextual.FatalContext(ctx, message, observabilityAttrs(attrs)...)
-		return
-	}
-	a.ErrorContext(ctx, message, nil, attrs...)
-}
-
-func (a httpLoggerAdapter) With(attrs ...httpcontract.LogAttr) httpcontract.LogProvider {
-	if a.delegate == nil {
-		return a
-	}
-	return httpLoggerAdapter{delegate: a.delegate.With(observabilityAttrs(attrs)...)}
-}
-
-func (a httpLoggerAdapter) Slog() *slog.Logger {
-	if provider, ok := a.delegate.(interface{ Slog() *slog.Logger }); ok {
-		return provider.Slog()
-	}
-	return nil
-}
-
-func observabilityAttrs(attrs []httpcontract.LogAttr) []observability.LogAttr {
-	converted := make([]observability.LogAttr, 0, len(attrs))
-	for _, attr := range attrs {
-		converted = append(converted, observability.LogAttr{Key: attr.Key, Value: attr.Value})
-	}
-	return converted
-}
-
-func transportLogger(logger observability.LogProvider) httpcontract.LogProvider {
-	if logger == nil {
-		return nil
-	}
-	return httpLoggerAdapter{delegate: logger}
-}
-
 func buildTransportComposition(deps transportCompositionInputs) (*transportComposition, error) {
 	if deps.backend == nil {
 		return nil, fmt.Errorf("transport: backend is required")
@@ -237,7 +96,7 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 	)
 	mcpHandler := handler.NewMCPHandlerWithLifecycleAndRuntimeConfig(
 		deps.toolRegistry,
-		handler.NewMCPLogger(transportLogger(deps.logger)),
+		rootDiagnosticLogger(deps.logger),
 		streamLifecycle,
 		deps.appConfig,
 	)
@@ -273,7 +132,7 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 		Degraded: deps.backend.degraded,
 		Reason:   deps.backend.reason,
 	}).WithSharedDependencyChecks()
-	e := densehttp.NewServer(deps.cfg, transportLogger(deps.logger), healthConfig)
+	e := densehttp.NewServer(deps.cfg, deps.logger, healthConfig)
 	e.Use(middleware.CorrelationIDMiddleware(), middleware.ClientIPMiddleware())
 	e.Use(middleware.SecurityBanMiddleware(deps.securityService))
 	densehttp.RegisterOAuthProtectedResourceRoutes(e, deps.ssoService)
@@ -313,7 +172,7 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 		OAuthAuthenticator:       deps.ssoService,
 		OAuthMetadata:            deps.ssoService,
 		Config:                   &deps.cfg,
-		Logger:                   transportLogger(deps.logger),
+		Logger:                   deps.logger,
 		CredentialVerifier:       deps.credentialVerifier,
 		CredentialLookupPrefixes: deps.credentialLookupPrefixes,
 		LastUsedRecorder:         deps.activityWriter,
@@ -380,12 +239,12 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 			return nil, fmt.Errorf("read PostgreSQL pool for control metrics: %w", err)
 		}
 		poolObservedSince := time.Now().UTC()
-		controlServer, err := densehttp.NewControlPortalServerWithCapabilityBindings(
+		controlServer, err := densehttp.NewControlPortalServerWithServices(
 			&deps.cfg,
 			deps.teamService,
 			deps.credentialService,
 			deps.usageMetrics,
-			densehttp.ControlPortalBindings{Telemetry: densehttp.ControlPortalTelemetry{
+			densehttp.ControlPortalServices{
 				AuditExport:         auditExport,
 				Diagnostics:         diagnostics,
 				Reader:              deps.telemetry.Reader,
@@ -409,21 +268,21 @@ func buildTransportComposition(deps transportCompositionInputs) (*transportCompo
 					stats := pool.Stats()
 					return densehttp.PostgresPoolMetrics{ProcessStartedAt: poolObservedSince, WaitCount: stats.WaitCount, WaitDurationNS: stats.WaitDuration.Nanoseconds()}
 				},
-			}},
+			},
 			healthConfig,
-			transportLogger(deps.logger),
+			deps.logger,
 			deps.securityService,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("build control portal server: %w", err)
 		}
-		composition.controlServer = densehttp.NewHTTPServer(controlServer, transportLogger(deps.logger))
+		composition.controlServer = densehttp.NewHTTPServer(controlServer, deps.logger)
 	} else if deps.telemetry.ScrapeHandler != nil {
 		addr := strings.TrimSpace(deps.options.MetricsOnlyAddr)
 		if addr == "" {
 			addr = ":8091"
 		}
-		telemetryServer, err := newTelemetryScrapeServer(deps.telemetry.ScrapeHandler, deps.cfg.GetTelemetryScrapeToken(), transportLogger(deps.logger))
+		telemetryServer, err := newTelemetryScrapeServer(deps.telemetry.ScrapeHandler, deps.cfg.GetTelemetryScrapeToken(), deps.logger)
 		if err != nil {
 			return nil, fmt.Errorf("build telemetry scrape server: %w", err)
 		}

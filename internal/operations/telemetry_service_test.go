@@ -697,15 +697,6 @@ type captureTelemetryLogger struct {
 	warnAttrs   []string
 }
 
-func containsTelemetryAttr(attrs []string, want string) bool {
-	for _, attr := range attrs {
-		if attr == want {
-			return true
-		}
-	}
-	return false
-}
-
 func hasTelemetryAttrPrefix(attrs []string, prefix string) bool {
 	for _, attr := range attrs {
 		if strings.HasPrefix(attr, prefix) {

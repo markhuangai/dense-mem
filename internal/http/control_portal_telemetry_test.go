@@ -29,7 +29,7 @@ func (r *controlHTTPMetricsRecorder) ObserveHTTPRequest(_ context.Context, route
 	r.events = append(r.events, controlHTTPMetricEvent{route: route, method: method, status: status, duration: duration})
 }
 
-func TestControlPortalTelemetry(t *testing.T) {
+func TestControlPortalServices(t *testing.T) {
 	teamID := uuid.New()
 	telemetry := &controlTelemetrySvc{snapshot: &operations.TelemetrySnapshot{
 		Available: true,
@@ -41,10 +41,10 @@ func TestControlPortalTelemetry(t *testing.T) {
 		_, _ = w.Write([]byte("# HELP densemem_test metric\n"))
 	})
 	httpMetrics := &controlHTTPMetricsRecorder{}
-	e, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
+	e, err := NewControlPortalServerWithServices(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
-	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
+	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalServices{
 		Reader:        telemetry,
 		HTTPMetrics:   httpMetrics,
 		ScrapeHandler: scrapeHandler,
@@ -87,10 +87,10 @@ func TestControlPortalTelemetry(t *testing.T) {
 	e.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	_, err = newControlPortalServerWithMetricsAndTelemetry(&config.Config{
+	_, err = NewControlPortalServerWithServices(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
-	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
+	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalServices{
 		ScrapeHandler: scrapeHandler,
 	}, HealthConfig{}, nil)
 	require.ErrorContains(t, err, "telemetry scrape token is required")

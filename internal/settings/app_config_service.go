@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	audit "github.com/markhuangai/dense-mem/internal/audit/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	settingscontract "github.com/markhuangai/dense-mem/internal/settings/contract"
@@ -52,9 +53,13 @@ type AppConfigService interface {
 	TelemetryPricingRuntimeConfig(ctx context.Context) (domain.TelemetryPricingRuntimeConfig, error)
 }
 
+type ConfigAuditPreparer interface {
+	Prepare(context.Context, accessservice.AuditLogEntry) (audit.Entry, error)
+}
+
 type AppConfigServiceImpl struct {
 	repo          settingscontract.AppConfigRepository
-	audit         accessservice.AuditService
+	audit         ConfigAuditPreparer
 	now           func() time.Time
 	checkInterval time.Duration
 
@@ -83,7 +88,7 @@ type appConfigCache struct {
 
 var _ AppConfigService = (*AppConfigServiceImpl)(nil)
 
-func NewAppConfigService(repo settingscontract.AppConfigRepository, audit accessservice.AuditService) *AppConfigServiceImpl {
+func NewAppConfigService(repo settingscontract.AppConfigRepository, audit ConfigAuditPreparer) *AppConfigServiceImpl {
 	return &AppConfigServiceImpl{
 		repo:          repo,
 		audit:         audit,
@@ -108,21 +113,9 @@ func (s *AppConfigServiceImpl) UpdateGeneralSettings(ctx context.Context, values
 	if err != nil {
 		return nil, err
 	}
-	before, _ := s.GetGeneralSettings(ctx)
-	now := s.now().UTC()
-	changed, err := s.repo.UpdateValues(ctx, normalized, now.Format(time.RFC3339Nano), now)
-	if err != nil {
-		return nil, err
-	}
-	s.invalidate()
-	updated, err := s.GetGeneralSettings(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if changed {
-		s.appendAudit("APP_CONFIG_UPDATE", "app_config", "general", actorRole, clientIP, correlationID, generalSettingsPayload(before), generalSettingsPayload(updated), map[string]any{"section": "general"})
-	}
-	return updated, nil
+	updated, _, err := updateConfigSection(ctx, s,
+		configSectionUpdate{"general", normalized, actorRole, clientIP, correlationID}, generalRuntimeConfigFromEntries, generalSettingsPayload)
+	return updated, err
 }
 
 func (s *AppConfigServiceImpl) GeneralRuntimeConfig(ctx context.Context) (domain.GeneralRuntimeConfig, error) {
@@ -148,21 +141,14 @@ func (s *AppConfigServiceImpl) UpdateSSOSettings(ctx context.Context, values map
 	if err != nil {
 		return nil, err
 	}
-	before, _ := s.GetSSOSettings(ctx)
-	now := s.now().UTC()
-	changed, err := s.repo.UpdateValues(ctx, normalized, now.Format(time.RFC3339Nano), now)
-	if err != nil {
-		return nil, err
-	}
-	s.invalidate()
-	updated, err := s.GetSSOSettings(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if changed {
-		s.appendAudit("APP_CONFIG_UPDATE", "app_config", "sso", actorRole, clientIP, correlationID, ssoSettingsPayload(before), ssoSettingsPayload(updated), map[string]any{"section": "sso"})
-	}
-	return updated, nil
+	updated, _, err := updateConfigSection(ctx, s,
+		configSectionUpdate{"sso", normalized, actorRole, clientIP, correlationID}, ssoSettingsFromEntries, ssoSettingsPayload)
+	return updated, err
+}
+
+func ssoSettingsFromEntries(entries map[string]domain.AppConfigEntry) (domain.SSOConfigSettings, error) {
+	_, settings, err := ssoRuntimeConfigFromEntries(entries)
+	return settings, err
 }
 
 func (s *AppConfigServiceImpl) SSORuntimeConfig(ctx context.Context) (accessservice.SSORuntimeConfig, error) {
@@ -188,21 +174,9 @@ func (s *AppConfigServiceImpl) UpdateOperationLogSettings(ctx context.Context, v
 	if err != nil {
 		return nil, err
 	}
-	before, _ := s.GetOperationLogSettings(ctx)
-	now := s.now().UTC()
-	changed, err := s.repo.UpdateValues(ctx, normalized, now.Format(time.RFC3339Nano), now)
-	if err != nil {
-		return nil, err
-	}
-	s.invalidate()
-	updated, err := s.GetOperationLogSettings(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if changed {
-		s.appendAudit("APP_CONFIG_UPDATE", "app_config", "operation_logs", actorRole, clientIP, correlationID, operationLogSettingsPayload(before), operationLogSettingsPayload(updated), map[string]any{"section": "operation_logs"})
-	}
-	return updated, nil
+	updated, _, err := updateConfigSection(ctx, s,
+		configSectionUpdate{"operation_logs", normalized, actorRole, clientIP, correlationID}, operationLogRuntimeConfigFromEntries, operationLogSettingsPayload)
+	return updated, err
 }
 
 func (s *AppConfigServiceImpl) OperationLogRuntimeConfig(ctx context.Context) (domain.OperationLogRuntimeConfig, error) {
@@ -217,14 +191,20 @@ func (s *AppConfigServiceImpl) OperationLogRuntimeConfig(ctx context.Context) (d
 }
 
 func (s *AppConfigServiceImpl) currentCache(ctx context.Context) (*appConfigCache, error) {
+	return s.loadCache(ctx, false)
+}
+
+func (s *AppConfigServiceImpl) loadCache(ctx context.Context, requireFresh bool) (*appConfigCache, error) {
 	if s == nil || s.repo == nil {
 		return nil, fmt.Errorf("app config service is unavailable")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if cache := s.freshCache(s.now().UTC()); cache != nil {
-		return cache, nil
+	if !requireFresh {
+		if cache := s.freshCache(s.now().UTC()); cache != nil {
+			return cache, nil
+		}
 	}
 	select {
 	case s.refreshGate <- struct{}{}:
@@ -236,8 +216,10 @@ func (s *AppConfigServiceImpl) currentCache(ctx context.Context) (*appConfigCach
 		return nil, err
 	}
 	now := s.now().UTC()
-	if cache := s.freshCache(now); cache != nil {
-		return cache, nil
+	if !requireFresh {
+		if cache := s.freshCache(now); cache != nil {
+			return cache, nil
+		}
 	}
 
 	updateTime, err := s.repo.GetUpdateTime(ctx)
@@ -672,24 +654,52 @@ func cloneAppConfigEntries(entries map[string]domain.AppConfigEntry) map[string]
 	return copy
 }
 
-func (s *AppConfigServiceImpl) appendAudit(operation, entityType, entityID, actorRole, clientIP, correlationID string, before, after, metadata map[string]any) {
-	if s.audit == nil {
-		return
+type configSectionUpdate struct {
+	section                            string
+	values                             map[string]string
+	actorRole, clientIP, correlationID string
+}
+
+func updateConfigSection[T any](ctx context.Context, service *AppConfigServiceImpl, input configSectionUpdate,
+	project func(map[string]domain.AppConfigEntry) (T, error), payload func(*T) map[string]any,
+) (*T, bool, error) {
+	if service == nil || service.repo == nil {
+		return nil, false, errors.New("app config service is unavailable")
 	}
-	if actorRole == "" {
-		actorRole = "system"
+	var updated T
+	now := service.now().UTC()
+	changed, err := service.repo.UpdateValues(ctx, input.values, now.Format(time.RFC3339Nano), now,
+		func(before, after map[string]domain.AppConfigEntry, changed bool) (*audit.Entry, error) {
+			var err error
+			updated, err = project(after)
+			if err != nil || !changed || service.audit == nil {
+				return nil, err
+			}
+			previous, beforeErr := project(before)
+			beforePayload := payload(nil)
+			if beforeErr == nil {
+				beforePayload = payload(&previous)
+			}
+			afterPayload := payload(&updated)
+			if input.section == "decisions" {
+				afterPayload = map[string]any{"supplied_changes": input.values}
+			}
+			role := input.actorRole
+			if role == "" {
+				role = "system"
+			}
+			entry, err := service.audit.Prepare(ctx, accessservice.AuditLogEntry{
+				Operation: "APP_CONFIG_UPDATE", EntityType: "app_config", EntityID: input.section,
+				BeforePayload: beforePayload, AfterPayload: afterPayload, ActorRole: role, ClientIP: input.clientIP,
+				CorrelationID: input.correlationID, Metadata: map[string]any{"section": input.section},
+			})
+			return &entry, err
+		})
+	if err != nil {
+		return nil, false, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = s.audit.Append(ctx, accessservice.AuditLogEntry{
-		Operation:     operation,
-		EntityType:    entityType,
-		EntityID:      entityID,
-		BeforePayload: before,
-		AfterPayload:  after,
-		ActorRole:     actorRole,
-		ClientIP:      clientIP,
-		CorrelationID: correlationID,
-		Metadata:      metadata,
-	})
+	if changed {
+		service.invalidate()
+	}
+	return &updated, changed, nil
 }

@@ -22,7 +22,7 @@ import (
 func TestListEvidenceConflictsHydratesOnlyRetainedPage(t *testing.T) {
 	db, mock, gormDB := newConflictSQLMockDB(t)
 	defer db.Close()
-	store := conflictpostgres.NewStore(gormDB, conflictListSQLMockRLS{}, nil)
+	store := conflictpostgres.NewStore(gormDB, conflictListSQLMockRLS{})
 	teamID := "00000000-0000-0000-0000-000000000001"
 	firstConflictID := "00000000-0000-0000-0000-000000000002"
 	probeConflictID := "00000000-0000-0000-0000-000000000003"

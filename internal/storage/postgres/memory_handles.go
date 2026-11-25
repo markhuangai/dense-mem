@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"gorm.io/gorm"
 )
 
@@ -23,13 +24,31 @@ func ResolveMemoryHandleTx(ctx context.Context, tx *gorm.DB, teamID, table, hand
 }
 
 func ResolveMemoryHandlesTx(ctx context.Context, tx *gorm.DB, teamID, table string, handles []string, spaceID string) ([]string, error) {
-	result := make([]string, len(handles))
-	for i, handle := range handles {
-		value, err := ResolveMemoryHandleTx(ctx, tx, teamID, table, handle, spaceID)
-		if err != nil {
+	resolved := make([]string, 0, len(handles))
+	if len(handles) == 0 {
+		return resolved, nil
+	}
+	for _, handle := range handles {
+		if handle != "" {
+			if _, err := uuid.Parse(handle); err != nil {
+				return nil, err
+			}
+		}
+	}
+	rows, err := tx.WithContext(ctx).Raw(`SELECT CASE WHEN input.handle='' THEN '' ELSE
+        dense_mem_resolve_memory_handle(?::uuid,?,input.handle::uuid,NULLIF(?,'')::uuid)::text END
+        FROM unnest(?::text[]) WITH ORDINALITY AS input(handle,ordinal) ORDER BY ordinal`,
+		teamID, table, spaceID, pq.Array(handles)).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var handle string
+		if err := rows.Scan(&handle); err != nil {
 			return nil, err
 		}
-		result[i] = value
+		resolved = append(resolved, handle)
 	}
-	return result, nil
+	return resolved, rows.Err()
 }

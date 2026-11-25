@@ -102,11 +102,21 @@ export function collectSemanticPublicationProof({ project, composeFile, since, d
   const captures = operations.map((operation) => scopedSemanticRecords(result.stdout, operation));
   for (const records of captures) {
     writeFileSync(join(directory, `${records[0].operation_id}.private.jsonl`), records.map((record) => JSON.stringify(record)).join("\n") + "\n", { mode: 0o600 });
-    for (const record of records) console.log(`topic_semantic_diagnostic_record ${JSON.stringify(record)}`);
+
   }
   const proofs = operations.map((operation) => verifySemanticPublication(result.stdout, operation));
   for (const proof of proofs) {
     writeFileSync(join(directory, `${proof.operation_id}.private.json`), JSON.stringify(proof), { mode: 0o600 });
+    const first = proof.records[0];
+    const outcome = proof.records.find((record) => record.msg !== "topic_semantic_publication");
+    const chunkCount = proof.records.filter((record) => record.payload_chunk).length;
+    const digests = [...new Set(proof.records.flatMap((record) => record.payload_chunk ? [record.payload_chunk.sha256] : []))];
+    console.log("topic_semantic_diagnostic_receipt " + JSON.stringify({
+      operation_id: proof.operation_id, correlation_id: first.correlation_id, team_id: first.team_id, profile_id: first.profile_id,
+      reason: proof.reason, elapsed_ms: outcome.elapsed_ms, outcome: outcome.transaction_outcome,
+      expected_version: proof.bodies["rejection:"]?.expected, observed_version: proof.bodies["rejection:"]?.observed,
+      chunk_count: chunkCount, verified_sha256: digests,
+    }));
   }
   return proofs;
 }

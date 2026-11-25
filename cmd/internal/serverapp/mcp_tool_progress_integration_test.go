@@ -193,7 +193,7 @@ func TestMCPToolProgressPostgres(t *testing.T) {
 	a := newActor(uuid.Nil)
 	b, c := newActor(actors[a].TeamID), newActor(uuid.Nil)
 	e := echo.New()
-	h := handler.NewMCPHandlerWithLifecycleAndRuntimeConfig(reg, handler.NewMCPLogger(transportLogger(logger)), nil, toolProgressConfig{})
+	h := handler.NewMCPHandlerWithLifecycleAndRuntimeConfig(reg, logger.ContextSlog(), nil, toolProgressConfig{})
 	e.POST("/mcp", h.HandlePost)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := actors[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]

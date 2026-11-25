@@ -280,7 +280,7 @@ func TestTelemetryListenerUsesRootBackedTransportObservations(t *testing.T) {
 	logger := observability.NewWithHandler(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	server, err := newTelemetryScrapeServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
-	}), "token", transportLogger(logger))
+	}), "token", logger)
 	if err != nil {
 		t.Fatalf("telemetry server: %v", err)
 	}
@@ -325,7 +325,7 @@ func TestTelemetryListenerCapturesRecoveredPanic(t *testing.T) {
 	logger := observability.NewWithHandler(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	server, err := newTelemetryScrapeServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic("scrape panic")
-	}), "token", transportLogger(logger))
+	}), "token", logger)
 	if err != nil {
 		t.Fatalf("telemetry server: %v", err)
 	}

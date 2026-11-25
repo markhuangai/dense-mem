@@ -5,7 +5,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
-	remember "github.com/markhuangai/dense-mem/internal/remember/service/processor"
+	remember "github.com/markhuangai/dense-mem/internal/remember/service"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
 	"github.com/markhuangai/dense-mem/internal/session/extraction"
 	sessionservice "github.com/markhuangai/dense-mem/internal/session/service"

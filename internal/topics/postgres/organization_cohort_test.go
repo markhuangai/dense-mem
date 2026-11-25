@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	assignment "github.com/markhuangai/dense-mem/internal/topics/assignment"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -21,7 +22,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/provider/structured"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
-	"github.com/markhuangai/dense-mem/internal/topicassignment"
 
 	"github.com/google/uuid"
 	evalharness "github.com/markhuangai/dense-mem/internal/testfixture/evaluation"
@@ -136,12 +136,12 @@ func testOntologyCohortWithMatching(t *testing.T, maintenance bool, matching []e
 				transport, topicCalls := cohortTopicTransport(t, model)
 				settings := maintenanceSettings(t, f)
 				limits := assessor.DefaultSemanticAssessmentLimits()
-				assigner := topicassignment.NewService(f.store, settings, transport, nil, limits, model, logger)
+				assigner := organization.NewAssignmentService(f.store, settings, transport, nil, limits, model, logger)
 				maintained = organization.NewMaintenanceService(organization.MaintenanceDependencies{Repository: f.store, Config: settings, DefaultModel: model, Logger: logger, ProviderTimeout: time.Minute, Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *organization.Service {
 					service, count := organizationFixtureServiceWithAccounting(t, f, func(a, b assessment.Item) bool { return byText[a.Text] == byText[b.Text] }, nil, model, assessor.DefaultSemanticAssessmentLimits(), accounting, int(contextWindowTokens))
 					counters = append(counters, count)
 					return service
-				}}).WithTopicProcessing(assigner, f.store, f.store, organization.CommunityAssessor{Transport: transport, Limits: limits, Logger: logger})
+				}}).WithTopicProcessing(assigner, f.store, f.store, organization.CommunityAssessor{Transport: transport, Limits: limits, Logger: logger}, nil)
 				callCount = func() int32 {
 					total := topicCalls.Load()
 					for _, count := range counters {
@@ -336,9 +336,9 @@ func cohortTopicTransport(t *testing.T, model string) (modelprovider.StructuredT
 		switch envelope.Format.Schema.Name {
 		case "topic_assignment_v1":
 			var input struct {
-				RequestID string                  `json:"request_id"`
-				Evidence  string                  `json:"evidence"`
-				Topics    []topicassignment.Topic `json:"topics"`
+				RequestID string             `json:"request_id"`
+				Evidence  string             `json:"evidence"`
+				Topics    []assignment.Topic `json:"topics"`
 			}
 			if err := json.Unmarshal([]byte(envelope.Messages[1].Content), &input); err != nil {
 				t.Error(err)

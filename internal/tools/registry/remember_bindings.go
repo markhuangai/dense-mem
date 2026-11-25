@@ -17,7 +17,7 @@ func bindRememberTool(tool Tool, deps Dependencies) Tool {
 		if deps.RememberBindings.Service == nil {
 			return nil, ErrToolUnavailable
 		}
-		if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
+		if err := validateBindingInput(ctx, tool, input); err != nil {
 			return nil, fmt.Errorf("remember: invalid input: %w", err)
 		}
 		req, err := rememberRequestFromContractInput(input)

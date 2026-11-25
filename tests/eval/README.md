@@ -274,8 +274,7 @@ both policies and passes restore, capture and cleanup checks. Numeric
 artifacts are available for two days.
 
 Replace [baseline.json](baseline.json) only after a newer verified complete
-campaign with `full_public_campaign=true`. Preserve historical evidence. Maintenance-only retirement remains
-documented in [evaluation-retirement.md](../../architecture/evaluation-retirement.md).
+campaign with `full_public_campaign=true`. Preserve historical evidence.
 
 ## Delivery and acceptance
 

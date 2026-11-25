@@ -23,7 +23,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/evalharness"
-	knowledgepg "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
+
 	"github.com/markhuangai/dense-mem/internal/observability"
 	searchapp "github.com/markhuangai/dense-mem/internal/search"
 	searchpg "github.com/markhuangai/dense-mem/internal/search/postgres"
@@ -223,7 +223,7 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	restoredMaintenance := buildTopicMaintenance(topicpg.NewStore(restored, rls), restoredSettings, nil,
 		assessor.DefaultSemanticAssessmentLimits(), manifest.Model, 0, 0, nil, nil, organization.MaintenanceDiagnosticCapture{})
 	restoredControl := runnerControlServer(t, restoredMaintenance, restoredSettings, searchapp.NewSearchConvergenceService(
-		searchpg.NewStore(restored, rls), knowledgepg.NewStore(restored, rls),
+		searchpg.NewStore(restored, rls), searchpg.NewStore(restored, rls),
 	))
 	native := *f.native
 	native.DB, native.ControlURL = restoredDB, restoredControl.URL

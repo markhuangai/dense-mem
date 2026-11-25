@@ -61,19 +61,21 @@ func TestControlPortalConstructorAndHandlerDependencyFailures(t *testing.T) {
 	if _, err := NewControlPortalServerWithMetrics(cfg, nil, nil, nil, HealthConfig{}, nil); err != nil {
 		t.Fatalf("minimal control portal failed: %v", err)
 	}
-	if _, err := newControlPortalServerWithMetricsAndTelemetry(cfg, nil, nil, nil, ControlPortalTelemetry{ScrapeHandler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})}, HealthConfig{}, nil); err == nil {
+	if _, err := NewControlPortalServerWithServices(cfg, nil, nil, nil, ControlPortalServices{ScrapeHandler: http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})}, HealthConfig{}, nil); err == nil {
 		t.Fatal("telemetry without scrape token was accepted")
 	}
 
-	h := &controlPortalHandler{}
+	access := &controlAccessHandler{}
+	diagnostics := &controlDiagnosticsHandler{}
+	settings := &controlConfigHandler{}
 	for name, call := range map[string]func(*echo.Context) error{
-		"metrics":           h.getMetrics,
-		"telemetry":         h.getTelemetry,
-		"security settings": h.getSecuritySettings,
-		"update security":   h.updateSecuritySettings,
-		"security bans":     h.listSecurityBans,
-		"create ban":        h.createSecurityBan,
-		"delete ban":        h.deleteSecurityBan,
+		"metrics":           diagnostics.getMetrics,
+		"telemetry":         diagnostics.getTelemetry,
+		"security settings": settings.getSecuritySettings,
+		"update security":   settings.updateSecuritySettings,
+		"security bans":     settings.listSecurityBans,
+		"create ban":        settings.createSecurityBan,
+		"delete ban":        settings.deleteSecurityBan,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := call(controlCoverageContext("/")); err == nil {
@@ -84,13 +86,13 @@ func TestControlPortalConstructorAndHandlerDependencyFailures(t *testing.T) {
 	invalidTeam := controlCoverageContext("/teams/not-a-uuid")
 	invalidTeam.SetPathValues(echo.PathValues{{Name: "teamId", Value: "not-a-uuid"}})
 	for name, call := range map[string]func(*echo.Context) error{
-		"update team":       h.updateTeam,
-		"delete team":       h.deleteTeam,
-		"list credentials":  h.listCredentials,
-		"create credential": h.createCredential,
-		"update credential": h.updateCredential,
-		"rotate credential": h.rotateCredential,
-		"delete credential": h.deleteCredential,
+		"update team":       access.updateTeam,
+		"delete team":       access.deleteTeam,
+		"list credentials":  access.listCredentials,
+		"create credential": access.createCredential,
+		"update credential": access.updateCredential,
+		"rotate credential": access.rotateCredential,
+		"delete credential": access.deleteCredential,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := call(invalidTeam); err == nil {
@@ -99,7 +101,7 @@ func TestControlPortalConstructorAndHandlerDependencyFailures(t *testing.T) {
 		})
 	}
 	malformed := echo.New().NewContext(httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString("{")), httptest.NewRecorder())
-	if err := h.createTeam(malformed); err == nil {
+	if err := access.createTeam(malformed); err == nil {
 		t.Fatal("malformed team body was accepted")
 	}
 }

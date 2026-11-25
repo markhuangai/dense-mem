@@ -34,7 +34,12 @@ func TestRunUpAutomaticallyRecoversStoppedOntology(t *testing.T) {
 			if interrupted == "after_migration" {
 				require.NoError(t, storage.RunUp(ctx, db))
 			}
-			require.NoError(t, RunUp(ctx, db, time.Minute, newRecordingLogger()))
+			migrator, err := storage.NewMigrator(db)
+			require.NoError(t, err)
+			if interrupted != "after_migration" {
+				require.ErrorContains(t, RunUp(ctx, db, time.Minute, newRecordingLogger()), "through released v2.8.0")
+			}
+			require.NoError(t, migrateTopicStorage(ctx, db, migrator, newRecordingLogger()))
 			require.Equal(t, before, ontologyUpgradeSnapshot(t, db))
 			var paused bool
 			var commands, running, retired int
@@ -55,6 +60,64 @@ func TestRunUpAutomaticallyRecoversStoppedOntology(t *testing.T) {
 }
 
 func TestRunUpOntologyWaitAndConcurrentStarters(t *testing.T) {
+	t.Run("below floor preserves the source", testBelowFloorTopicStartup)
+	t.Run("current layout drains before relational cutover", testCurrentTopicWriterDrain)
+}
+
+func testCurrentTopicWriterDrain(t *testing.T) {
+	ctx := t.Context()
+	db, admin := openOntologyUpgradeRuntimeDB(t)
+	migrator, err := storage.NewMigrator(db)
+	require.NoError(t, err)
+	require.NoError(t, migrator.PrepareEvidenceOnlyMigration(ctx))
+	seedProgressMigration(t, db, 1, 0)
+	require.NoError(t, migrator.RunUpTo(ctx, 20261124010004))
+	setLease := func(live bool) {
+		t.Helper()
+		require.NoError(t, storage.NewRLS().WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
+			if err := tx.Exec(`SET LOCAL app.tx_mode='migration'`).Error; err != nil {
+				return err
+			}
+			return tx.Exec(`INSERT INTO topic_maintenance_teams(team_id,shared_space_id,space_generation,lease_token,lease_until)
+				SELECT team_id,id,generation,gen_random_uuid(),clock_timestamp()+CASE WHEN ? THEN interval '1 hour' ELSE interval '-1 second' END
+				FROM memory_spaces WHERE kind='team_shared'
+				ON CONFLICT(team_id,shared_space_id,space_generation) DO UPDATE
+				SET lease_token=excluded.lease_token,lease_until=excluded.lease_until`, live).Error
+		}))
+	}
+	setLease(true)
+	pausedCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	logs := newRecordingLogger()
+	waiting := make(chan error, 1)
+	go func() { waiting <- RunUp(pausedCtx, db, time.Minute, logs) }()
+	require.Eventually(t, func() bool {
+		for _, entry := range logs.entriesSnapshot() {
+			if entry.message == "topic_storage_drain" && entry.attrs["active_preparations"] == int64(1) {
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 20*time.Millisecond)
+	cancel()
+	require.ErrorIs(t, <-waiting, context.Canceled)
+	var applied bool
+	require.NoError(t, admin.Raw(`SELECT to_regclass('public.topics') IS NOT NULL`).Row().Scan(&applied))
+	require.False(t, applied, "startup must not install the fence while a current-layout writer is live")
+	setLease(false)
+	results := make(chan error, 2)
+	for range 2 {
+		go func() { results <- RunUp(ctx, db, time.Minute, newRecordingLogger()) }()
+	}
+	for range 2 {
+		require.NoError(t, <-results)
+	}
+	pool, err := db.DB()
+	require.NoError(t, err)
+	require.NoError(t, storage.ValidateStartupMigrationState(ctx, pool, storage.MigrationsDir()))
+}
+
+func testBelowFloorTopicStartup(t *testing.T) {
 	db, admin := openOntologyUpgradeRuntimeDB(t)
 	batch := seedOntologyUpgrade(t, db)
 	before := ontologyUpgradeSnapshot(t, db)
@@ -62,10 +125,8 @@ func TestRunUpOntologyWaitAndConcurrentStarters(t *testing.T) {
 	require.NoError(t, storage.NewRLS().WithSystemTx(ctx, db, func(tx *gorm.DB) error {
 		return tx.Exec(`UPDATE ontology_maintenance_batches SET lease_until=clock_timestamp()+interval '1 hour' WHERE batch_id=?::uuid`, batch).Error
 	}))
-	waitCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
-	defer cancel()
-	err := RunUp(waitCtx, db, 0, newRecordingLogger())
-	require.ErrorIs(t, err, context.DeadlineExceeded)
+	err := RunUp(ctx, db, time.Minute, newRecordingLogger())
+	require.ErrorContains(t, err, "through released v2.8.0")
 	var applied bool
 	require.NoError(t, db.Raw(`SELECT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=? AND is_applied)`, contract.OntologyBudgetRetirementVersion).Row().Scan(&applied))
 	require.False(t, applied)
@@ -73,17 +134,4 @@ func TestRunUpOntologyWaitAndConcurrentStarters(t *testing.T) {
 	var retired int
 	require.NoError(t, admin.Raw(`SELECT count(*) FROM audit_log WHERE operation=?`, contract.OntologyBudgetRetirementAuditOperation).Row().Scan(&retired))
 	require.Zero(t, retired)
-	require.NoError(t, storage.NewRLS().WithSystemTx(ctx, db, func(tx *gorm.DB) error {
-		return tx.Exec(`UPDATE ontology_maintenance_batches SET lease_until=clock_timestamp()+interval '2 seconds' WHERE batch_id=?::uuid`, batch).Error
-	}))
-	errs := make(chan error, 2)
-	for range 2 {
-		go func() { errs <- RunUp(context.Background(), db, time.Minute, newRecordingLogger()) }()
-	}
-	for range 2 {
-		require.NoError(t, <-errs)
-	}
-	require.Equal(t, before, ontologyUpgradeSnapshot(t, db))
-	require.NoError(t, admin.Raw(`SELECT count(*) FROM audit_log WHERE operation=?`, contract.OntologyBudgetRetirementAuditOperation).Row().Scan(&retired))
-	require.Equal(t, 1, retired)
 }

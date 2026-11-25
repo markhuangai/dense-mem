@@ -175,7 +175,21 @@ export async function run({ rpc, rawRPC, runStep }) {
     }
     const retainedText = retained.map(JSON.stringify).join("\n") + "\n";
     diagnosticProof = { records: retained.length, exchanges: exchanges.size / 2, sha256: createHash("sha256").update(retainedText).digest("hex"), complete: true };
-    for (const row of retained) console.log(`remember_partition_diagnostic_record ${JSON.stringify(row)}`);
+    for (const call of rejected) {
+      const rows = retained.filter((row) => row.correlation_id === call.correlationID);
+      const chunks = rows.filter((row) => row.payload_chunk);
+      const failure = rows.find((row) => row.msg === "remember_partition_rejected" && row.partition_attempt === 3);
+      const terminal = rows.find((row) => row.msg === "remember_invocation_completed");
+      const verifiedDigests = new Set(chunks.filter((row) => ["remember_partition_manifest", "ai_exchange_payload"].includes(row.msg))
+        .map((row) => row.payload_chunk.sha256));
+      console.log("remember_partition_diagnostic_receipt " + JSON.stringify({
+        correlation_id: call.correlationID, team_id: team, profile_id: failure.profile_id,
+        attempt_id: terminal.canonical_attempt_id, attempts: failure.partition_attempt,
+        policy_version: failure.policy_version, model: failure.model, outcome: terminal.outcome,
+        cause: "provider_partition_response_rejected", corrective_action: "inspect the partition schema and provider output",
+        chunk_count: chunks.length, verified_sha256: [...verifiedDigests],
+      }));
+    }
   });
   return { status: "ok", source_code_points: 16384, partitions: 2, tail_citation: true, malformed_regeneration: true, diagnostics: diagnosticProof };
 }

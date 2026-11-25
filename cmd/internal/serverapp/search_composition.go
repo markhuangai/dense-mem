@@ -70,7 +70,7 @@ func buildSearchProviders(
 		Contract:          contract,
 		EmbeddingProvider: openaiProvider,
 		RetryEmbedding:    retryEmbedder,
-		Convergence:       searchapp.NewSearchConvergenceService(searchOwner, projection),
+		Convergence:       searchapp.NewSearchConvergenceService(searchOwner, searchOwner),
 		Reconciliation: searchapp.NewSearchReconciliationService(searchapp.SearchReconciliationDependencies{
 			Repository:      searchOwner,
 			Projection:      projection,

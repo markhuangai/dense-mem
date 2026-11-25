@@ -148,6 +148,9 @@ func TestOntologyMaintenanceCurrentReceiptCompletion(t *testing.T) {
 		service, calls := organizationFixtureService(t, f, nil, nil)
 		result, err := service.Organize(topiccontract.WithMaintenanceClaim(context.Background(), *claim), f.team, topiccontract.OrganizationInput{OperationKey: "maintenance:" + claim.ID, Sources: claim.Sources})
 		require.NoError(t, err)
+		var legacyHead bool
+		require.NoError(t, f.admin.Raw(`SELECT EXISTS(SELECT 1 FROM topic_catalog_heads WHERE team_id=?::uuid)`, f.team).Row().Scan(&legacyHead))
+		require.False(t, legacyHead, "the catalog effect must be revalidated without a legacy row lock")
 		before := revalidationQueue(t, f, source)
 		finished := make(chan error, 1)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -159,7 +162,7 @@ func TestOntologyMaintenanceCurrentReceiptCompletion(t *testing.T) {
 			go func() { finished <- f.store.CompleteMaintenanceBatch(ctx, *claim, result, "", time.Now().UTC()) }()
 			require.Eventually(t, func() bool {
 				var blocked bool
-				err := f.admin.Raw(`SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE '%SELECT revision FROM topic_catalog_heads%' AND pid<>pg_backend_pid())`).Row().Scan(&blocked)
+				err := f.admin.Raw(`SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND wait_event='advisory' AND query LIKE '%pg_advisory_xact_lock(hashtextextended%' AND pid<>pg_backend_pid())`).Row().Scan(&blocked)
 				return err == nil && blocked
 			}, 3*time.Second, 10*time.Millisecond)
 			if err := f.rls.WithSystemTx(context.Background(), f.app, func(tx *gorm.DB) error {
