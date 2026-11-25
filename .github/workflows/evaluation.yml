@@ -30,6 +30,14 @@ on:
       context_window_tokens:
         type: string
         default: ''
+      benchmark_base:
+        type: string
+        default: ''
+    outputs:
+      complete_report:
+        value: ${{ jobs.aggregate.outputs.complete_report }}
+      comparison_artifact_id:
+        value: ${{ jobs.aggregate.outputs.comparison_artifact_id }}
     secrets:
       eval-model:
         required: false
@@ -101,6 +109,41 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: node tests/eval/scripts/workflow.mjs pin-seeds
 
+  capture-benchmarks:
+    name: Compare credential protection benchmarks
+    if: inputs.mode == 'fixtures' && inputs.benchmark_base != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - *checkout-source
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ inputs.source_repository }}
+          ref: ${{ inputs.benchmark_base }}
+          path: benchmark-base
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Measure pinned base and candidate
+        env:
+          BASE: ${{ inputs.benchmark_base }}
+          CANDIDATE: ${{ inputs.source_revision }}
+        run: |
+          set -euo pipefail
+          [[ "$(git -C benchmark-base rev-parse HEAD)" == "${BASE}" && "$(git rev-parse HEAD)" == "${CANDIDATE}" ]]
+          bench='^BenchmarkCredentialProtector(StructuredAssessment|SQLDiagnostic|EmbeddingResponse)$'
+          measure() {
+            go -C "$1" test -run '^$' -bench "$bench" -benchmem -count=3 -timeout=10m ./internal/observability
+          }
+          printf 'Base %s\n' "${BASE}"
+          measure benchmark-base
+          printf 'Candidate %s\n' "${CANDIDATE}"
+          measure .
+          go test -run '^$' -bench '^BenchmarkRunnerCapture$' -benchmem -count=3 -timeout=5m ./internal/evalharness
+
   datasets:
     name: ${{ inputs.mode == 'fixtures' && 'Prepare and score synthetic off seed' || format('Evaluate {0} ontology off', matrix.dataset) }}
     needs: registry
@@ -161,11 +204,17 @@ jobs:
       - name: Verify seed exports, protected failures and owned cleanup
         if: inputs.mode == 'fixtures'
         run: node --test tests/eval/scripts/workflow_docker.test.mjs tests/eval/scripts/seed_docker.test.mjs
+      - name: Prove score recovery after worker interruption
+        if: inputs.mode == 'fixtures'
+        run: go test ./internal/evalharness -run '^TestScoreCheckpoint' -count=1
       - name: Score frozen ontology-off seed
-        run: node tests/eval/scripts/workflow.mjs run
+        run: exec node tests/eval/scripts/workflow.mjs run
       - name: Preserve protected startup failure logs
         if: failure()
         run: node tests/eval/scripts/workflow.mjs diagnostics
+      - name: Recover committed scores after interruption
+        if: always()
+        run: node tests/eval/scripts/workflow.mjs recover
       - name: Remove this job's runtime
         if: always()
         run: node tests/eval/scripts/workflow.mjs cleanup
@@ -184,6 +233,9 @@ jobs:
     if: always() && needs.registry.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      complete_report: ${{ steps.aggregate.outputs.complete_report }}
+      comparison_artifact_id: ${{ steps.comparison.outputs.artifact-id }}
     steps:
       - *checkout-source
       - *setup-node
@@ -195,6 +247,7 @@ jobs:
           pattern: evaluation-*
           path: ${{ runner.temp }}/evaluation-reports
       - name: Aggregate frozen dataset reports
+        id: aggregate
         env:
           EVAL_MODE: ${{ inputs.mode }}
           EVAL_SOURCE_REVISION: ${{ inputs.source_revision }}
@@ -203,6 +256,7 @@ jobs:
           EVAL_PINNED_SEEDS: ${{ needs.registry.outputs.seed_images }}
         run: node tests/eval/scripts/workflow.mjs aggregate
       - name: Retain scores including missing datasets
+        id: comparison
         if: always()
         uses: actions/upload-artifact@v7
         with:

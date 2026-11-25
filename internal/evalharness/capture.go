@@ -6,12 +6,15 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/url"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/jsonstrict"
@@ -25,21 +28,31 @@ type Capture struct {
 	Logger               *slog.Logger
 	Protector            *observability.CredentialProtector
 	RunID                string
+	console              slog.Handler
 	mu                   sync.Mutex
 	sequence             int
 	failed               atomic.Bool
 	lost                 atomic.Bool
 	firstFailure         atomic.Pointer[CaptureFailure]
+	checkpoint           atomic.Pointer[scoreCheckpoint]
 	phase                atomic.Pointer[string]
 	queue                *captureQueue
 	importStart          time.Time
 	importStartCompleted int
 }
 
+func NewConsoleCapture(writer io.Writer, logger *slog.Logger, protector *observability.CredentialProtector, runID string) *Capture {
+	return &Capture{
+		Logger: logger, Protector: protector, RunID: runID,
+		console: slog.NewJSONHandler(writer, &slog.HandlerOptions{Level: slog.LevelDebug}),
+	}
+}
+
 type Event struct {
 	Kind    string          `json:"kind"`
 	Payload json.RawMessage `json:"payload"`
 	phase   string
+	context context.Context
 }
 
 type CaptureFailure struct {
@@ -65,15 +78,32 @@ func (c *Capture) currentPhase() string {
 }
 
 func (c *Capture) recordFailure(failure CaptureFailure) {
-	c.firstFailure.CompareAndSwap(nil, &failure)
+	if c.firstFailure.CompareAndSwap(nil, &failure) {
+		c.saveCheckpointFailure(&failure)
+	}
 }
 
-func (c *Capture) unavailable(failure CaptureFailure) {
+func (c *Capture) saveCheckpointFailure(failure *CaptureFailure) {
+	if checkpoint := c.checkpoint.Load(); checkpoint != nil && failure != nil {
+		if err := checkpoint.saveFailure(*failure); err != nil && c.Logger != nil {
+			attrs := []any{"run_id", c.RunID, "phase", failure.Phase, "kind", failure.Kind, "sequence", failure.Sequence}
+			var errno syscall.Errno
+			if errors.As(err, &errno) {
+				attrs = append(attrs, "errno", int(errno))
+			}
+			c.Logger.Error("eval_checkpoint_write_failed", attrs...)
+		}
+	}
+}
+
+func (c *Capture) unavailable(ctx context.Context, failure CaptureFailure) {
 	c.recordFailure(failure)
 	c.failed.Store(true)
-	c.Logger.Error("eval_capture_unavailable", "run_id", c.RunID, "phase", failure.Phase,
-		"kind", failure.Kind, "sequence", failure.Sequence, "reason", failure.Reason,
-		"bytes", failure.Bytes, "protection", failure.Protection)
+	if c.Logger != nil {
+		c.Logger.ErrorContext(ctx, "eval_capture_unavailable", "run_id", c.RunID, "phase", failure.Phase,
+			"kind", failure.Kind, "sequence", failure.Sequence, "reason", failure.Reason,
+			"bytes", failure.Bytes, "protection", failure.Protection)
+	}
 }
 
 func (c *Capture) RecordRuntimeLogFailure(failure CaptureFailure) {
@@ -118,22 +148,28 @@ func (c *Capture) incomplete() bool {
 }
 
 func NewRunnerCredentialProtector(configured ...string) *observability.CredentialProtector {
-	values := append([]string(nil), configured...)
+	values := make([]string, 0, len(configured))
+	seen := map[string]bool{"": true}
+	add := func(value string) {
+		if !seen[value] {
+			values = append(values, value)
+			seen[value] = true
+		}
+	}
 	for _, value := range configured {
+		add(value)
 		if endpoint, err := url.Parse(value); err == nil && (endpoint.Scheme == "http" || endpoint.Scheme == "https") && endpoint.Hostname() != "" {
 			// DNS and TLS errors can contain the host alone.
-			values = append(values, endpoint.Hostname())
+			add(endpoint.Hostname())
 		}
 	}
 	for _, value := range values {
-		if value == "" {
-			continue
-		}
 		for _, encoding := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
-			values = append(values, encoding.EncodeToString([]byte(value)))
+			add(encoding.EncodeToString([]byte(value)))
 		}
 		encoded := hex.EncodeToString([]byte(value))
-		values = append(values, encoded, strings.ToUpper(encoded))
+		add(encoded)
+		add(strings.ToUpper(encoded))
 	}
 	return observability.NewCredentialProtector(values...)
 }
@@ -162,7 +198,7 @@ func (c *Capture) emitRecord(ctx context.Context, kind string, payload any, term
 			c.lost.Store(true)
 			return err
 		}
-		event := Event{Kind: kind, Payload: data, phase: phase}
+		event := Event{Kind: kind, Payload: data, phase: phase, context: context.WithoutCancel(ctx)}
 		err = c.queue.enqueue(ctx, event)
 		if err != nil && terminal && ctx.Err() != nil && c.queue.ctx.Err() == nil {
 			err = c.queue.enqueue(c.queue.preservation(ctx), event)
@@ -211,19 +247,27 @@ func (c *Capture) emit(ctx context.Context, phase, kind string, payload any) err
 	if err != nil {
 		return err
 	}
-	if c.Logger == nil || !c.Logger.Enabled(context.Background(), slog.LevelDebug) {
+	handler := c.console
+	if handler == nil && c.Logger != nil {
+		handler = c.Logger.Handler()
+	}
+	if handler == nil || !handler.Enabled(ctx, slog.LevelDebug) {
 		c.recordFailure(CaptureFailure{Phase: phase, Kind: kind, Sequence: c.sequence + 1, Reason: "debug_capture_disabled"})
 		c.failed.Store(true)
 		return errors.New("DEBUG benchmark console capture is required")
 	}
+	secrets := observability.AuthenticationSecretsFromContext(ctx)
+	protectionFailure := func(reason observability.CredentialProtectionUnavailableReason) error {
+		c.unavailable(ctx, CaptureFailure{Phase: phase, Kind: kind, Sequence: c.sequence + 1, Reason: reason.Code(), Bytes: len(body), Protection: reason.CaptureReason(captureLimit)})
+		return errors.New("benchmark payload protection unavailable")
+	}
 	var protected []byte
 	reason := observability.CredentialProtectionUnsupported
 	if c.Protector != nil {
-		protected, reason = c.Protector.ProtectDiagnosticBytes(body, captureLimit)
+		protected, reason = c.Protector.ProtectDiagnosticBytes(body, captureLimit, secrets...)
 	}
 	if reason != observability.CredentialProtectionAvailable {
-		c.unavailable(CaptureFailure{Phase: phase, Kind: kind, Sequence: c.sequence + 1, Reason: reason.Code(), Bytes: len(body), Protection: reason.CaptureReason(captureLimit)})
-		return errors.New("benchmark payload protection unavailable")
+		return protectionFailure(reason)
 	}
 	var event Event
 	if err := json.Unmarshal(protected, &event); err != nil {
@@ -237,11 +281,9 @@ func (c *Capture) emit(ctx context.Context, phase, kind string, payload any) err
 	}
 	for _, chunk := range chunks {
 		if chunk.State != "captured" {
-			c.unavailable(CaptureFailure{Phase: phase, Kind: kind, Sequence: c.sequence + 1, Reason: chunk.ReasonCode, Bytes: len(protected)})
-			return errors.New("benchmark payload protection unavailable")
+			return protectionFailure(observability.CredentialProtectionUnavailableReason(chunk.Reason))
 		}
 	}
-	c.sequence++
 	level, message := slog.LevelDebug, "eval_capture"
 	if event.Kind == "progress" {
 		level, message = slog.LevelInfo, "eval_progress"
@@ -254,11 +296,32 @@ func (c *Capture) emit(ctx context.Context, phase, kind string, payload any) err
 	} else if event.Kind == "campaign_failed" || event.Kind == "seed_verification_failed" {
 		level = slog.LevelError
 	}
+	if c.console != nil {
+		metadata := []any{message, c.RunID, int64(c.sequence + 1), event.Kind}
+		if len(chunks) != 0 {
+			chunk := chunks[0]
+			metadata = append(metadata, chunk.State, chunk.SHA256, int64(chunk.Count), int64(chunk.OriginalBytes), int64(chunk.Reason))
+			for index := range chunks {
+				metadata = append(metadata, int64(index))
+			}
+		}
+		check := c.Protector.Snapshot(metadata, captureLimit, secrets...)
+		if check.UnavailableReason != observability.CredentialProtectionAvailable {
+			return protectionFailure(check.UnavailableReason)
+		}
+		if !reflect.DeepEqual(check.Value, metadata) {
+			return protectionFailure(observability.CredentialProtectionFormattingFailed)
+		}
+		if reason := c.Protector.CheckDiagnosticChunkSerialization(chunks, captureLimit, secrets...); reason != observability.CredentialProtectionAvailable {
+			return protectionFailure(reason)
+		}
+	}
+	c.sequence++
 	fields := []any{"run_id", c.RunID, "sequence", c.sequence, "kind", event.Kind}
 	write := func(attrs ...any) error {
 		record := slog.NewRecord(time.Now(), level, message, 0)
 		record.Add(attrs...)
-		if err := c.Logger.Handler().Handle(ctx, record); err != nil {
+		if err := handler.Handle(ctx, record); err != nil {
 			c.recordFailure(CaptureFailure{Phase: phase, Kind: kind, Sequence: c.sequence, Reason: "console_write_failed", Bytes: len(protected)})
 			c.failed.Store(true)
 			return errors.New("benchmark console write failed")
@@ -277,13 +340,17 @@ func (c *Capture) emit(ctx context.Context, phase, kind string, payload any) err
 }
 
 func (c *Capture) ProtectError(err error) string {
+	return c.protectError(context.Background(), err)
+}
+
+func (c *Capture) protectError(ctx context.Context, err error) string {
 	if err == nil {
 		return ""
 	}
 	if c == nil || c.Protector == nil {
 		return "operation failed"
 	}
-	value, reason := observability.ProtectDiagnosticText(context.Background(), c.Protector, []byte(err.Error()), 1<<20)
+	value, reason := observability.ProtectDiagnosticText(ctx, c.Protector, []byte(err.Error()), 1<<20)
 	if reason != observability.CredentialProtectionAvailable {
 		return "error detail unavailable: " + reason.Code()
 	}

@@ -140,14 +140,22 @@ export function aggregate(registry, reports, { runID, source, image, registryHas
         report.completed_answers !== matrix.reduce((sum, axis) => sum + axis.completed, 0)) {
       return unavailable("invalid report denominator or scoring policies");
     }
-    const complete = report.complete === true && report.capture_complete === true && report.model_verified_before_cutoff === true &&
-      report.owned_cleanup === true && report.restored_rows === corpus.rows && report.completed_answers === expected &&
+    const verified = report.capture_complete === true && report.model_verified_before_cutoff === true &&
+      report.owned_cleanup === true && report.restored_rows === corpus.rows &&
       /^[a-f0-9]{64}$/.test(identity.canonical_sha256 || "");
+    const scored = report.completed_answers === expected;
+    const complete = report.complete === true && verified && scored;
+    let failure = report.failure || "";
+    if (!complete && !failure) {
+      if (!verified) failure = "verification, capture or cleanup incomplete";
+      else if (!scored) failure = "policy answers failed or missing";
+      else failure = "terminal report incomplete";
+    }
     configs.add(JSON.stringify([identity.model, identity.embedding_model, identity.embedding_dimensions, identity.context_window_tokens, identity.scoring_policy]));
     return {
       dataset: id, expected, completed: report.completed_answers, complete, identity, matrix,
       timings_ms: report.timings_ms, server_usage: report.server_usage, owned_cleanup: report.owned_cleanup,
-      capture_failure: report.capture_failure, failure: report.failure || (complete ? "" : "verification, capture or cleanup incomplete"),
+      capture_failure: report.capture_failure, failure,
     };
   });
   return {

@@ -154,6 +154,30 @@ func AnswerScore(answer string, aliases []string) (float64, float64) {
 }
 
 func ScoreObservation(question Question, observation Observation, corpus map[string]CorpusItem, mapping KnowledgeMapping, canonical map[string]CanonicalEvidence) ([]CaseScore, error) {
+	scorer, err := newAnswerScorer(question, observation, corpus, mapping, canonical)
+	if err != nil {
+		return nil, err
+	}
+	result := []CaseScore{}
+	seen := map[string]bool{}
+	for _, host := range observation.Hosts {
+		if seen[host.Policy] {
+			return nil, errors.New("duplicate or invalid answer policy")
+		}
+		seen[host.Policy] = true
+		score, err := scorer(host)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, score)
+	}
+	if len(result) != 2 {
+		return nil, errors.New("observation lacks an answer policy")
+	}
+	return result, nil
+}
+
+func newAnswerScorer(question Question, observation Observation, corpus map[string]CorpusItem, mapping KnowledgeMapping, canonical map[string]CanonicalEvidence) (func(HostResult) (CaseScore, error), error) {
 	if question.ID != observation.QuestionID || observation.Condition != scoringCondition {
 		return nil, errors.New("observation identity mismatch")
 	}
@@ -214,20 +238,17 @@ func ScoreObservation(question Question, observation Observation, corpus map[str
 		}
 		return float64(recovered) / float64(len(gold))
 	}
-	result := []CaseScore{}
-	seen := map[string]bool{}
-	for _, host := range observation.Hosts {
-		if seen[host.Policy] || (host.Policy != "single" && host.Policy != "multi_turn") {
-			return nil, errors.New("duplicate or invalid answer policy")
+	return func(host HostResult) (CaseScore, error) {
+		if host.Policy != "single" && host.Policy != "multi_turn" {
+			return CaseScore{}, errors.New("duplicate or invalid answer policy")
 		}
-		seen[host.Policy] = true
 		if len(host.Calls) == 0 || len(host.Calls) > 8 || host.Policy == "single" && len(host.Calls) != 1 {
-			return nil, errors.New("invalid memory call count")
+			return CaseScore{}, errors.New("invalid memory call count")
 		}
 		initial, _ := json.Marshal(observation.Initial)
 		shared, _ := json.Marshal(host.Calls[0])
 		if string(initial) != string(shared) {
-			return nil, errors.New("host initial Recall packet changed")
+			return CaseScore{}, errors.New("host initial Recall packet changed")
 		}
 		score := CaseScore{QuestionID: question.ID, Condition: observation.Condition, Policy: host.Policy, Completed: host.Error == "", Recall1: recall(1), Recall5: recall(5), Recall10: recall(10), InitialTextCoverage: coverage([]MemoryCall{observation.Initial}), FinalTextCoverage: coverage(host.Calls), MemoryCalls: len(host.Calls), ProviderCalls: len(host.Attempts), ElapsedMS: host.ElapsedMS}
 		score.AllSupport = score.Recall10 == 1
@@ -274,15 +295,11 @@ func ScoreObservation(question Question, observation Observation, corpus map[str
 				score.OutputTokens += attempt.Output
 				score.TotalTokens += attempt.Total
 			default:
-				return nil, errors.New("unknown answer usage state")
+				return CaseScore{}, errors.New("unknown answer usage state")
 			}
 		}
-		result = append(result, score)
-	}
-	if len(result) != 2 {
-		return nil, errors.New("observation lacks an answer policy")
-	}
-	return result, nil
+		return score, nil
+	}, nil
 }
 
 func NewReport(manifest Manifest, corpusCount, questionCount int) Report {

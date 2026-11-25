@@ -2,6 +2,7 @@ package observability
 
 import (
 	"bytes"
+	"math/bits"
 	"net/url"
 	"strconv"
 	"strings"
@@ -12,14 +13,6 @@ import (
 type credentialDecodedByte struct {
 	value byte
 	end   int
-}
-
-func decodedCredentialPrefixDetailed(text, variant string, allowPercentEncoding bool) (int, bool, bool) {
-	return matchCredentialLayersStreaming(text, variant, allowPercentEncoding, true, false)
-}
-
-func reverseDecodedCredentialPrefixDetailed(text, variant string) (int, bool, bool) {
-	return matchCredentialLayersStreaming(text, variant, true, true, true)
 }
 
 const maxCredentialDecodeLayers = 4
@@ -109,6 +102,16 @@ func (stream *credentialDecodeStream) next() (credentialDecodedByte, bool) {
 		encodedInput[length] = value.value
 		ends[length] = value.end
 		length++
+		if length == 2 {
+			if decoded, ok := credentialShortEscape(value.value); ok {
+				stream.markChanged()
+				return credentialDecodedByte{value: decoded, end: value.end}, true
+			}
+			if !strings.ContainsRune("uxU0123", rune(value.value)) {
+				stream.unreadSource([]credentialDecodedByte{value})
+				return first, true
+			}
+		}
 	}
 	encoded, encodedSize, consumed, decodedOK := decodeCredentialCandidateEscape(encodedInput[:length])
 	if !decodedOK {
@@ -154,11 +157,12 @@ func (stream *credentialDecodeStream) unreadSource(values []credentialDecodedByt
 	if len(values) == 0 {
 		return
 	}
-	if stream.unreadLen != 0 || len(values) > len(stream.unread) {
+	if len(values) > len(stream.unread)-stream.unreadLen {
 		panic("credential decoder unread buffer exhausted")
 	}
+	copy(stream.unread[len(values):], stream.unread[:stream.unreadLen])
 	copy(stream.unread[:], values)
-	stream.unreadLen = len(values)
+	stream.unreadLen += len(values)
 }
 
 func (stream *credentialDecodeStream) markChanged() {
@@ -170,15 +174,7 @@ func (stream *credentialDecodeStream) markChanged() {
 func credentialMatchStreamPrefix(text, variant string, kinds []credentialStreamKind) (int, bool, bool) {
 	var streams [credentialStreamMaxPasses + 1]credentialDecodeStream
 	var changed [credentialStreamMaxPasses + 1]bool
-	streams[0] = credentialDecodeStream{kind: credentialStreamRaw, text: text}
-	for index, kind := range kinds {
-		streams[index+1] = credentialDecodeStream{
-			kind:    kind,
-			source:  &streams[index],
-			changed: &changed[index+1],
-		}
-	}
-	stream := &streams[len(kinds)]
+	stream := credentialStream(&streams, text, kinds, &changed)
 	consumed := 0
 	for index := 0; index < len(variant); index++ {
 		value, ok := stream.next()
@@ -188,6 +184,14 @@ func credentialMatchStreamPrefix(text, variant string, kinds []credentialStreamK
 		consumed = value.end
 	}
 	return consumed, true, len(kinds) > 0 && changed[len(kinds)]
+}
+
+func credentialStream(streams *[credentialStreamMaxPasses + 1]credentialDecodeStream, text string, kinds []credentialStreamKind, changed *[credentialStreamMaxPasses + 1]bool) *credentialDecodeStream {
+	streams[0] = credentialDecodeStream{kind: credentialStreamRaw, text: text}
+	for index, kind := range kinds {
+		streams[index+1] = credentialDecodeStream{kind: kind, source: &streams[index], changed: &changed[index+1]}
+	}
+	return &streams[len(kinds)]
 }
 
 func matchCredentialLayersStreaming(text, variant string, allowPercentEncoding, allowUnicodeEncoding, percentFirst bool) (int, bool, bool) {
@@ -322,27 +326,6 @@ func credentialMatchWorkLimit(maxBytes int) int {
 		return maxMatchWork
 	}
 	return limit
-}
-
-func credentialMatchWorkEstimate(text string, variants []credentialVariant) int {
-	work := 0
-	maxInt := int(^uint(0) >> 1)
-	for _, variant := range variants {
-		if !variant.allowPercentEncoding && !variant.allowUnicodeEncoding {
-			continue
-		}
-		if !credentialLiteralCandidate(text, variant.text) {
-			continue
-		}
-		if !credentialDecodedLiteralCandidate(text, variant.text, variant.allowPercentEncoding, variant.allowUnicodeEncoding) {
-			continue
-		}
-		if len(variant.text) > maxInt-work {
-			return maxInt
-		}
-		work += len(variant.text)
-	}
-	return work
 }
 
 type credentialCandidateBuffer struct {
@@ -540,10 +523,37 @@ func decodeCredentialCandidateEscapes(input credentialCandidateBuffer) credentia
 	return decoded
 }
 
+func credentialShortEscape(value byte) (byte, bool) {
+	switch value {
+	case '"', '\\', '\'', '/':
+		return value, true
+	case 'a':
+		return '\a', true
+	case 'b':
+		return '\b', true
+	case 'f':
+		return '\f', true
+	case 'n':
+		return '\n', true
+	case 'r':
+		return '\r', true
+	case 't':
+		return '\t', true
+	case 'v':
+		return '\v', true
+	default:
+		return 0, false
+	}
+}
+
 func decodeCredentialCandidateEscape(text []byte) ([utf8.UTFMax]byte, int, int, bool) {
 	var encoded [utf8.UTFMax]byte
 	if len(text) < 2 || text[0] != '\\' {
 		return encoded, 0, 0, false
+	}
+	if decoded, ok := credentialShortEscape(text[1]); ok {
+		encoded[0] = decoded
+		return encoded, 1, 2, true
 	}
 	if text[1] == 'x' {
 		if len(text) < 4 || !isHexDigit(text[2]) || !isHexDigit(text[3]) {
@@ -562,22 +572,6 @@ func decodeCredentialCandidateEscape(text []byte) ([utf8.UTFMax]byte, int, int, 
 	var escaped rune
 	consumed := 2
 	switch text[1] {
-	case '"', '\\', '\'', '/':
-		escaped = rune(text[1])
-	case 'a':
-		escaped = '\a'
-	case 'b':
-		escaped = '\b'
-	case 'f':
-		escaped = '\f'
-	case 'n':
-		escaped = '\n'
-	case 'r':
-		escaped = '\r'
-	case 't':
-		escaped = '\t'
-	case 'v':
-		escaped = '\v'
 	case 'u', 'U':
 		digits := 4
 		if text[1] == 'U' {
@@ -664,28 +658,58 @@ func credentialEncodingPrefixIsValid(text string) bool {
 	}
 }
 
-func credentialTextContainsVariant(text string, variants []credentialVariant) bool {
-	contains, _ := credentialTextContainsVariantDetailed(text, variants)
-	return contains
+type credentialVariantIndex struct {
+	variants        []credentialVariant
+	starts          [256]bool
+	literal         [256][]int
+	decoded         [256][]int
+	decodable       []int
+	singleDecoder   bool
+	markerCollision bool
 }
 
-func credentialTextContainsVariantDetailed(text string, variants []credentialVariant) (bool, bool) {
-	return credentialTextContainsVariantDetailedWithBudget(text, variants, nil)
+var emptyCredentialVariantIndex credentialVariantIndex
+
+func newCredentialVariantIndex(variants []credentialVariant) *credentialVariantIndex {
+	if len(variants) == 0 {
+		return &emptyCredentialVariantIndex
+	}
+	index := &credentialVariantIndex{variants: variants}
+	for ordinal, variant := range variants {
+		first := variant.text[0]
+		index.starts[first] = true
+		if !variant.allowPercentEncoding && !variant.allowUnicodeEncoding {
+			index.literal[first] = append(index.literal[first], ordinal)
+			continue
+		}
+		index.decoded[first] = append(index.decoded[first], ordinal)
+		index.decodable = append(index.decodable, ordinal)
+		index.singleDecoder = index.singleDecoder || !variant.allowPercentEncoding || !variant.allowUnicodeEncoding
+	}
+	if len(index.decodable) > 0 {
+		index.starts['%'], index.starts['\\'], index.starts['+'] = true, true, true
+	}
+	index.markerCollision, _ = index.contains(CredentialProtectionRedacted, nil, false)
+	return index
 }
 
-func credentialTextContainsVariantDetailedWithBudget(text string, variants []credentialVariant, budget *credentialSnapshotBudget) (bool, bool) {
-	starts := credentialCandidateStarts(variants)
+func (variants *credentialVariantIndex) contains(text string, budget *credentialSnapshotBudget, checkDepth bool) (bool, bool) {
+	if len(variants.variants) == 0 {
+		return false, false
+	}
 	for index := 0; index < len(text); {
-		if !starts[text[index]] {
+		if !variants.starts[text[index]] {
 			index++
 			continue
 		}
-		if budget != nil && !budget.reserveMatchWork(credentialMatchWorkEstimate(text[index:], variants)) {
+		_, _, ok, exhausted := variants.matchAt(text[index:], budget)
+		if budget != nil && budget.matchWorkExceeded {
 			return false, false
 		}
-		if _, _, ok, exhausted := credentialMatchAtDetailed(text[index:], variants); ok {
+		if ok {
 			return true, false
-		} else if exhausted {
+		}
+		if checkDepth && exhausted {
 			return false, true
 		}
 		_, size := utf8.DecodeRuneInString(text[index:])
@@ -697,59 +721,210 @@ func credentialTextContainsVariantDetailedWithBudget(text string, variants []cre
 	return false, false
 }
 
-func credentialMatchAt(text string, variants []credentialVariant) (credentialVariant, int, bool) {
-	variant, consumed, matched, _ := credentialMatchAtDetailed(text, variants)
-	return variant, consumed, matched
-}
-
-func credentialMatchAtDetailed(text string, variants []credentialVariant) (credentialVariant, int, bool, bool) {
-	var longest credentialVariant
+func (variants *credentialVariantIndex) matchAt(text string, budget *credentialSnapshotBudget) (credentialVariant, int, bool, bool) {
+	first := text[0]
+	longest := len(variants.variants)
 	longestConsumed := 0
 	exhausted := false
-	for _, variant := range variants {
-		consumed, ok, variantExhausted := credentialPrefixDetailed(text, variant)
-		if ok && consumed > longestConsumed {
-			longest = variant
-			longestConsumed = consumed
+	match := func(ordinals []int) {
+		for _, ordinal := range ordinals {
+			variant := variants.variants[ordinal]
+			var consumed int
+			var ok, variantExhausted bool
+			if variant.allowPercentEncoding || variant.allowUnicodeEncoding {
+				consumed, ok, variantExhausted = encodedCredentialPrefixDetailed(text, variant.text, variant.allowPercentEncoding, variant.allowUnicodeEncoding, budget)
+				if budget != nil && budget.matchWorkExceeded {
+					return
+				}
+			} else {
+				consumed, ok, variantExhausted = credentialPrefixDetailed(text, variant)
+			}
+			if ok && (consumed > longestConsumed || consumed == longestConsumed && ordinal < longest) {
+				longest = ordinal
+				longestConsumed = consumed
+			}
+			exhausted = exhausted || variantExhausted
 		}
-		exhausted = exhausted || variantExhausted
+	}
+	match(variants.literal[first])
+	if len(variants.decodable) == 0 || !credentialDecodedByteMayChange(first, true, true) || !credentialEncodingPrefixIsValid(text) {
+		match(variants.decoded[first])
+	} else if variants.singleDecoder {
+		match(variants.decodable)
+	} else {
+		starts, unresolved := credentialReachableStarts(text)
+		if unresolved {
+			match(variants.decodable)
+		} else {
+			for block, values := range starts {
+				for values != 0 && (budget == nil || !budget.matchWorkExceeded) {
+					value := bits.TrailingZeros64(values)
+					match(variants.decoded[block*64+value])
+					values &= values - 1
+				}
+			}
+		}
 	}
 	if longestConsumed > 0 {
-		return longest, longestConsumed, true, false
+		return variants.variants[longest], longestConsumed, true, false
 	}
 	return credentialVariant{}, 0, false, exhausted
 }
 
-func credentialSnapshotContainsGoFormattedVariantWithBudget(value any, variants []credentialVariant, budget *credentialSnapshotBudget) (bool, bool) {
+func credentialReachableStarts(text string) (starts [4]uint64, unresolved bool) {
+	add := func(value byte) { starts[value/64] |= uint64(1) << (value % 64) }
+	first := text[0]
+	add(first)
+	switch first {
+	case '+':
+		add(' ')
+		return starts, false
+	case '%':
+		if decoded := hexByte(text[1], text[2]); !credentialDecodedByteMayChange(decoded, true, true) {
+			add(decoded)
+			return starts, false
+		}
+	case '\\':
+		if decoded, ok := credentialShortEscape(text[1]); ok && decoded != '\\' {
+			add(decoded)
+			return starts, false
+		}
+	}
+	if decoded, known, depth := credentialLeadingShortEscape(text); known {
+		add('\\')
+		add(decoded)
+		return starts, depth
+	}
+	var streams [credentialStreamMaxPasses + 1]credentialDecodeStream
+	var changed [credentialStreamMaxPasses + 1]bool
+	for _, order := range [][2]credentialStreamKind{
+		{credentialStreamEscapes, credentialStreamPercent},
+		{credentialStreamPercent, credentialStreamEscapes},
+	} {
+		var kinds [credentialStreamMaxPasses]credentialStreamKind
+		previous := credentialDecodedByte{value: first, end: 1}
+		for pass := range kinds {
+			kinds[pass] = order[pass%len(order)]
+			value, ok := credentialStream(&streams, text, kinds[:pass+1], &changed).next()
+			if !ok {
+				break
+			}
+			if pass >= 2*maxCredentialDecodeLayers {
+				// A fifth-layer change can still require a fail-closed result.
+				if value != previous {
+					return starts, true
+				}
+			} else {
+				add(value.value)
+			}
+			if !credentialDecodedByteMayChange(value.value, true, true) {
+				break
+			}
+			previous = value
+		}
+	}
+	return starts, false
+}
+
+func credentialLeadingShortEscape(text string) (byte, bool, bool) {
+	// Quoting wire JSON repeatedly produces runs of literal or percent-encoded backslashes followed by a short escape.
+	width := 1
+	if text[0] == '%' {
+		if hexByte(text[1], text[2]) != '\\' {
+			return 0, false, false
+		}
+		width = 3
+	}
+	count := 0
+	for len(text) >= width {
+		if width == 1 && text[0] != '\\' || width == 3 && (text[0] != '%' || !isHexDigit(text[1]) || !isHexDigit(text[2]) || hexByte(text[1], text[2]) != '\\') {
+			break
+		}
+		count++
+		if count > 1<<(maxCredentialDecodeLayers+1) {
+			return '\\', true, true
+		}
+		text = text[width:]
+	}
+	if text == "" {
+		return 0, false, false
+	}
+	end := text[0]
+	if width == 3 && end == '%' && len(text) >= 3 && isHexDigit(text[1]) && isHexDigit(text[2]) {
+		end = hexByte(text[1], text[2])
+	}
+	if _, short := credentialShortEscape(end); !short || end == '\\' {
+		return 0, false, false
+	}
+	layers := maxCredentialDecodeLayers
+	if width == 3 {
+		// The escapes-first order needs a round to turn the percent tokens into backslashes.
+		layers--
+	}
+	for layer := 0; layer <= layers; layer++ {
+		next := count / 2
+		if count%2 != 0 {
+			if decoded, ok := credentialShortEscape(end); ok {
+				end = decoded
+			} else {
+				next++
+			}
+		}
+		if next == count {
+			return '\\', true, false
+		}
+		if layer == layers {
+			return '\\', true, true
+		}
+		if next == 0 {
+			return end, true, false
+		}
+		count = next
+	}
+	return 0, false, false
+}
+
+func credentialSnapshotContainsGoFormattedVariantWithBudget(value any, variants *credentialVariantIndex, budget *credentialSnapshotBudget) (bool, bool) {
+	if len(variants.variants) == 0 {
+		return false, false
+	}
 	switch typed := value.(type) {
 	case float32:
-		return credentialTextContainsVariantDetailedWithBudget(strconv.FormatFloat(float64(typed), 'g', -1, 32), variants, budget)
+		return variants.contains(strconv.FormatFloat(float64(typed), 'g', -1, 32), budget, true)
 	case float64:
-		return credentialTextContainsVariantDetailedWithBudget(strconv.FormatFloat(typed, 'g', -1, 64), variants, budget)
+		return variants.contains(strconv.FormatFloat(typed, 'g', -1, 64), budget, true)
 	case string:
-		for _, quoted := range []string{strconv.Quote(typed), strconv.QuoteToASCII(typed)} {
-			contains, exhausted := credentialTextContainsVariantDetailedWithBudget(quoted, variants, budget)
-			if exhausted || contains {
+		forms := [2]string{strconv.Quote(typed), strconv.QuoteToASCII(typed)}
+		for i, quoted := range forms {
+			if i > 0 && quoted == forms[0] {
+				continue
+			}
+			contains, exhausted := variants.contains(quoted, budget, true)
+			if exhausted || contains || budget.matchWorkExceeded {
 				return contains, exhausted
 			}
 		}
 	case map[string]any:
 		for key, child := range typed {
-			for _, quoted := range []string{strconv.Quote(key), strconv.QuoteToASCII(key)} {
-				contains, exhausted := credentialTextContainsVariantDetailedWithBudget(quoted, variants, budget)
-				if exhausted || contains {
+			forms := [2]string{strconv.Quote(key), strconv.QuoteToASCII(key)}
+			for i, quoted := range forms {
+				if i > 0 && quoted == forms[0] {
+					continue
+				}
+				contains, exhausted := variants.contains(quoted, budget, true)
+				if exhausted || contains || budget.matchWorkExceeded {
 					return contains, exhausted
 				}
 			}
 			contains, exhausted := credentialSnapshotContainsGoFormattedVariantWithBudget(child, variants, budget)
-			if exhausted || contains {
+			if exhausted || contains || budget.matchWorkExceeded {
 				return contains, exhausted
 			}
 		}
 	case []any:
 		for _, child := range typed {
 			contains, exhausted := credentialSnapshotContainsGoFormattedVariantWithBudget(child, variants, budget)
-			if exhausted || contains {
+			if exhausted || contains || budget.matchWorkExceeded {
 				return contains, exhausted
 			}
 		}
@@ -757,7 +932,7 @@ func credentialSnapshotContainsGoFormattedVariantWithBudget(value any, variants 
 	return false, false
 }
 
-func credentialSnapshotContainsURLVariantWithBudget(value any, variants []credentialVariant, budget *credentialSnapshotBudget) bool {
+func credentialSnapshotContainsURLVariantWithBudget(value any, variants *credentialVariantIndex, budget *credentialSnapshotBudget) bool {
 	switch typed := value.(type) {
 	case string:
 		return credentialTextContainsURLSerializedVariantWithBudget(typed, variants, budget)
@@ -780,43 +955,34 @@ func credentialSnapshotContainsURLVariantWithBudget(value any, variants []creden
 	return false
 }
 
-func credentialTextContainsURLSerializedVariantWithBudget(text string, variants []credentialVariant, budget *credentialSnapshotBudget) bool {
-	for _, encoded := range []string{url.QueryEscape(text), url.PathEscape(text), userInfoEscape(text)} {
-		if credentialURLTextContainsVariantWithBudget(encoded, variants, budget) {
-			return true
-		}
-	}
-	return false
-}
-
-func credentialTextContainsCompleteGoQuotedVariantWithBudget(text string, variants []credentialVariant, budget *credentialSnapshotBudget) bool {
-	for _, quoted := range []string{strconv.Quote(text), strconv.QuoteToASCII(text)} {
-		if credentialURLTextContainsVariantWithBudget(quoted, variants, budget) {
-			return true
-		}
-	}
-	return false
-}
-
-func credentialURLTextContainsVariantWithBudget(text string, variants []credentialVariant, budget *credentialSnapshotBudget) bool {
-	starts := credentialCandidateStarts(variants)
-	for index := 0; index < len(text); {
-		if !starts[text[index]] {
-			index++
+func credentialTextContainsURLSerializedVariantWithBudget(text string, variants *credentialVariantIndex, budget *credentialSnapshotBudget) bool {
+	forms := [3]string{url.QueryEscape(text), url.PathEscape(text), userInfoEscape(text)}
+	for i, encoded := range forms {
+		if i > 0 && encoded == forms[0] || i == 2 && encoded == forms[1] {
 			continue
 		}
-		if budget != nil && !budget.reserveMatchWork(credentialMatchWorkEstimate(text[index:], variants)) {
-			return false
-		}
-		_, _, contains, _ := credentialMatchAtDetailed(text[index:], variants)
-		if contains {
+		if contains, _ := variants.contains(encoded, budget, false); contains {
 			return true
 		}
-		_, size := utf8.DecodeRuneInString(text[index:])
-		if size == 0 {
+		if budget.matchWorkExceeded {
 			return false
 		}
-		index += size
+	}
+	return false
+}
+
+func credentialTextContainsCompleteGoQuotedVariantWithBudget(text string, variants *credentialVariantIndex, budget *credentialSnapshotBudget) bool {
+	forms := [2]string{strconv.Quote(text), strconv.QuoteToASCII(text)}
+	for i, quoted := range forms {
+		if i > 0 && quoted == forms[0] {
+			continue
+		}
+		if contains, _ := variants.contains(quoted, budget, false); contains {
+			return true
+		}
+		if budget.matchWorkExceeded {
+			return false
+		}
 	}
 	return false
 }

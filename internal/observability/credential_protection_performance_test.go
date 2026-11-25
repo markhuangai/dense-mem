@@ -36,6 +36,73 @@ func TestCredentialProtectorKeepsEncodedPrefixMatches(t *testing.T) {
 	}
 }
 
+func TestIndexedCredentialMatchAgreesWithFullVariantScan(t *testing.T) {
+	variants := credentialVariants([]string{"key", "key-longer", "x-key", "a+b", "%literal", "\\value", "\"quoted", "🙂", "é", "�", "\nkey"})
+	index := newCredentialVariantIndex(variants)
+	inputs := []string{"key-longer", "xx x-key", "%6bey-longer", `\uD83D\uDE42`, `\uD800`, `\251`, `\x6Bey`, `\u00E9`, `\qinvalid`, "\\\\\"quoted", "unrelated"}
+	for _, seed := range []string{"key", "key-longer", "a+b", "%literal", "\\value", "\"quoted"} {
+		for depth := 1; depth <= maxCredentialDecodeLayers+1; depth++ {
+			percent := seed
+			escapes := seed
+			reverse := seed
+			for pass := 0; pass < depth; pass++ {
+				percent = url.QueryEscape(percent)
+				if pass == 0 {
+					percent = "%" + fmt.Sprintf("%02X", seed[0]) + url.QueryEscape(seed[1:])
+				}
+				escapes = url.QueryEscape(encodeCredentialTestUnicodeLayer(escapes))
+				reverse = encodeCredentialTestUnicodeLayer(url.QueryEscape(reverse))
+			}
+			inputs = append(inputs, percent, escapes, reverse)
+		}
+	}
+	for _, input := range inputs {
+		for _, tail := range []string{"", strings.Repeat("suffix", 120)} {
+			current := input + tail
+			for position := range min(96, len(current)) {
+				suffix := current[position:]
+				var want credentialVariant
+				consumed := 0
+				exhausted := false
+				for _, candidate := range variants {
+					length, ok, depth := credentialPrefixDetailed(suffix, candidate)
+					exhausted = exhausted || depth
+					if ok && length > consumed {
+						want, consumed = candidate, length
+					}
+				}
+				got, length, matched, depth := index.matchAt(suffix, nil)
+				require.Equal(t, consumed, length, "input %q at byte %d", input[:min(len(input), 64)], position)
+				require.Equal(t, want, got)
+				require.Equal(t, consumed > 0, matched)
+				require.Equal(t, consumed == 0 && exhausted, depth)
+			}
+		}
+	}
+}
+
+func TestIndexedCredentialMatchPreservesMixedEscapeDepthFailures(t *testing.T) {
+	protector := NewCredentialProtector("provider-secret")
+	for count := 8; count < 16; count++ {
+		for _, tail := range []string{"%22", "%6E", "n"} {
+			text := strings.Repeat("%5C", count) + tail
+			wantDepth := false
+			for _, variant := range protector.index.variants {
+				_, _, exhausted := credentialPrefixDetailed(text, variant)
+				wantDepth = wantDepth || exhausted
+			}
+			_, _, matched, depth := protector.index.matchAt(text, nil)
+			require.False(t, matched)
+			require.Equal(t, wantDepth, depth, "escape count %d, suffix %s", count, tail)
+			if count == 8 || tail == "%22" {
+				got := protector.Snapshot(text, 2048)
+				require.Equal(t, CredentialProtectionEncodingLimitExceeded, got.UnavailableReason)
+				require.Nil(t, got.Value)
+			}
+		}
+	}
+}
+
 func TestCredentialProtectorPreservesNumericPayloadAroundEncodedCredentials(t *testing.T) {
 	const secret = "provider-credential"
 	const presented = "presented-credential"

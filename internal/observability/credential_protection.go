@@ -59,7 +59,7 @@ type ProtectedDiagnostic struct {
 // callers provide resolved PostgreSQL, Redis, provider, control, telemetry,
 // SSO, bearer, OAuth, session, or CSRF values at the ownership boundary.
 type CredentialProtector struct {
-	variants         []credentialVariant
+	index            *credentialVariantIndex
 	configurationErr CredentialProtectionUnavailableReason
 }
 
@@ -71,7 +71,7 @@ func NewCredentialProtector(configuredSecrets ...string) *CredentialProtector {
 		protector.configurationErr = CredentialProtectionSecretTooLong
 		return protector
 	}
-	protector.variants = credentialVariants(configuredSecrets)
+	protector.index = newCredentialVariantIndex(credentialVariants(configuredSecrets))
 	return protector
 }
 
@@ -80,7 +80,6 @@ func NewCredentialProtector(configuredSecrets ...string) *CredentialProtector {
 // mutating the protector. Unsupported, cyclic, invalid, or over-budget values
 // return a bounded reason and never return a raw or partial Value.
 func (p *CredentialProtector) Snapshot(value any, maxBytes int, authenticatedSecrets ...string) (result ProtectedDiagnostic) {
-	var variants []credentialVariant
 	result = ProtectedDiagnostic{Value: nil}
 	defer func() {
 		if recover() != nil {
@@ -93,15 +92,11 @@ func (p *CredentialProtector) Snapshot(value any, maxBytes int, authenticatedSec
 	if credentialSecretTooLong(authenticatedSecrets) {
 		return unavailableDiagnostic(CredentialProtectionSecretTooLong)
 	}
-	if p != nil {
-		variants = append(variants, p.variants...)
-	}
-	variants = mergeCredentialVariants(variants, credentialVariants(authenticatedSecrets))
-
 	if maxBytes <= 0 {
 		return unavailableDiagnostic(CredentialProtectionInvalidBudget)
 	}
-	if credentialMarkerCollides(variants) {
+	index := p.variantIndex(authenticatedSecrets)
+	if index.markerCollision {
 		return unavailableDiagnostic(CredentialProtectionFormattingFailed)
 	}
 	budget := &credentialSnapshotBudget{
@@ -109,8 +104,8 @@ func (p *CredentialProtector) Snapshot(value any, maxBytes int, authenticatedSec
 		matchWorkLimit: credentialMatchWorkLimit(maxBytes),
 	}
 	walker := credentialSnapshotWalker{
-		variants: variants,
-		active:   make(map[credentialSnapshotVisit]struct{}),
+		index:  index,
+		active: make(map[credentialSnapshotVisit]struct{}),
 	}
 	snapshot, reason := walker.walk(reflect.ValueOf(value), 0, budget)
 	if reason != CredentialProtectionAvailable {
@@ -126,7 +121,7 @@ func (p *CredentialProtector) Snapshot(value any, maxBytes int, authenticatedSec
 	if len(encoded) > maxBytes {
 		return unavailableDiagnostic(CredentialProtectionEncodedBudgetExceeded)
 	}
-	contains, exhausted := credentialTextContainsVariantDetailedWithBudget(string(encoded), variants, budget)
+	contains, exhausted := index.contains(string(encoded), budget, true)
 	if budget.matchWorkExceeded {
 		return unavailableDiagnostic(CredentialProtectionMatchingBudgetExceeded)
 	}
@@ -136,7 +131,7 @@ func (p *CredentialProtector) Snapshot(value any, maxBytes int, authenticatedSec
 	if contains {
 		return unavailableDiagnostic(CredentialProtectionFormattingFailed)
 	}
-	contains, exhausted = credentialSnapshotContainsGoFormattedVariantWithBudget(snapshot, variants, budget)
+	contains, exhausted = credentialSnapshotContainsGoFormattedVariantWithBudget(snapshot, index, budget)
 	if budget.matchWorkExceeded {
 		return unavailableDiagnostic(CredentialProtectionMatchingBudgetExceeded)
 	}
@@ -146,25 +141,30 @@ func (p *CredentialProtector) Snapshot(value any, maxBytes int, authenticatedSec
 	if contains {
 		return unavailableDiagnostic(CredentialProtectionFormattingFailed)
 	}
-	if credentialSnapshotContainsURLVariantWithBudget(snapshot, variants, budget) {
-		return unavailableDiagnostic(CredentialProtectionFormattingFailed)
-	}
-	if budget.matchWorkExceeded {
-		return unavailableDiagnostic(CredentialProtectionMatchingBudgetExceeded)
-	}
-	if credentialTextContainsURLSerializedVariantWithBudget(string(encoded), variants, budget) {
-		return unavailableDiagnostic(CredentialProtectionFormattingFailed)
-	}
-	if budget.matchWorkExceeded {
-		return unavailableDiagnostic(CredentialProtectionMatchingBudgetExceeded)
-	}
-	if credentialTextContainsCompleteGoQuotedVariantWithBudget(string(encoded), variants, budget) {
-		return unavailableDiagnostic(CredentialProtectionFormattingFailed)
+	if len(index.variants) != 0 {
+		if credentialSnapshotContainsURLVariantWithBudget(snapshot, index, budget) ||
+			credentialTextContainsURLSerializedVariantWithBudget(string(encoded), index, budget) ||
+			credentialTextContainsCompleteGoQuotedVariantWithBudget(string(encoded), index, budget) {
+			return unavailableDiagnostic(CredentialProtectionFormattingFailed)
+		}
 	}
 	if budget.matchWorkExceeded {
 		return unavailableDiagnostic(CredentialProtectionMatchingBudgetExceeded)
 	}
 	return ProtectedDiagnostic{Value: snapshot}
+}
+
+func (p *CredentialProtector) variantIndex(authenticatedSecrets []string) *credentialVariantIndex {
+	index := &emptyCredentialVariantIndex
+	if p != nil && p.index != nil {
+		index = p.index
+	}
+	if len(authenticatedSecrets) != 0 {
+		if additional := credentialVariants(authenticatedSecrets); len(additional) != 0 {
+			return newCredentialVariantIndex(mergeCredentialVariants(index.variants, additional))
+		}
+	}
+	return index
 }
 
 func credentialSecretTooLong(secrets []string) bool {
@@ -189,7 +189,7 @@ type credentialSnapshotVisit struct {
 }
 
 type credentialSnapshotWalker struct {
-	variants          []credentialVariant
+	index             *credentialVariantIndex
 	active            map[credentialSnapshotVisit]struct{}
 	processingCharged bool
 }
@@ -355,14 +355,14 @@ func (w *credentialSnapshotWalker) protectText(text string, budget *credentialSn
 	if !utf8.ValidString(text) {
 		return "", CredentialProtectionInvalidEncoding
 	}
-	protected, ok, reason := redactCredentialTextBounded(text, w.variants, budget.remainingEncoded(), budget)
+	protected, ok, reason := redactCredentialTextBounded(text, w.index, budget.remainingEncoded(), budget)
 	if !ok {
 		if reason == CredentialProtectionAvailable {
 			reason = CredentialProtectionEncodedBudgetExceeded
 		}
 		return "", reason
 	}
-	contains, exhausted := credentialTextContainsVariantDetailedWithBudget(protected, w.variants, budget)
+	contains, exhausted := w.index.contains(protected, budget, true)
 	if budget.matchWorkExceeded {
 		return "", CredentialProtectionMatchingBudgetExceeded
 	}
@@ -683,15 +683,6 @@ func addCredentialVariant(seen map[credentialVariant]struct{}, variants *[]crede
 	*variants = append(*variants, variant)
 }
 
-func credentialMarkerCollides(variants []credentialVariant) bool {
-	for index := 0; index < len(CredentialProtectionRedacted); index++ {
-		if _, _, ok := credentialMatchAt(CredentialProtectionRedacted[index:], variants); ok {
-			return true
-		}
-	}
-	return false
-}
-
 func userInfoEscape(secret string) string {
 	encoded := url.UserPassword("credential", secret).String()
 	separator := strings.IndexByte(encoded, ':')
@@ -742,23 +733,11 @@ func jsonEncodedStringLen(text string) (int, bool) {
 	return length, true
 }
 
-// The complete matcher rejects every other first byte, including before decoding.
-func credentialCandidateStarts(variants []credentialVariant) [256]bool {
-	var starts [256]bool
-	starts['%'], starts['\\'], starts['+'] = true, true, true
-	for _, variant := range variants {
-		if variant.text != "" {
-			starts[variant.text[0]] = true
-		}
-	}
-	return starts
-}
-
-func redactCredentialTextBounded(text string, variants []credentialVariant, maxOutput int, budget *credentialSnapshotBudget) (string, bool, CredentialProtectionUnavailableReason) {
+func redactCredentialTextBounded(text string, variants *credentialVariantIndex, maxOutput int, budget *credentialSnapshotBudget) (string, bool, CredentialProtectionUnavailableReason) {
 	if maxOutput < 0 {
 		return "", false, CredentialProtectionEncodedBudgetExceeded
 	}
-	if text == "" || len(variants) == 0 {
+	if text == "" || len(variants.variants) == 0 {
 		if len(text) > maxOutput {
 			return "", false, CredentialProtectionEncodedBudgetExceeded
 		}
@@ -772,9 +751,8 @@ func redactCredentialTextBounded(text string, variants []credentialVariant, maxO
 
 	outputLength := 0
 	matches := make([]credentialTextMatch, 0)
-	starts := credentialCandidateStarts(variants)
 	for index := 0; index < len(text); {
-		if !starts[text[index]] {
+		if !variants.starts[text[index]] {
 			if outputLength >= maxOutput {
 				return "", false, CredentialProtectionEncodedBudgetExceeded
 			}
@@ -782,10 +760,10 @@ func redactCredentialTextBounded(text string, variants []credentialVariant, maxO
 			index++
 			continue
 		}
-		if budget != nil && !budget.reserveMatchWork(credentialMatchWorkEstimate(text[index:], variants)) {
+		_, consumed, ok, exhausted := variants.matchAt(text[index:], budget)
+		if budget != nil && budget.matchWorkExceeded {
 			return "", false, CredentialProtectionMatchingBudgetExceeded
 		}
-		_, consumed, ok, exhausted := credentialMatchAtDetailed(text[index:], variants)
 		if exhausted {
 			return "", false, CredentialProtectionEncodingLimitExceeded
 		}
@@ -829,11 +807,8 @@ func credentialPrefix(text string, variant credentialVariant) (int, bool) {
 }
 
 func credentialPrefixDetailed(text string, variant credentialVariant) (int, bool, bool) {
-	if variant.allowPercentEncoding {
-		return encodedCredentialPrefixDetailed(text, variant.text, true, variant.allowUnicodeEncoding)
-	}
-	if variant.allowUnicodeEncoding {
-		return encodedCredentialPrefixDetailed(text, variant.text, false, true)
+	if variant.allowPercentEncoding || variant.allowUnicodeEncoding {
+		return encodedCredentialPrefixDetailed(text, variant.text, variant.allowPercentEncoding, variant.allowUnicodeEncoding, nil)
 	}
 	if len(variant.text) > len(text) {
 		return 0, false, false
@@ -866,7 +841,7 @@ func credentialPrefixDetailed(text string, variant credentialVariant) (int, bool
 	return len(variant.text), true, false
 }
 
-func encodedCredentialPrefixDetailed(text, variant string, allowPercentEncoding, allowUnicodeEncoding bool) (int, bool, bool) {
+func encodedCredentialPrefixDetailed(text, variant string, allowPercentEncoding, allowUnicodeEncoding bool, budget *credentialSnapshotBudget) (int, bool, bool) {
 	if variant == "" {
 		return 0, true, false
 	}
@@ -874,6 +849,9 @@ func encodedCredentialPrefixDetailed(text, variant string, allowPercentEncoding,
 		return 0, false, false
 	}
 	if len(text) >= len(variant) && strings.HasPrefix(text, variant) {
+		if budget != nil && !budget.reserveMatchWork(len(variant)) {
+			return 0, false, false
+		}
 		return len(variant), true, false
 	}
 	if !credentialLiteralCandidate(text, variant) {
@@ -882,30 +860,10 @@ func encodedCredentialPrefixDetailed(text, variant string, allowPercentEncoding,
 	if !credentialDecodedLiteralCandidate(text, variant, allowPercentEncoding, allowUnicodeEncoding) {
 		return 0, false, false
 	}
-	exhausted := false
-	if allowUnicodeEncoding {
-		if consumed, ok, variantExhausted := decodedCredentialPrefixDetailed(text, variant, allowPercentEncoding); ok {
-			return consumed, true, false
-		} else {
-			exhausted = exhausted || variantExhausted
-		}
+	if budget != nil && !budget.reserveMatchWork(len(variant)) {
+		return 0, false, false
 	}
-	if allowPercentEncoding && allowUnicodeEncoding {
-		if consumed, ok, variantExhausted := reverseDecodedCredentialPrefixDetailed(text, variant); ok {
-			return consumed, true, false
-		} else {
-			exhausted = exhausted || variantExhausted
-		}
-	}
-	if consumed, ok, variantExhausted := literalCredentialPrefixDetailed(text, variant, allowPercentEncoding, allowUnicodeEncoding); ok {
-		return consumed, true, false
-	} else {
-		exhausted = exhausted || variantExhausted
-	}
-	return 0, false, exhausted
-}
 
-func literalCredentialPrefixDetailed(text, variant string, allowPercentEncoding, allowUnicodeEncoding bool) (int, bool, bool) {
 	exhausted := false
 	if consumed, ok, variantExhausted := matchCredentialLayersStreaming(text, variant, allowPercentEncoding, allowUnicodeEncoding, false); ok {
 		return consumed, true, false
