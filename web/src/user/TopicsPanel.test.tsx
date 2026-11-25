@@ -1,11 +1,10 @@
 import userEvent from "@testing-library/user-event";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ConfirmationProvider } from "../ui/confirmation";
 import { UserApi, type UserSession } from "./api";
 import { TopicsPanel } from "./TopicsPanel";
 import { TopicEditor } from "./TopicEditor";
-import type { TopicCoverage, TopicDraft, TopicRecord, TopicSource } from "./topic-types";
+import type { TopicCoverage, TopicDraft } from "./topic-types";
 
 const session = { team: { id: "team-a" }, membership: { role: "manager", grants: ["read", "write"] } } as UserSession;
 const edit = { action: "define" as const, expected_version: 0, kind: "topic" as const, definition: { key: "storage", label: "Storage", description: "Durable storage", aliases: [] } };
@@ -13,20 +12,17 @@ const draft: TopicDraft = { id: "draft-a", version: 1, state: "open", base_revis
 
 const coverage: TopicCoverage = { observed_at: "2026-10-18T12:00:00Z", revision: 1, discovery_complete: false, coverage_complete: false, pending_markers: 0, counts: { eligible: 2, organized: 0, pending: 2, ambiguous: 0, failed: 0 } };
 
-function topicResponse(data: unknown) {
-  return new Response(JSON.stringify({ data }), { status: 200 });
-}
-
 function install(saved: TopicDraft[] = [], mutation?: (url: string, body: Record<string, unknown>) => Response, coverageStatus = coverage) {
+  const response = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200 });
   const fetcher = vi.fn(async (url: string, options?: RequestInit) => {
     const body = options?.body ? JSON.parse(options.body as string) : {};
-    if (options?.method && options.method !== "GET") return mutation?.(url, body) ?? topicResponse(draft);
-    if (url.includes("/records")) return topicResponse({ records: [], revision: 1 });
-    if (url.includes("/status")) return topicResponse(coverageStatus);
-    if (url.includes("/publications")) return topicResponse({ publications: [] });
-    if (url.includes("/sources")) return topicResponse({ sources: [] });
-    if (new URL(url, "http://localhost").pathname.endsWith("/drafts")) return topicResponse({ drafts: saved });
-    return topicResponse(draft);
+    if (options?.method && options.method !== "GET") return mutation?.(url, body) ?? response(draft);
+    if (url.includes("/records")) return response({ records: [], revision: 1 });
+    if (url.includes("/status")) return response(coverageStatus);
+    if (url.includes("/publications")) return response({ publications: [] });
+    if (url.includes("/sources")) return response({ sources: [] });
+    if (new URL(url, "http://localhost").pathname.endsWith("/drafts")) return response({ drafts: saved });
+    return response(draft);
   });
   vi.stubGlobal("fetch", fetcher);
   return fetcher;
@@ -44,191 +40,203 @@ describe("TopicsPanel", () => {
     expect(within(summary).queryByText("Discovery is in progress. Counts cover discovered shared records.") !== null).toBe(!complete);
   });
 
-  it("saves a current definition with its effective version and audit reason", async () => {
-    const record = { id: "topic-a", kind: "topic", version: 3, edit_version: 5, current: true, definition: edit.definition };
-    const sent: Record<string, unknown>[] = [];
+  it("preserves the selected publication and rollback reason when replacement is cancelled", async () => {
+    const publications = [1, 2].map((revision) => ({ id: `publication-${revision}`, revision, origin: "manager", reason: `Review ${revision}`, records: [] }));
+    const fetcher = install();
+    const fallback = fetcher.getMockImplementation()!;
+    fetcher.mockImplementation(async (url, options) => {
+      const path = new URL(url, "http://localhost").pathname;
+      if (path.endsWith("/publications")) return new Response(JSON.stringify({ data: { publications } }));
+      const publication = publications.find((item) => path.endsWith(`/publications/${item.id}`));
+      return publication ? new Response(JSON.stringify({ data: publication })) : fallback(url, options);
+    });
+    render(<TopicsPanel api={new UserApi("key")} session={session} />);
+    await selectTab("History");
+    await userEvent.click(await screen.findByRole("button", { name: "Revision 1 · manager · Review 1" }));
+    fireEvent.change(screen.getByLabelText("Rollback reason"), { target: { value: "Keep my unfinished reason" } });
+    vi.mocked(window.confirm).mockReturnValue(false);
+    await userEvent.click(screen.getByRole("button", { name: "Revision 2 · manager · Review 2" }));
+    expect(window.confirm).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("heading", { name: "Publication revision 1" })).toBeVisible();
+    expect(screen.getByLabelText("Rollback reason")).toHaveValue("Keep my unfinished reason");
+    expect(fetcher.mock.calls.some(([url]) => url.endsWith("/publications/publication-2"))).toBe(false);
+    vi.mocked(window.confirm).mockReturnValue(true);
+    await userEvent.click(screen.getByRole("button", { name: "Revision 2 · manager · Review 2" }));
+    await screen.findByRole("heading", { name: "Publication revision 2" });
+    expect(screen.getByLabelText("Rollback reason")).toHaveValue("");
+  });
+
+  it.each([false, true])(
+    "confirms replacing dirty Topic editor fields (same target: %s) while retaining the draft",
+    async (sameTarget) => {
+      const response = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200 });
+      const records = [
+        { id: "definition-a", kind: "topic", version: 3, definition: { key: "first", label: "First definition", description: "First description" } },
+        { id: "definition-b", kind: "topic", version: 5, definition: { key: "second", label: "Second definition", description: "Second description" } },
+      ];
+      const fetcher = install([draft], (_url, body) => response({ ...draft, version: 2, reason: body.reason, edits: body.edits }));
+      const fallback = fetcher.getMockImplementation()!;
+      fetcher.mockImplementation(async (url, options) => url.includes("/records") ? response({ records, revision: 1 }) : fallback(url, options));
+      render(<TopicsPanel api={new UserApi("key")} session={session} />);
+      await selectTab("Drafts");
+      await userEvent.click(await screen.findByRole("button", { name: /Storage correction/ }));
+      await screen.findByRole("heading", { name: /Draft draft-a/ });
+      async function selectTarget(id: string) {
+        await selectTab("Catalog");
+        const row = screen.getByTitle(id).closest("tr")!;
+        await userEvent.click(within(row).getByRole("button", { name: /^Edit / }));
+      }
+      await selectTarget("definition-a");
+      fireEvent.change(screen.getByLabelText("Definition label"), { target: { value: "Keep unfinished fields" } });
+      fireEvent.change(screen.getByLabelText("Audit reason"), { target: { value: "Keep queued corrections" } });
+      vi.mocked(window.confirm).mockReturnValue(false);
+      await selectTarget(`definition-${sameTarget ? "a" : "b"}`);
+      expect(window.confirm).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole("tab", { name: "Catalog" })).toHaveAttribute("aria-selected", "true");
+      await selectTab("Drafts");
+      expect(screen.getByLabelText("Definition label")).toHaveValue("Keep unfinished fields");
+      expect(screen.getByLabelText("Audit reason")).toHaveValue("Keep queued corrections");
+      vi.mocked(window.confirm).mockReturnValue(true);
+      await selectTarget(`definition-${sameTarget ? "a" : "b"}`);
+      expect(window.confirm).toHaveBeenCalledTimes(2);
+      expect(screen.getByRole("tab", { name: "Drafts" })).toHaveAttribute("aria-selected", "true");
+      expect(screen.getByLabelText("Definition label")).toHaveValue(sameTarget ? "First definition" : "Second definition");
+      expect(screen.getByLabelText("Audit reason")).toHaveValue("Keep queued corrections");
+      expect(screen.getByRole("button", { name: "Remove correction 1" })).toBeVisible();
+      await userEvent.click(screen.getByRole("button", { name: "Save draft" }));
+      await screen.findByText("Draft saved. Preview its impact before publishing.");
+      const write = fetcher.mock.calls.find(([, options]) => options?.method === "PUT")!;
+      expect(JSON.parse(write[1]!.body as string)).toMatchObject({ expected_version: 1, expected_revision: 1, reason: "Keep queued corrections", edits: [edit] });
+      vi.mocked(window.confirm).mockClear();
+      await userEvent.click(screen.getByRole("button", { name: "New draft" }));
+      await screen.findByRole("heading", { name: "New topic draft" });
+      expect(window.confirm).not.toHaveBeenCalled();
+    },
+  );
+
+  it("preserves unfinished editor fields while the first save persists only queued corrections", async () => {
     const response = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200 });
-    const fetcher = vi.fn(async (url: string, options?: RequestInit) => {
-      if (options?.method === "POST") {
-        expect(url).toBe("/ui/api/topics/edits");
-        sent.push(JSON.parse(options.body as string));
-        return response({ id: "publication", revision: 9 });
-      }
-      if (url.includes("/records")) return response({ records: [record], revision: 8 });
-      if (url.includes("/status")) return response(coverage);
-      if (url.includes("/publications")) return response({ publications: [] });
-      if (url.includes("/sources")) return response({ sources: [] });
-      return response({ drafts: [] });
-    });
-    vi.stubGlobal("fetch", fetcher);
+    const fetcher = install([], (url, body) => response({ ...draft, version: url.endsWith("/draft-a") ? 2 : 1, reason: body.reason, edits: body.edits }));
     render(<TopicsPanel api={new UserApi("key")} session={session} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Edit Storage" }));
-    await waitFor(() => expect(screen.getByLabelText("Definition label")).toHaveValue("Storage"));
-    fireEvent.change(screen.getByLabelText("Definition label"), { target: { value: "PostgreSQL storage" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add topic change" }));
-    fireEvent.change(screen.getByLabelText("Audit reason"), { target: { value: "Clarify the database" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await screen.findByText("Topic changes saved.");
-    expect(sent).toEqual([{
-      operation_key: expect.any(String),
-      reason: "Clarify the database",
-      edits: [{ ...edit, record_id: "topic-a", expected_version: 5, definition: { ...edit.definition, label: "PostgreSQL storage" } }],
-    }]);
-  });
-
-  it("reuses the operation key when a Save response is lost", async () => {
-    const keys: unknown[] = [];
-    install([], (url, body) => {
-      expect(url).toBe("/ui/api/topics/edits");
-      keys.push(body.operation_key);
-      if (keys.length === 1) throw new Error("Response lost");
-      return new Response(JSON.stringify({ data: { id: "publication" } }), { status: 200 });
-    });
-    render(<TopicsPanel api={new UserApi("key")} session={session} />);
-    await selectTab("Edit");
-    fillNewTopic();
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await screen.findByText("Response lost");
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await screen.findByText("Topic changes saved.");
-    expect(keys).toEqual([expect.any(String), keys[0]]);
-  });
-
-  it("requires refresh and review after a conflict", async () => {
-    const fetcher = install([], () => new Response(JSON.stringify({ error: { message: "Topic state changed" } }), { status: 409 }));
-    render(<TopicsPanel api={new UserApi("key")} session={session} />);
-    await selectTab("Edit");
-    fillNewTopic();
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
-    await screen.findByRole("button", { name: "Refresh records" });
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-    fireEvent.click(screen.getByRole("button", { name: "Refresh records" }));
-    await screen.findByText(/Topic records refreshed/);
-    expect(screen.getByLabelText("Audit reason")).toHaveValue("Add storage vocabulary");
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-    expect(fetcher.mock.calls.filter(([, options]) => options?.method === "POST")).toHaveLength(1);
-  });
-
-  it("shows previous drafts as read-only history to a read-only manager", async () => {
-    install([draft]);
-    render(<TopicsPanel api={new UserApi("key")} session={{ ...session, membership: { ...session.membership, grants: ["read"] } }} />);
-    await selectTab("History");
-    expect(screen.getByRole("region", { name: "Previous drafts" })).toBeInTheDocument();
-    expect(screen.getByText(/Storage correction/)).toBeVisible();
-    expect(screen.queryByRole("tab", { name: "Edit" })).not.toBeInTheDocument();
-  });
-
-  it("keeps catalog, shared Evidence, and history pagination independent", async () => {
-    const storage: TopicRecord = { id: "topic-a", kind: "topic", version: 1, retired: false, current: true, definition: edit.definition };
-    const archive = { ...storage, id: "topic-b", definition: { ...edit.definition, key: "archive", label: "Archive" } };
-    const source: TopicSource = { kind: "evidence", id: "source-a", version: 2, text: "Primary database source", truncated: true };
-    const olderDraft: TopicDraft = {
-      ...draft, id: "draft-b", reason: "Earlier grouping",
-      edits: [{ action: "group_together", expected_version: 1, members: [{ kind: "evidence", id: source.id, version: source.version }] }],
-    };
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      const { pathname, searchParams } = new URL(url, "http://localhost");
-      const cursor = searchParams.get("cursor");
-      switch (pathname) {
-        case "/ui/api/topics/records":
-          if (searchParams.get("kind") !== "topic") return topicResponse({ records: [storage], revision: 1 });
-          return topicResponse(cursor === "catalog-next"
-            ? { records: [archive], revision: 1 }
-            : { records: [storage], revision: 1, next_cursor: "catalog-next" });
-        case "/ui/api/topics/sources":
-          if (searchParams.get("kind") !== "evidence") throw new Error("Expected shared Evidence");
-          if (searchParams.get("q") !== "database") {
-            return topicResponse({ sources: [{ ...source, text: "Unfiltered source" }] });
-          }
-          return topicResponse(cursor === "source-next"
-            ? { sources: [{ ...source, id: "source-b", text: "Additional database source", truncated: false }] }
-            : { sources: [source], next_cursor: "source-next" });
-        case "/ui/api/topics/publications":
-          return topicResponse(searchParams.get("after") === "3"
-            ? { publications: [{ id: "publication-b", revision: 2, origin: "manager", reason: "Earlier review" }] }
-            : { publications: [{ id: "publication-a", revision: 3, origin: "manager", reason: "Current review" }], next_revision: 3 });
-        case "/ui/api/topics/drafts":
-          return topicResponse(cursor === "draft-next"
-            ? { drafts: [olderDraft] }
-            : { drafts: [draft], next_cursor: "draft-next" });
-        case "/ui/api/topics/status":
-          return topicResponse(coverage);
-        default:
-          throw new Error("Unexpected Topic request: " + pathname);
-      }
-    }));
-    render(<TopicsPanel api={new UserApi("key")} session={session} />);
-
-    await userEvent.selectOptions(await screen.findByLabelText("Catalog type"), "topic");
-    await userEvent.click(await screen.findByRole("button", { name: "Load more catalog records" }));
-    expect(await screen.findByText("Archive", { selector: "strong" })).toBeVisible();
-    expect(screen.getByText("Storage", { selector: "strong" })).toBeVisible();
-
-    await selectTab("Sources");
-    expect(screen.getByText(/Unfiltered source/)).toBeVisible();
-    await userEvent.type(screen.getByLabelText("Source text or ID"), "database");
-    await userEvent.click(screen.getByRole("button", { name: "Inspect sources" }));
-    expect(await screen.findByText(/Primary database source.*excerpt/)).toBeVisible();
-    expect(screen.queryByText(/Unfiltered source/)).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Load more sources" }));
-    expect(await screen.findByText("Additional database source")).toBeVisible();
-    expect(screen.getByText(/Primary database source/)).toBeVisible();
-
-    await selectTab("History");
-    await userEvent.click(screen.getByRole("button", { name: "Load more publications" }));
-    expect(await screen.findByRole("button", { name: /Earlier review/ })).toBeVisible();
-    expect(screen.getByRole("button", { name: /Current review/ })).toBeVisible();
-    await userEvent.click(screen.getByRole("button", { name: "Load more previous drafts" }));
-    const drafts = screen.getByRole("region", { name: "Previous drafts" });
-    expect(within(drafts).getByText(/Storage correction/)).toBeVisible();
-    await userEvent.click(await within(drafts).findByText(/Earlier grouping/));
-    expect(within(drafts).getByText("evidence source-a · version 2")).toBeVisible();
-  });
-
-  it("protects unfinished edits and lets a manager replace or remove a queued correction", async () => {
-    const storage: TopicRecord = { id: "topic-a", kind: "topic", version: 1, retired: false, current: true, definition: edit.definition };
-    const archive = { ...storage, id: "topic-b", definition: { ...edit.definition, key: "archive", label: "Archive" } };
-    const pages: Record<string, unknown> = {
-      "/ui/api/topics/records": { records: [storage, archive], revision: 1 },
-      "/ui/api/topics/status": coverage,
-      "/ui/api/topics/publications": { publications: [] },
-      "/ui/api/topics/sources": { sources: [] },
-      "/ui/api/topics/drafts": { drafts: [] },
-    };
-    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-      const { pathname } = new URL(url, "http://localhost");
-      if (!(pathname in pages)) throw new Error("Unexpected Topic request: " + pathname);
-      return topicResponse(pages[pathname]);
-    }));
-    render(<ConfirmationProvider><TopicsPanel api={new UserApi("key")} session={session} /></ConfirmationProvider>);
-
-    await userEvent.click(await screen.findByRole("button", { name: "Edit Storage" }));
-    fireEvent.change(screen.getByLabelText("Definition label"), { target: { value: "Queued Storage" } });
-    fireEvent.change(screen.getByLabelText("Definition aliases"), { target: { value: "Database, Archive" } });
-    await userEvent.click(screen.getByRole("button", { name: "Add topic change" }));
-    expect(screen.getByText(/Queued Storage.*Database, Archive/)).toBeVisible();
-
-    fireEvent.change(screen.getByLabelText("Definition label"), { target: { value: "Revised Storage" } });
-    await selectTab("Catalog");
-    await userEvent.click(screen.getByRole("button", { name: "Edit Archive" }));
-    const confirm = await screen.findByRole("alertdialog", { name: "Discard editor changes?" });
-    await userEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
-    await selectTab("Edit");
-    expect(screen.getByLabelText("Definition label")).toHaveValue("Revised Storage");
-    expect(screen.getByText(/Queued Storage.*Database, Archive/)).toBeVisible();
-
-    await userEvent.click(screen.getByRole("button", { name: "Add topic change" }));
-    expect(screen.getByText(/Revised Storage.*Database, Archive/)).toBeVisible();
-    expect(screen.queryByText(/Queued Storage.*Database, Archive/)).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText("Audit reason"), { target: { value: "Clarify storage" } });
-    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-    await userEvent.click(screen.getByRole("button", { name: "Remove correction 1" }));
-    expect(screen.queryByText(/Revised Storage.*Database, Archive/)).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-
-    await selectTab("Catalog");
-    await userEvent.click(screen.getByRole("button", { name: "New topic" }));
+    await selectTab("Drafts");
+    for (const [label, value] of [["Definition key", "storage"], ["Definition label", "Storage"], ["Definition description", "Durable storage"], ["Audit reason", "Preserve unfinished fields"]]) {
+      fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    }
+    await userEvent.click(screen.getByRole("button", { name: "Add topic to draft" }));
+    for (const [label, value] of [["Definition key", "search"], ["Definition label", "Search"], ["Definition description", "Search organization"]]) {
+      fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    }
+    await userEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Draft saved. Preview its impact before publishing.");
+    expect(screen.getByLabelText("Definition key")).toHaveValue("search");
+    expect(screen.getByLabelText("Definition label")).toHaveValue("Search");
+    expect(screen.getByLabelText("Definition description")).toHaveValue("Search organization");
+    const first = fetcher.mock.calls.find(([, options]) => options?.method === "POST")!;
+    expect(JSON.parse(first[1]!.body as string)).toMatchObject({ expected_version: 0, expected_revision: 1, edits: [edit] });
+    await userEvent.click(screen.getByRole("button", { name: "Add topic to draft" }));
+    await userEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Draft saved. Preview its impact before publishing.");
+    const second = fetcher.mock.calls.find(([, options]) => options?.method === "PUT")!;
+    expect(JSON.parse(second[1]!.body as string)).toMatchObject({ expected_version: 1, expected_revision: 1, edits: [edit, { action: "define", expected_version: 0, kind: "topic", definition: { key: "search", label: "Search", description: "Search organization", aliases: [] } }] });
+    expect(window.confirm).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "New draft" }));
+    await screen.findByRole("heading", { name: "New topic draft" });
     expect(screen.getByLabelText("Definition key")).toHaveValue("");
+    expect(screen.getByLabelText("Audit reason")).toHaveValue("");
+  });
+
+  it("keeps corrections on a conflict and requires explicit refresh", async () => {
+    install([draft], () => new Response(JSON.stringify({ message: "refresh the draft before resubmitting" }), { status: 409 }));
+    render(<TopicsPanel api={new UserApi("key")} session={session} />);
+    await selectTab("Drafts");
+    fireEvent.click(await screen.findByRole("button", { name: /Storage correction/ }));
+    await screen.findByRole("heading", { name: /Draft draft-a/ });
+    fireEvent.change(screen.getByLabelText("Audit reason"), { target: { value: "Retained manager edits" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByRole("alert");
+    expect(screen.getByLabelText("Audit reason")).toHaveValue("Retained manager edits");
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh draft before resubmitting" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
+    expect(screen.getByLabelText("Audit reason")).toHaveValue("Retained manager edits");
+  });
+
+  it.each([true, false])("reuses the operation key and cookie CSRF (UUID available: %s)", async (uuidAvailable) => {
+    if (!uuidAvailable) vi.stubGlobal("crypto", { randomUUID: undefined });
+    document.cookie = "dense_mem_ui_csrf=topic-csrf";
+    let count = 0;
+    const fetcher = install([draft], () => ++count === 1 ? new Response(JSON.stringify({ message: "temporary failure" }), { status: 503 }) : new Response(JSON.stringify({ data: { ...draft, version: 2 } }), { status: 200 }));
+    render(<TopicsPanel api={new UserApi("", "api_key_session")} session={session} />);
+    await selectTab("Drafts");
+    fireEvent.click(await screen.findByRole("button", { name: /Storage correction/ }));
+    await screen.findByRole("heading", { name: /Draft draft-a/ });
+    fireEvent.change(screen.getByLabelText("Audit reason"), { target: { value: "Unchanged retry" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Draft saved. Preview its impact before publishing.");
+    const writes = fetcher.mock.calls.filter(([, options]) => options?.method === "PUT");
+    expect(writes).toHaveLength(2);
+    expect(JSON.parse(writes[0][1]!.body as string).operation_key).toBe(JSON.parse(writes[1][1]!.body as string).operation_key);
+    expect(writes[0][1]?.headers).toMatchObject({ "X-Dense-Mem-CSRF": "topic-csrf" });
+  });
+
+  it("allows a read-only manager to inspect and preview a saved draft", async () => {
+    const fetcher = install([draft], () => new Response(JSON.stringify({ data: { changed_records: 2, affected_records: 0, affected_sources: 0, examples: [], complete: true, requires_reassessment: true } }), { status: 200 }));
+    render(<TopicsPanel api={new UserApi("key")} session={{ ...session, membership: { ...session.membership, grants: ["read"] } }} />);
+    await selectTab("Drafts");
+    fireEvent.click(await screen.findByRole("button", { name: /Storage correction/ }));
+    await screen.findByRole("heading", { name: /Draft draft-a/ });
+    fireEvent.click(screen.getByRole("button", { name: "Preview impact" }));
+    await screen.findByRole("heading", { name: "Impact preview" });
+    expect(screen.getByRole("button", { name: "Publish topic changes" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+    expect(fetcher.mock.calls.some(([url]) => url.endsWith("/preview"))).toBe(true);
+  });
+
+  it("builds a definition correction using the editor", async () => {
+    const fetcher = install();
+    render(<TopicsPanel api={new UserApi("key")} session={session} />);
+    await selectTab("Drafts");
+    await screen.findByRole("heading", { name: "New topic draft" });
+    for (const [label, value] of [["Definition key", "storage"], ["Definition label", "Storage"], ["Definition description", "Durable storage"], ["Audit reason", "Manager correction"]]) fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    fireEvent.click(screen.getByRole("button", { name: "Add topic to draft" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Draft saved. Preview its impact before publishing.");
+    const call = fetcher.mock.calls.find(([, options]) => options?.method === "POST");
+    expect(JSON.parse(call![1]!.body as string)).toMatchObject({ expected_version: 0, expected_revision: 1, edits: [edit] });
+  });
+
+  it("keeps creation keys for an ambiguous retry and renews them for a new draft intent", async () => {
+    let attempts = 0;
+    const fetcher = install([], () => ++attempts === 1
+      ? new Response(JSON.stringify({ message: "temporary failure" }), { status: 503 })
+      : new Response(JSON.stringify({ data: draft }), { status: 200 }));
+    render(<TopicsPanel api={new UserApi("key")} session={session} />);
+    await selectTab("Drafts");
+    await screen.findByRole("heading", { name: "New topic draft" });
+    const fillDraft = () => {
+      for (const [label, value] of [["Definition key", "storage"], ["Definition label", "Storage"], ["Definition description", "Durable storage"], ["Audit reason", "Identical new intent"]]) {
+        fireEvent.change(screen.getByLabelText(label), { target: { value } });
+      }
+      fireEvent.click(screen.getByRole("button", { name: "Add topic to draft" }));
+    };
+    fillDraft();
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByRole("alert");
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Draft saved. Preview its impact before publishing.");
+    await userEvent.click(screen.getByRole("button", { name: "New draft" }));
+    await screen.findByRole("heading", { name: "New topic draft" });
+    fillDraft();
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Draft saved. Preview its impact before publishing.");
+    const writes = fetcher.mock.calls.filter(([, options]) => options?.method === "POST");
+    expect(writes).toHaveLength(3);
+    const [initial, retry, next] = writes.map(([, options]) => JSON.parse(options!.body as string));
+    expect(retry).toEqual(initial);
+    expect({ ...next, operation_key: initial.operation_key }).toEqual(initial);
+    expect(next.operation_key).not.toBe(initial.operation_key);
   });
 
   it("keeps historical override records readable in publication details", async () => {
@@ -258,6 +266,73 @@ describe("TopicsPanel", () => {
 	expect(screen.queryByRole("button",{name:"Unpin definition"})).toBeNull();
   });
 
+  it("inspects and pages shared sources, publishes a Topic edit, and reverses its history", async () => {
+    const response = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200 });
+    const handles = [{kind:"evidence",id:"source-a",version:1},{kind:"evidence",id:"source-b",version:1}];
+    const topic = {id:"topic-a",kind:"topic",version:1,current:true,definition:edit.definition};
+    let revision=1;let saved:TopicDraft|null=null;let published=false;
+    const fetcher=vi.fn(async(url:string,options?:RequestInit)=>{
+      const path=new URL(url,"http://localhost");const body=options?.body?JSON.parse(options.body as string):{};
+      if(options?.method==="POST"){
+        if(path.pathname.endsWith("/preview"))return response({changed_records:1,affected_records:2,affected_sources:12,examples:[{...handles[0],text:"Atlas source",truncated:true}],examples_truncated:true,complete:true,requires_reassessment:true});
+        if(path.pathname.endsWith("/rollback")){revision++;return response({id:"rollback-a",revision});}
+        if(path.pathname.endsWith("/publish")){published=true;revision++;saved={...saved!,state:"published",version:2,publication:{id:"publication-a",revision,existing:false,records:[{id:"topic-a",version:2}]}};return response(saved);}
+        saved={...draft,id:"saved-topic",reason:body.reason,edits:body.edits,base_revision:revision};return response(saved);
+      }
+      if(path.pathname.endsWith("/status"))return response({...coverage,revision,counts:{eligible:3,organized:2,pending:1,ambiguous:0,failed:0}});
+      if(path.pathname.endsWith("/sources"))return response({sources:path.searchParams.get("cursor")?[{...handles[1],id:"source-c",text:"Additional shared source",truncated:false}]:handles.map((source)=>({...source,text:source.id,truncated:false})),next_cursor:path.searchParams.get("cursor")?undefined:"source-b"});
+      if(path.pathname.endsWith("/records"))return response({records:[topic],revision,next_cursor:path.searchParams.get("cursor")?undefined:"topic-a"});
+      if(path.pathname.endsWith("/drafts"))return response({drafts:saved?[saved]:[],next_cursor:path.searchParams.get("cursor")?undefined:"draft-cursor"});
+      if(path.pathname.endsWith("/publications"))return response({publications:published?[{id:"publication-a",revision:2,origin:"manager",reason:"Edit storage topic"}]:[],next_revision:path.searchParams.get("after")==="0"?1:0});
+      return response({id:"publication-a",revision:2,origin:"manager",reason:"Edit storage topic",record_views:[{...topic,version:2,definition:{...topic.definition,label:"Storage revised"}}]});
+    });vi.stubGlobal("fetch",fetcher);
+    render(<TopicsPanel api={new UserApi("key")} session={session}/>);
+    await selectTab("Sources");
+    fireEvent.change(screen.getByLabelText("Source text or ID"),{target:{value:"Atlas"}});
+    fireEvent.click(screen.getByRole("button",{name:"Inspect sources"}));await waitFor(()=>expect(screen.getByRole("button",{name:"Inspect sources"})).toBeEnabled());
+    fireEvent.click(screen.getByRole("button",{name:"Load more sources"}));await screen.findByText("Additional shared source");
+    await selectTab("Catalog");
+    fireEvent.click(screen.getByRole("button",{name:"Edit Storage"}));
+    await waitFor(()=>expect(screen.getByLabelText("Definition label")).toHaveValue("Storage"));
+    fireEvent.change(screen.getByLabelText("Definition label"),{target:{value:"Storage revised"}});
+    fireEvent.click(screen.getByRole("button",{name:"Add topic to draft"}));fireEvent.change(screen.getByLabelText("Audit reason"),{target:{value:"Edit storage topic"}});
+    fireEvent.click(screen.getByRole("button",{name:"Save draft"}));await screen.findByText("Draft saved. Preview its impact before publishing.");
+    fireEvent.click(screen.getByRole("button",{name:"Preview impact"}));await screen.findByText("Examples are truncated; counts cover the stored dependency set.");
+    fireEvent.click(screen.getByRole("button",{name:"Publish topic changes"}));await screen.findByText("Correction published. Affected organization is waiting for reassessment.");
+    await selectTab("History");
+    fireEvent.click(screen.getByRole("button",{name:/Revision 2 · manager/}));await screen.findByRole("heading",{name:"Publication revision 2"});
+    expect(within(screen.getByLabelText("Publication detail")).getByText(/Storage revised/)).toBeVisible();
+    fireEvent.change(screen.getByLabelText("Rollback reason"),{target:{value:"Reverse selected correction"}});fireEvent.click(screen.getByRole("button",{name:"Publish rollback"}));await screen.findByText(/Rollback published as a new revision/);
+    const rollbackCall=fetcher.mock.calls.find(([url])=>url.endsWith("/rollback"));expect(JSON.parse(rollbackCall![1]!.body as string)).toMatchObject({expected_revision:2,reason:"Reverse selected correction"});
+    fireEvent.click(screen.getByRole("button",{name:"Load more publications"}));await waitFor(()=>expect(fetcher.mock.calls.some(([url])=>url.includes("after=1"))).toBe(true));
+    await selectTab("Drafts");
+    fireEvent.click(screen.getByRole("button",{name:"Load more drafts"}));await waitFor(()=>expect(fetcher.mock.calls.some(([url])=>url.includes("cursor=draft-cursor"))).toBe(true));
+    await selectTab("Catalog");
+    fireEvent.click(screen.getByRole("button",{name:"Load more catalog records"}));await waitFor(()=>expect(fetcher.mock.calls.some(([url])=>url.includes("cursor=topic-a"))).toBe(true));
+    fireEvent.change(screen.getByLabelText("Catalog type"),{target:{value:"evidence_group"}});await waitFor(()=>expect(fetcher.mock.calls.some(([url])=>url.includes("kind=evidence_group"))).toBe(true));
+  });
+
+  it("edits definition fields, removes draft edits and discards the saved draft",async()=>{
+    const response=(data:unknown)=>new Response(JSON.stringify({data}),{status:200});
+    const records=[{id:"class-a",kind:"topic",version:3,current:true,definition:{key:"people",label:"People",description:"People class",aliases:["humans"],parent_id:"parent-a"}},{id:"parent-a",kind:"topic",version:1,current:true,definition:{key:"parent",label:"Parent class",description:"Parent"}}];
+    let saved:TopicDraft|null=null;
+    const fetcher=vi.fn(async(url:string,options?:RequestInit)=>{
+      const path=new URL(url,"http://localhost").pathname;const body=options?.body?JSON.parse(options.body as string):{};
+      if(options?.method==="POST"){if(path.endsWith("/discard")){saved={...saved!,state:"discarded",version:2};return response(saved);}saved={...draft,reason:body.reason,edits:body.edits};return response(saved);}
+      if(path.endsWith("/records"))return response({records,revision:1});if(path.endsWith("/status"))return response(coverage);if(path.endsWith("/sources"))return response({sources:[]});if(path.endsWith("/publications"))return response({publications:[]});return response({drafts:saved?[saved]:[]});
+    });vi.stubGlobal("fetch",fetcher);render(<TopicsPanel api={new UserApi("key")} session={session}/>);
+    fireEvent.click(await screen.findByRole("button",{name:"Edit People"}));await waitFor(()=>expect(screen.getByLabelText("Definition label")).toHaveValue("People"));
+    for(const [label,value] of [["Definition key","people-revised"],["Definition label","People revised"],["Definition description","Corrected people class"],["Definition aliases","humans, people"],["Definition parent","parent-a"]])fireEvent.change(screen.getByLabelText(label),{target:{value}});
+    fireEvent.click(screen.getByRole("button",{name:"Add topic to draft"}));
+    fireEvent.click(screen.getByRole("button",{name:"Remove correction 1"}));expect(screen.queryByRole("button",{name:"Remove correction 1"})).toBeNull();
+    fireEvent.click(screen.getByRole("button",{name:"Add topic to draft"}));fireEvent.change(screen.getByLabelText("Audit reason"),{target:{value:"Edit definition"}});
+    fireEvent.click(screen.getByRole("button",{name:"Save draft"}));await screen.findByText("Draft saved. Preview its impact before publishing.");
+    const body=JSON.parse(fetcher.mock.calls.find(([,options])=>options?.method==="POST")![1]!.body as string);
+    expect(body.edits).toEqual([{action:"define",record_id:"class-a",expected_version:3,kind:"topic",definition:{key:"people-revised",label:"People revised",description:"Corrected people class",aliases:["humans","people"],parent_id:"parent-a"}}]);
+    fireEvent.click(screen.getByRole("button",{name:"Discard draft"}));await screen.findByText("Draft discarded. Its history is retained.");expect(screen.queryByRole("button",{name:"Preview impact"})).toBeNull();
+    await userEvent.click(screen.getByRole("button",{name:"New draft"}));expect(screen.getByLabelText("Definition parent")).toHaveValue("");
+  });
+
   it("preserves and clears an organizational topic parent outside the catalog page", () => {
     const onAdd=vi.fn();
     const target={id:"topic-child",kind:"topic" as const,version:3,retired:false,current:true,definition:{key:"child",label:"Child",description:"Organizational topic",parent_id:"outside-page"}};
@@ -265,23 +340,28 @@ describe("TopicsPanel", () => {
     expect(screen.getByLabelText("Definition parent")).toHaveValue("outside-page");
     expect(screen.queryByLabelText("Parent meaning")).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Definition label"),{target:{value:"Revised"}});
-    fireEvent.click(screen.getByRole("button",{name:"Add topic change"}));
+    fireEvent.click(screen.getByRole("button",{name:"Add topic to draft"}));
     expect(onAdd.mock.calls[0][0].definition).toMatchObject({label:"Revised",parent_id:"outside-page"});
     fireEvent.change(screen.getByLabelText("Definition parent"),{target:{value:""}});
-    fireEvent.click(screen.getByRole("button",{name:"Add topic change"}));
+    fireEvent.click(screen.getByRole("button",{name:"Add topic to draft"}));
     expect(onAdd.mock.calls[1][0].definition).not.toHaveProperty("parent_id");
   });
 
+  it("refreshes the current Topic revision while preserving the manager's unsaved reason",async()=>{
+    const response=(data:unknown)=>new Response(JSON.stringify({data}),{status:200});
+    const saved={...draft,base_revision:0,edits:[{...edit,record_id:"topic-a",expected_version:1}]};
+    let refreshedBody:Record<string,unknown>|null=null;
+    vi.stubGlobal("fetch",vi.fn(async(url:string,options?:RequestInit)=>{
+      const path=new URL(url,"http://localhost").pathname;
+      if(options?.method==="PUT"){refreshedBody=JSON.parse(options.body as string);return response({...saved,version:5,base_revision:1,reason:refreshedBody!.reason,edits:refreshedBody!.edits});}
+      if(path.endsWith("/records/topic-a"))return response({version:3});if(path.endsWith("/records"))return response({records:[],revision:1});if(path.endsWith("/status"))return response(coverage);if(path.endsWith("/sources"))return response({sources:[]});if(path.endsWith("/publications"))return response({publications:[]});if(path.endsWith("/drafts"))return response({drafts:[saved]});return response({...saved,version:4});
+    }));render(<TopicsPanel api={new UserApi("key")} session={session}/>);
+    await selectTab("Drafts");
+    fireEvent.click(await screen.findByRole("button",{name:/Storage correction/}));await screen.findByText("This draft uses an older catalog revision. Refresh it before publishing.");
+    fireEvent.change(screen.getByLabelText("Audit reason"),{target:{value:"Keep my unsaved reason"}});fireEvent.click(screen.getByRole("button",{name:"Refresh draft before resubmitting"}));await screen.findByText("Draft refreshed. Review the corrections, save, and preview again.");
+    fireEvent.click(screen.getByRole("button",{name:"Save draft"}));await screen.findByText("Draft saved. Preview its impact before publishing.");
+    expect(refreshedBody).toMatchObject({expected_version:4,expected_revision:1,reason:"Keep my unsaved reason",edits:[{...edit,record_id:"topic-a",expected_version:3}]});
+  });
 });
 
-function fillNewTopic() {
-  fireEvent.change(screen.getByLabelText("Definition key"), { target: { value: "storage" } });
-  fireEvent.change(screen.getByLabelText("Definition label"), { target: { value: "Storage" } });
-  fireEvent.change(screen.getByLabelText("Definition description"), { target: { value: "Durable storage" } });
-  fireEvent.click(screen.getByRole("button", { name: "Add topic change" }));
-  fireEvent.change(screen.getByLabelText("Audit reason"), { target: { value: "Add storage vocabulary" } });
-}
-
-async function selectTab(name: string) {
-  await userEvent.click(await screen.findByRole("tab", { name }));
-}
+async function selectTab(name: string) { await userEvent.click(await screen.findByRole("tab", { name })); }

@@ -523,17 +523,3 @@ func (s *recallFeedbackResolverStub) ResolveRecallFeedbackResults(_ context.Cont
 	s.profileID = profileID
 	return s.resolved, s.err
 }
-
-func TestRecallFeedbackPreservesPriorDegradations(t *testing.T) {
-	prior := RecallDegradationResult{Frontier: "evidence", Code: "evidence_unavailable", RequiredFailure: true}
-	result := &RecallResult{Degradations: []RecallDegradationResult{prior}}
-	result.Degradation = &result.Degradations[0]
-
-	MarkFeedbackSnapshotUnavailable(result)
-
-	require.Len(t, result.Degradations, 2)
-	require.Equal(t, prior, *result.Degradation)
-	require.Same(t, &result.Degradations[0], result.Degradation)
-	require.Equal(t, "recall_feedback_snapshot_unavailable", result.Degradations[1].Code)
-	require.True(t, result.Degradations[1].Optional)
-}

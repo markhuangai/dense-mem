@@ -70,7 +70,7 @@ func TestControlPortalSearchConvergenceHandlerBoundsFailures(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			logger := &controlSearchLogger{}
-			server, err := NewControlPortalServerWithServices(baseConfig, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalServices{Convergence: test.reader}, HealthConfig{}, logger)
+			server, err := newControlPortalServerWithMetricsAndTelemetry(baseConfig, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{Convergence: test.reader}, HealthConfig{}, logger)
 			require.NoError(t, err)
 			req := httptest.NewRequest(http.MethodGet, "/control/api/search/convergence", nil)
 			req.Header.Set("Authorization", "Bearer secret")
@@ -83,7 +83,7 @@ func TestControlPortalSearchConvergenceHandlerBoundsFailures(t *testing.T) {
 			}
 		})
 	}
-	server, err := NewControlPortalServerWithServices(baseConfig, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalServices{}, HealthConfig{}, nil)
+	server, err := newControlPortalServerWithMetricsAndTelemetry(baseConfig, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{}, HealthConfig{}, nil)
 	require.NoError(t, err)
 	req := httptest.NewRequest(http.MethodGet, "/control/api/search/convergence", nil)
 	req.Header.Set("Authorization", "Bearer secret")

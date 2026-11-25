@@ -32,15 +32,10 @@ func newTelemetryTransportOwnershipFixture(t testing.TB, mode string) *telemetry
 	t.Helper()
 	f := &telemetryTransportOwnershipFixture{logger: &captureTelemetryLogger{}, requests: map[string]int{}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := r.ParseForm(); err != nil {
-			t.Errorf("read Prometheus request: %v", err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
 		f.mu.Lock()
-		f.requests[r.Method+" "+r.URL.Path+"?"+r.Form.Encode()]++
+		f.requests[r.Method+" "+r.URL.Path+"?"+r.URL.RawQuery]++
 		f.mu.Unlock()
-		query := r.Form.Get("query")
+		query := r.URL.Query().Get("query")
 		if mode == "http_failure" || (mode == "partial_failure" && strings.Contains(query, "status_class")) {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			_, _ = w.Write([]byte("private provider body"))
@@ -89,18 +84,13 @@ func newTelemetryTransportOwnershipFixture(t testing.TB, mode string) *telemetry
 			value = `[1770000000]`
 			values = `[[1770000000],[1770000060,"2"]]`
 		case "sparse":
-			values = `[[1770000000,"NaN"],[1770000001,"+Inf"],[1770000004,"-1"],[1770000060.75,"2.5"]]`
+			values = `[[1770000000,"NaN"],[1770000001,"+Inf"],[1770000002,"invalid"],[1770000003],[1770000004,"-1"],[1770000060.75,"2.5"]]`
 		}
-		kind := "vector"
-		result := `[{"metric":` + labels + `,"value":` + value + `},{"metric":{"series":"second"},"value":[1770000000,"999"]}]`
-		if r.URL.Path == "/api/v1/query_range" {
-			kind = "matrix"
-			result = `[{"metric":` + labels + `,"values":` + values + `},{"metric":{"series":"second"},"values":[[1770000000,"999"]]}]`
-		}
+		result := `[{"metric":` + labels + `,"value":` + value + `,"values":` + values + `},{"metric":{"series":"second"},"value":[1770000000,"999"],"values":[[1770000000,"999"]]}]`
 		if mode == "empty" {
 			result = `[]`
 		}
-		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"` + kind + `","result":` + result + `}}`))
+		_, _ = w.Write([]byte(`{"status":"success","data":{"result":` + result + `}}`))
 	}))
 	t.Cleanup(server.Close)
 	f.service = newTelemetryTransportOwnershipService(server.URL, time.Second, f.logger)

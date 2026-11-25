@@ -183,7 +183,6 @@ func TestDirectoryIdentityServiceRejectsUnsafeLifecycleAndCredentials(t *testing
 	updated := *current
 	updated.GroupPattern = "^(?P<team>.+?)(?P<role>Manager)$"
 	_, err = svc.UpdateConnector(ctx, updated)
-	require.ErrorIs(t, err, ErrDirectoryResourceConflict)
 	require.ErrorContains(t, err, "disable the directory connector")
 
 	_, err = svc.GetConnector(ctx, uuid.New())

@@ -234,10 +234,8 @@ if (scenario === "space_aware_recall") {
   serverEnvironment.set("LOG_LEVEL", "");
   serverEnvironment.set("RECALL_EXPANSION_ENABLED", "true");
 }
-if (["oauth_provider_compatibility", "ontology_management", "ontology_upgrade", "synchronous_write_telemetry_disabled"].includes(scenario)) {
-  serverEnvironment.set("LOG_LEVEL", "");
-  serverEnvironment.set("TELEMETRY_ENABLED", "false");
-}
+if (scenario === "ontology_management") serverEnvironment.set("LOG_LEVEL", "debug");
+if (scenario === "ontology_upgrade") serverEnvironment.set("LOG_LEVEL", "debug");
 if (scenario === "full") {
   for (const [key, value] of Object.entries({
     AI_API_URL: "http://synchronous-write-provider:8787/v1",
@@ -258,7 +256,7 @@ if (has("synchronous_write")) {
     AI_VERIFIER_DISABLE_TEMPERATURE: "true",
   })) serverEnvironment.set(key, value);
 }
-if (["synchronous_write", "session_ingest", "python_client"].includes(scenario)) serverEnvironment.set("LOG_LEVEL", "debug");
+if (["synchronous_write", "synchronous_write_telemetry_disabled", "session_ingest", "python_client"].includes(scenario)) serverEnvironment.set("LOG_LEVEL", "debug");
 if (scenario === "decision_providers") {
   for (const [key, value] of Object.entries({
     AI_DECISION_PROVIDER: "openai",

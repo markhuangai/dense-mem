@@ -219,11 +219,9 @@ func TestValidateOAuthBearerHonorsCanceledContextBeforeReconfiguration(t *testin
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	parsed, err := parseOAuthAccessToken(fixture.token(t, true))
-	require.NoError(t, err)
-	_, _, err = fixture.service.validateOAuthBearer(ctx, parsed, snapshot)
+	_, _, err = fixture.service.validateOAuthBearer(ctx, fixture.token(t, true), snapshot)
 	require.ErrorIs(t, err, context.Canceled)
-	require.Empty(t, fixture.service.oauth.validators)
+	require.False(t, fixture.service.oauth.configured)
 }
 
 func TestOAuthProtectedResourceFailsClosedBeforeIdentityResolution(t *testing.T) {

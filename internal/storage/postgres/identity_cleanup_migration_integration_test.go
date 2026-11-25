@@ -19,10 +19,6 @@ import (
 
 func TestIdentityCleanupComposeSeed(t *testing.T) {
 	variant := os.Getenv("DENSE_MEM_E2E_IDENTITY_SEED_VARIANT")
-	advanceToRelease := variant == "released"
-	if advanceToRelease {
-		variant = "bridge_valid"
-	}
 	if variant == "" {
 		t.Skip("compose identity seed is only run by the shared E2E controller")
 	}
@@ -43,9 +39,6 @@ func TestIdentityCleanupComposeSeed(t *testing.T) {
 	sqlDB := openIdentitySeedDB(t)
 	require.NoError(t, migrationUpTo(context.Background(), sqlDB, version))
 	seedIdentityUpgradeState(t, sqlDB, variant, teamID, profileID, rawKey, keyHash)
-	if advanceToRelease {
-		require.NoError(t, NewMigratorWithDB(sqlDB).RunUpThroughEvidenceOnly(t.Context()))
-	}
 }
 
 func openIdentitySeedDB(t *testing.T) *sql.DB {

@@ -2,7 +2,6 @@ package memorypack
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/google/uuid"
@@ -77,63 +76,35 @@ func (s *memoryPackService) Export(ctx context.Context, req ExportRequest) (resu
 	sort.Strings(ids)
 	now := s.now().UTC()
 	artifact := MemoryPackArtifact{Format: MemoryPackFormat, PackID: "pack_" + memoryPackShortHash(strings.Join(ids, "\x00")+now.Format(time.RFC3339Nano)), Name: name, Description: description, CreatedAt: now.Format(time.RFC3339Nano), Source: MemoryPackSource{TeamID: actor.TeamID.String(), ExportedBy: actor.OwnerID.String()}, Evidence: []MemoryPackEvidence{}, Omissions: []string{}}
-	const readBatchSize = 8
-	batches := (len(ids) + readBatchSize - 1) / readBatchSize
-	empty, err := json.Marshal(artifact)
-	if err != nil {
-		return nil, err
-	}
-	bytesUsed := len(empty)
-	appendOmission := func(value string) {
-		encoded, _ := json.Marshal(value)
-		if len(artifact.Omissions) > 0 {
-			bytesUsed++
-		}
-		bytesUsed += len(encoded)
-		artifact.Omissions = append(artifact.Omissions, value)
-	}
 	exported := map[string]bool{}
-	traceInput := tracecontract.Input{TeamID: actor.TeamID.String(), IncludeEvidenceContent: req.IncludeEvidence, MaxEvents: maxTraceEvents, MaxFragmentContentRunes: maxFragmentContentRunes}
-	for offset := 0; offset < len(ids); offset += readBatchSize {
+	for index, id := range ids {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		page := ids[offset:min(offset+readBatchSize, len(ids))]
-		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "export_read", Batch: offset/readBatchSize + 1, Batches: batches})
-		traces, err := s.deps.Semantic.TraceEvidenceBatch(ctx, traceInput, page)
-		if err != nil {
-			return nil, err
+		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "export_read", Batch: index + 1, Batches: len(ids)})
+		trace, readErr := s.deps.Semantic.TraceEvidence(ctx, tracecontract.Input{TeamID: actor.TeamID.String(), EvidenceID: id, IncludeEvidenceContent: req.IncludeEvidence, MaxEvents: maxTraceEvents, MaxFragmentContentRunes: maxFragmentContentRunes})
+		if readErr != nil {
+			return nil, readErr
 		}
-		if len(traces) != len(page) {
+		if trace == nil || trace.Evidence == nil || trace.Evidence.TeamID != actor.TeamID.String() {
 			return nil, tracecontract.ErrEvidenceNotFound
 		}
-		for i, trace := range traces {
-			if trace == nil || trace.Evidence == nil || trace.Evidence.TeamID != actor.TeamID.String() {
-				return nil, tracecontract.ErrEvidenceNotFound
-			}
-			if exported[trace.Evidence.FragmentID] {
-				continue
-			}
-			item := MemoryPackEvidence{TraceEvidenceFragment: *trace.Evidence, Occurrences: trace.Occurrences,
-				SourceRevisions: trace.SourceRevisions, Decisions: trace.Decisions, Lifecycle: trace.Lifecycle, Omissions: trace.Omissions}
-			item = normalizeMemoryPackItem(item)
-			encoded, err := json.Marshal(item)
-			if err != nil {
-				return nil, err
-			}
-			itemBytes := len(encoded)
-			if len(artifact.Evidence) > 0 {
-				itemBytes++
-			}
-			if bytesUsed+itemBytes > maxMemoryPackArtifactBytes-128*1024 {
-				appendOmission(page[i] + ":artifact_byte_limit")
-				continue
-			}
-			bytesUsed += itemBytes
+		if exported[trace.Evidence.FragmentID] {
+			continue
+		}
+		item := MemoryPackEvidence{TraceEvidenceFragment: *trace.Evidence, Occurrences: trace.Occurrences, SourceRevisions: trace.SourceRevisions, Decisions: trace.Decisions, Lifecycle: trace.Lifecycle, Omissions: append([]string{}, trace.Omissions...)}
+		artifact.Evidence = append(artifact.Evidence, item)
+		encoded, _, encodeErr := canonicalMemoryPackArtifact(artifact)
+		if encodeErr != nil {
+			return nil, encodeErr
+		}
+		if len(encoded) > maxMemoryPackArtifactBytes-128*1024 {
+			artifact.Evidence = artifact.Evidence[:len(artifact.Evidence)-1]
+			artifact.Omissions = append(artifact.Omissions, id+":artifact_byte_limit")
+		} else {
 			exported[trace.Evidence.FragmentID] = true
-			artifact.Evidence = append(artifact.Evidence, item)
-			for _, omission := range item.Omissions {
-				appendOmission(page[i] + ":" + omission)
+			for _, omission := range trace.Omissions {
+				artifact.Omissions = append(artifact.Omissions, id+":"+omission)
 			}
 		}
 	}

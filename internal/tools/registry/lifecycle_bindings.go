@@ -14,7 +14,7 @@ func bindLifecycleTool(tool Tool, deps Dependencies) Tool {
 			if deps.LifecycleBindings.Service == nil {
 				return nil, ErrToolUnavailable
 			}
-			if err := validateBindingInput(ctx, tool, input); err != nil {
+			if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
 				return nil, fmt.Errorf("retract_evidence: invalid input: %w", err)
 			}
 			var req lifecycle.RetractEvidenceRequest

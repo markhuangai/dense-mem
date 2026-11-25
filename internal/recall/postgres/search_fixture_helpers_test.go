@@ -47,6 +47,15 @@ func insertSearchTestContractWithFallback(t testing.TB, db *gorm.DB, rls *storag
 	return contractID
 }
 
+func upsertSearchDocumentForTest(t *testing.T, repo *searchFixtureStore, teamID, ownerID, text string, sourceVersion int64) *knowledgecontract.SearchDocumentResult {
+	t.Helper()
+	doc, err := repo.UpsertSearchDocument(context.Background(), knowledgecontract.UpsertSearchDocumentInput{TeamID: teamID, OwnerProfileID: ownerID, SourceKind: "evidence", SourceID: uuid.NewString(), SourceVersion: sourceVersion, DocumentText: text})
+	require.NoError(t, err)
+	require.NotEmpty(t, doc.SearchDocumentID)
+	require.Equal(t, "pending", doc.SearchState)
+	return doc
+}
+
 func completeSearchDocumentsForTest(t testing.TB, repo *searchFixtureStore, teamID string, vectorsByDocumentID map[string][]float32) {
 	t.Helper()
 	type document struct {

@@ -50,6 +50,10 @@ func contractVersionSchemaValues(version string) []string {
 	return []string{version}
 }
 
+func terminalErrorSchema() map[string]any {
+	return terminalErrorSchemaForActions(terminalErrorNextActions())
+}
+
 func terminalErrorSchemaForActions(nextActions []string) map[string]any {
 	return closedObject(
 		[]string{"code", "message", "retryable", "next_action", "remediation"},

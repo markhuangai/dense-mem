@@ -2,7 +2,7 @@ package contract
 
 import (
 	"encoding/json"
-	assignment "github.com/markhuangai/dense-mem/internal/topics/assignment"
+	assignment "github.com/markhuangai/dense-mem/internal/topicassignment/contract"
 	"time"
 )
 

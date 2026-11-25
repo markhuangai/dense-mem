@@ -55,9 +55,9 @@ func TestKnowledgeOwnerTerminalReplay(t *testing.T) {
 
 	second, err := store.CommitRememberWithEmbeddings(context.Background(), input, ownerEmbeddings(plan, false))
 	require.ErrorIs(t, err, ErrRememberReplay)
-	firstJSON, marshalErr := json.Marshal(first.Receipt)
+	firstJSON, marshalErr := json.Marshal(first.PublicResult)
 	require.NoError(t, marshalErr)
-	secondJSON, marshalErr := json.Marshal(second.Receipt)
+	secondJSON, marshalErr := json.Marshal(second.PublicResult)
 	require.NoError(t, marshalErr)
 	require.JSONEq(t, string(firstJSON), string(secondJSON))
 	require.EqualValues(t, 1, ownerCount(t, adminDB, rls, "remember_attempts", teamID, input.IngestID))

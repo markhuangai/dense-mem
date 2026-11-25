@@ -63,13 +63,12 @@ func TestStructuredGenerationHTTPCompleteHistoryAndBudgets(t *testing.T) {
 		content        []string
 		prompt, output []int
 		offset, calls  int
-		omittedPrior   int
 		failure        string
 	}{
 		{name: "two complete repairs", content: []string{"{}", "{\"value\":null}", "{\"value\":\"complete\"}"}, calls: 3},
 		{name: "exhaustion and no response splicing", content: []string{"{}", "{\"value\":2}", "{\"value\":\"complete\",\"value\":\"extra\"}"}, calls: 3, failure: "malformed_exhausted"},
 		{name: "previous response counts", content: []string{"{}", "{\"unrecognized\":true}"}, calls: 2, offset: 1, failure: "malformed_exhausted"},
-		{name: "reported and measured output overruns", content: []string{"{\"value\":\"complete\"}", strings.Repeat(" word", 1500), "{\"value\":\"complete\"}"}, output: []int{1001, 0, 0}, calls: 3, omittedPrior: 2},
+		{name: "reported and measured output overruns", content: []string{"{\"value\":\"complete\"}", strings.Repeat(" word", 1500), "{\"value\":\"complete\"}"}, output: []int{1001, 0, 0}, calls: 3},
 		{name: "reported input terminates even after repair", content: []string{"{}", "{\"value\":\"complete\"}"}, prompt: []int{0, 16001}, calls: 2, failure: "input_budget"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -128,16 +127,7 @@ func TestStructuredGenerationHTTPCompleteHistoryAndBudgets(t *testing.T) {
 				require.NoError(t, json.Unmarshal(body, &received))
 				require.Equal(t, task.Request.Messages, received.Messages[:2])
 				for last := range index {
-					prior := received.Messages[2+2*last]
-					require.Equal(t, "assistant", prior.Role)
-					if last+1 == tc.omittedPrior {
-						require.Contains(t, prior.Content, "exceeded the repair history budget")
-						feedback := received.Messages[3+2*last]
-						require.Equal(t, "user", feedback.Role)
-						require.Contains(t, feedback.Content, `"field":"output_tokens"`)
-					} else {
-						require.Equal(t, tc.content[last], prior.Content)
-					}
+					require.Equal(t, tc.content[last], received.Messages[2+2*last].Content)
 				}
 			}
 		})

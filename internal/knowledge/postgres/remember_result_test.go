@@ -38,10 +38,11 @@ func TestRememberPublicResultReportsCurrentProjectionForReusedEvidence(t *testin
 		ContentHash: "sha256:reused",
 	}}, &submissionSemanticCommitState{})
 
-	require.Equal(t, "current", result.SearchState)
-	evidence := result.Evidence
+	require.Equal(t, "current", result["search_state"])
+	evidence, ok := result["evidence"].([]map[string]any)
+	require.True(t, ok)
 	require.Len(t, evidence, 1)
-	require.Equal(t, "current", evidence[0].SearchState)
+	require.Equal(t, "current", evidence[0]["search_state"])
 }
 
 func TestRememberPublicResultProjectsAssessorContextWarnings(t *testing.T) {
@@ -50,7 +51,8 @@ func TestRememberPublicResultProjectsAssessorContextWarnings(t *testing.T) {
 		CandidateContextOmittedCandidates: 2,
 	}
 	result := rememberPublicResult(input, nil, &submissionSemanticCommitState{})
-	warnings := result.Warnings
+	warnings, ok := result["warnings"].([]string)
+	require.True(t, ok)
 	require.Len(t, warnings, 1)
 	require.Contains(t, warnings[0], "duplicate candidates")
 }

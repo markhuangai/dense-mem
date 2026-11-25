@@ -197,6 +197,7 @@ type SearchProjectionRepository interface {
 	SelectSearchReconciliationDocuments(context.Context, SearchReconciliationSelectionInput) ([]SearchDocumentForEmbedding, error)
 	CompleteSearchReconciliationDocuments(context.Context, ApplySearchReconciliationInput) (*SearchReconciliationApplyResult, error)
 	FinishSearchReconciliationRun(context.Context, FinishSearchReconciliationRunInput) error
+	GetSearchConvergence(context.Context, SearchConvergenceInput) (*SearchConvergence, error)
 }
 
 // SearchDocumentOwner is the Knowledge-owned persistence surface shared by

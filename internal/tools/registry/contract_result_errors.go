@@ -3,9 +3,8 @@ package registry
 import (
 	"context"
 	"errors"
-	"strings"
-
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -354,6 +353,18 @@ func rememberErrorCode(err error) rememberapp.SubmissionErrorCode {
 func isMemoryAccessError(err error) bool {
 	return errors.Is(err, domain.ErrMemoryTargetRequired) || errors.Is(err, domain.ErrMemoryTargetInvalid) ||
 		errors.Is(err, domain.ErrMemoryWriteDenied) || errors.Is(err, domain.ErrMemoryOperationErased)
+}
+
+func apiErrorDetailEquals(apiErr *httperr.APIError, field, value string) bool {
+	if apiErr == nil {
+		return false
+	}
+	for _, detail := range apiErr.Details {
+		if strings.TrimSpace(detail.Field) == field && strings.TrimSpace(detail.Message) == value {
+			return true
+		}
+	}
+	return false
 }
 
 func domainContractVersion() string {

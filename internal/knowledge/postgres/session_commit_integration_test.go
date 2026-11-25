@@ -32,7 +32,7 @@ func TestSessionReceiptFailureRollsBackKnowledgeAndRecoversOriginalIntake(t *tes
 	require.NoError(t, err)
 	intake.RequestHash, err = sessionservice.RequestHash(intake.Request)
 	require.NoError(t, err)
-	store := newSessionFixtureStore(app, rls)
+	store := NewStore(app, rls)
 	submission, err := store.StageSession(ctx, intake)
 	require.NoError(t, err)
 	input.IngestID, input.Commit.IngestID = submission.ID, submission.ID
@@ -106,7 +106,7 @@ func TestSessionCheckpointAndSuccessfulReceiptAreImmutable(t *testing.T) {
 	team := createLedgerTeam(t, admin, rls, "session-checkpoint")
 	owner := createLedgerProfile(t, admin, rls, team, "session-owner")
 	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
-	store := newSessionFixtureStore(app, rls)
+	store := NewStore(app, rls)
 	submission, err := store.StageSession(ctx, intake)
 	require.NoError(t, err)
 	response := sessionCheckpointFixture(submission.ID, submission.Intake.Windows[0])
@@ -148,7 +148,7 @@ func TestSessionPreparedCommitCannotReviveChangedOrErasedPrivateGeneration(t *te
 				require.NoError(t, err)
 				intake.RequestHash, err = sessionservice.RequestHash(intake.Request)
 				require.NoError(t, err)
-				store := newSessionFixtureStore(app, rls)
+				store := NewStore(app, rls)
 				staged, err := store.StageSession(ctx, intake)
 				require.NoError(t, err)
 				input.IngestID, input.Commit.IngestID = staged.ID, staged.ID

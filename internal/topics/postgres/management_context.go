@@ -8,14 +8,14 @@ import (
 	"gorm.io/gorm"
 )
 
-func managementEditContext(tx *gorm.DB, fence scope, draftID string, input topic.SaveDraftInput, checkCatalogVersion bool) (topic.ManagementContext, error) {
+func managementEditContext(tx *gorm.DB, fence scope, draftID string, input topic.SaveDraftInput) (topic.ManagementContext, error) {
 	current := topic.ManagementContext{DraftID: draftID, Sources: map[string]topic.SourceSnapshot{}}
 	var err error
 	current.Revision, err = catalogRevision(tx, fence)
 	if err != nil {
 		return current, err
 	}
-	if checkCatalogVersion && current.Revision != input.ExpectedRevision {
+	if current.Revision != input.ExpectedRevision {
 		return current, topic.PublicationVersionRejection("catalog_revision", "", input.ExpectedRevision, current.Revision)
 	}
 	var records []topic.Record

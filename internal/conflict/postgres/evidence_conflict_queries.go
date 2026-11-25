@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -200,4 +201,11 @@ func loadEvidenceConflictEvents(ctx context.Context, tx *gorm.DB, input Evidence
 		next = &EvidenceConflictEventCursor{Version: 1, TeamID: input.TeamID, ConflictID: input.ConflictID, Ordinal: last.Ordinal, EventID: last.ConflictEventID}
 	}
 	return events, next, nil
+}
+
+func (r *Store) ResolveEvidenceConflict(ctx context.Context, input EvidenceConflictResolutionInput) (*EvidenceConflictCaseRecord, error) {
+	if r == nil || r.persistence == nil {
+		return nil, errors.New("conflict: persistence owner is required")
+	}
+	return r.persistence.ResolveEvidenceConflict(ctx, input)
 }

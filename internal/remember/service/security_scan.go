@@ -135,6 +135,13 @@ func buildOverridePattern() string {
 	return `(?i)\b` + verb + `\b(?:` + between + `(?:all|the))*` + between + first + between + second + `\b`
 }
 
+// ScanSubmissionEvidence deterministically examines one evidence payload
+// before it is staged, hashed, or sent to a provider. It never decodes more
+// than one representation layer and never returns submitted content.
+func ScanSubmissionEvidence(content string) (SubmissionSecurityScan, error) {
+	return scanSubmissionEvidence(content, false)
+}
+
 func scanSubmissionEvidence(content string, reviewContext bool) (SubmissionSecurityScan, error) {
 	signals := make([]SubmissionSecuritySignal, 0, submissionSecurityMaxSignals)
 	identity := identitySecurityView(content)
@@ -172,10 +179,10 @@ func ScanSubmissionBatch(contents []string) (SubmissionSecurityBatchScan, error)
 	return scanSubmissionInputs(inputs)
 }
 
-func scanRememberEvidence(evidence []RememberEvidenceInput, reviewContext bool) (SubmissionSecurityBatchScan, error) {
+func scanRememberEvidence(evidence []RememberEvidenceInput) (SubmissionSecurityBatchScan, error) {
 	inputs := make([]submissionSecurityInput, 0, 2*len(evidence))
 	for index, item := range evidence {
-		inputs = append(inputs, submissionSecurityInput{content: item.Content, source: submissionSecuritySourceEvidence, evidenceIndex: index, reviewContext: reviewContext})
+		inputs = append(inputs, submissionSecurityInput{content: item.Content, source: submissionSecuritySourceEvidence, evidenceIndex: index, reviewContext: true})
 		if item.Source != "" {
 			inputs = append(inputs, submissionSecurityInput{content: item.Source, source: "provenance", evidenceIndex: index, path: fmt.Sprintf("/evidence/%d/source", index)})
 		}

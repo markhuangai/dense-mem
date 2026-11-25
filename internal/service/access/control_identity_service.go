@@ -110,7 +110,7 @@ func (s *ControlIdentityService) ListAdminGroups(ctx context.Context, providerID
 		return nil, ErrControlSSOUnavailable
 	}
 	if providerID == uuid.Nil {
-		return nil, fmt.Errorf("%w: sso provider ID is required", accesscontract.ErrControlIdentityInvalid)
+		return nil, fmt.Errorf("sso provider ID is required")
 	}
 	return s.repo.ListControlAdminGroups(ctx, providerID)
 }
@@ -127,7 +127,7 @@ func (s *ControlIdentityService) CreateAdminGroup(ctx context.Context, group dom
 		return nil, err
 	}
 	if provider == nil || provider.RetiredAt != nil {
-		return nil, accesscontract.ErrControlIdentityNotFound
+		return nil, fmt.Errorf("sso provider not found")
 	}
 	if err := s.repo.CreateControlAdminGroup(ctx, &group); err != nil {
 		return nil, err
@@ -140,7 +140,7 @@ func (s *ControlIdentityService) UpdateAdminGroup(ctx context.Context, group dom
 		return nil, ErrControlSSOUnavailable
 	}
 	if group.ID == uuid.Nil {
-		return nil, fmt.Errorf("%w: control admin group ID is required", accesscontract.ErrControlIdentityInvalid)
+		return nil, fmt.Errorf("control admin group ID is required")
 	}
 	if err := normalizeControlAdminGroup(&group); err != nil {
 		return nil, err
@@ -156,7 +156,7 @@ func (s *ControlIdentityService) RetireAdminGroup(ctx context.Context, providerI
 		return ErrControlSSOUnavailable
 	}
 	if providerID == uuid.Nil || groupID == uuid.Nil {
-		return fmt.Errorf("%w: sso provider ID and control admin group ID are required", accesscontract.ErrControlIdentityInvalid)
+		return fmt.Errorf("sso provider ID and control admin group ID are required")
 	}
 	return s.repo.RetireControlAdminGroup(ctx, providerID, groupID)
 }
@@ -498,12 +498,12 @@ func (s *ControlIdentityService) sessionFromToken(ctx context.Context, sessionTo
 
 func normalizeControlAdminGroup(group *domain.ControlAdminGroup) error {
 	if group == nil || group.ProviderID == uuid.Nil {
-		return fmt.Errorf("%w: sso provider ID is required", accesscontract.ErrControlIdentityInvalid)
+		return fmt.Errorf("sso provider ID is required")
 	}
 	group.GroupID = strings.TrimSpace(group.GroupID)
 	group.GroupName = strings.TrimSpace(group.GroupName)
 	if group.GroupID == "" || len(group.GroupID) > 512 || len(group.GroupName) > 512 {
-		return fmt.Errorf("%w: control admin group ID or name is invalid", accesscontract.ErrControlIdentityInvalid)
+		return fmt.Errorf("control admin group ID or name is invalid")
 	}
 	return nil
 }

@@ -8,7 +8,6 @@ import (
 	"os"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/assessor"
@@ -20,24 +19,7 @@ import (
 	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
-	"gorm.io/gorm/logger"
 )
-
-type organizationReadCounter struct {
-	logger.Interface
-	queries            atomic.Int64
-	preparationQueries atomic.Int64
-}
-
-type organizationPreparationReadKey struct{}
-
-func (c *organizationReadCounter) Trace(ctx context.Context, started time.Time, statement func() (string, int64), err error) {
-	c.queries.Add(1)
-	if ctx.Value(organizationPreparationReadKey{}) == true {
-		c.preparationQueries.Add(1)
-	}
-	c.Interface.Trace(ctx, started, statement, err)
-}
 
 func newOrganizationFixture(t *testing.T) *ontologyFixture {
 	t.Helper()

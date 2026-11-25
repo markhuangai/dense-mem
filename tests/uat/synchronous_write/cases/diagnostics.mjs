@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { captureSemanticAssessmentWindow, reconstructDiagnosticBody } from "../../topic_assessment_diagnostics.mjs";
+import { captureSemanticAssessmentWindow, reconstructDiagnosticBody } from "../../ontology_assessment_diagnostics.mjs";
 
 export const name = "diagnostics";
 const rememberModel = "dense-mem-synchronous-write-e2e-remember";
@@ -312,9 +312,7 @@ export async function run({ rpc, rawRPC = rpc, expect, runStep }) {
     directory: `${process.env.DENSE_MEM_E2E_REMEMBER_FAILURE_DIR || "/tmp/dense-mem-remember-failures"}/evidence-only-debug` });
   expect(!serverLogs.includes("dense-mem-synchronous-write-e2e-key") && !serverLogs.includes(requiredEnv("DENSE_MEM_E2E_API_KEY")), "credential protector must remove operational and request-scoped credentials");
   const records = serverLogs.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
-  const traceEnabled = process.env.DENSE_MEM_E2E_TELEMETRY_DISABLED === "1";
-  expect(records.some((row) => row.level === "TRACE") === traceEnabled,
-    traceEnabled ? "the TRACE default must retain TRACE events with telemetry disabled" : "DEBUG runtime must filter TRACE");
+  expect(!records.some((row) => row.level === "TRACE"), "DEBUG runtime must filter TRACE");
   const requestBodies = records.filter((row) => row.msg === "ai_exchange_payload" && row.direction === "request");
   expect(requestBodies.length > 0 && requestBodies.every((row) => row.level === "DEBUG"), "DEBUG must capture actual provider requests");
   const serialized = requestBodies.map((row) => row.payload_chunk?.body || "").join("");

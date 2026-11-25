@@ -131,9 +131,9 @@ func TestSettingsControlPortalPositiveAndDurableAudit(t *testing.T) {
 		_, _ = appService.UpdateGeneralSettings(context.Background(), map[string]string{domain.AppConfigTimezone: current.Items[0].EffectiveValue}, "system", "", "settings-e2e-restore")
 	}()
 
-	e, err := densehttp.NewControlPortalServerWithServices(
+	e, err := densehttp.NewControlPortalServerWithCapabilityBindings(
 		&config.Config{ControlPortalToken: "settings-token"}, nil, nil, nil,
-		densehttp.ControlPortalServices{Config: appService}, densehttp.HealthConfig{}, nil, securityService,
+		densehttp.ControlPortalBindings{Telemetry: densehttp.ControlPortalTelemetry{Config: appService}}, densehttp.HealthConfig{}, nil, securityService,
 	)
 	require.NoError(t, err)
 
@@ -156,9 +156,9 @@ func TestSettingsControlPortalPositiveAndDurableAudit(t *testing.T) {
 func TestSettingsControlPortalRejectsUnauthorizedAndProtectedUpdates(t *testing.T) {
 	_, appService, securityService, cleanup := newSettingsApplications(t)
 	defer cleanup()
-	e, err := densehttp.NewControlPortalServerWithServices(
+	e, err := densehttp.NewControlPortalServerWithCapabilityBindings(
 		&config.Config{ControlPortalToken: "settings-token"}, nil, nil, nil,
-		densehttp.ControlPortalServices{Config: appService}, densehttp.HealthConfig{}, nil, securityService,
+		densehttp.ControlPortalBindings{Telemetry: densehttp.ControlPortalTelemetry{Config: appService}}, densehttp.HealthConfig{}, nil, securityService,
 	)
 	require.NoError(t, err)
 
@@ -182,9 +182,9 @@ func TestSecurityBanRoundTripAndDurableAudit(t *testing.T) {
 	defer func() {
 		_, _ = securityService.UpdateSecuritySettings(ctx, *original, "system", "", "settings-e2e-restore")
 	}()
-	e, err := densehttp.NewControlPortalServerWithServices(
+	e, err := densehttp.NewControlPortalServerWithCapabilityBindings(
 		&config.Config{ControlPortalToken: "settings-token"}, nil, nil, nil,
-		densehttp.ControlPortalServices{Config: appService}, densehttp.HealthConfig{}, nil, securityService,
+		densehttp.ControlPortalBindings{Telemetry: densehttp.ControlPortalTelemetry{Config: appService}}, densehttp.HealthConfig{}, nil, securityService,
 	)
 	require.NoError(t, err)
 

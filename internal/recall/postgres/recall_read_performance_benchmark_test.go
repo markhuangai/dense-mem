@@ -4,12 +4,17 @@ package postgres
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -18,7 +23,10 @@ import (
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 )
 
-const ()
+const (
+	readPerformanceBenchmarkDocumentCount      = 96
+	readPerformanceBenchmarkMeasuredIterations = 200
+)
 
 func readPerformanceFixedID(role string) string {
 	return uuid.NewSHA1(uuid.NameSpaceURL, []byte("dense-mem:issue-458:"+role)).String()
@@ -196,6 +204,39 @@ func (tx *readPerformanceBenchmarkTx) Rollback() error {
 	err := tx.ConnPool.(gorm.TxCommitter).Rollback()
 	tx.counters.rollbacks.Add(1)
 	return err
+}
+
+func readPerformanceBenchmarkSignature(b *testing.B, results []any) string {
+	b.Helper()
+	var first string
+	for index, result := range results {
+		payload, err := json.Marshal(result)
+		if err != nil {
+			b.Fatalf("marshal deterministic read result: %v", err)
+		}
+		sampleHash := sha256.Sum256(payload)
+		signature := hex.EncodeToString(sampleHash[:])
+		if index == 0 {
+			first = signature
+		} else if signature != first {
+			b.Fatal("read results changed across identical benchmark iterations")
+		}
+	}
+	return first
+}
+
+func readPerformancePercentile(durations []time.Duration, fraction float64) time.Duration {
+	if len(durations) == 0 {
+		return 0
+	}
+	index := int(math.Ceil(fraction*float64(len(durations)))) - 1
+	if index < 0 {
+		index = 0
+	}
+	if index >= len(durations) {
+		index = len(durations) - 1
+	}
+	return durations[index]
 }
 
 type recallQueryStatement struct {

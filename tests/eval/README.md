@@ -280,7 +280,8 @@ live PR run finishes both policies for all five datasets and passes verification
 capture and cleanup, the workflow posts the full table in one PR comment.
 
 Replace [baseline.json](baseline.json) only after a newer verified complete
-campaign with `full_public_campaign=true`. Preserve historical evidence.
+campaign with `full_public_campaign=true`. Preserve historical evidence. Maintenance-only retirement remains
+documented in [evaluation-retirement.md](../../architecture/evaluation-retirement.md).
 
 ## Delivery and acceptance
 

@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	settingscontract "github.com/markhuangai/dense-mem/internal/settings/contract"
 )
 
@@ -22,7 +24,7 @@ type DecisionSettingsOptions struct {
 	Logger   observability.LogProvider
 }
 
-func NewAppConfigServiceWithDecisions(repo settingscontract.AppConfigRepository, audit ConfigAuditPreparer, options DecisionSettingsOptions) *AppConfigServiceImpl {
+func NewAppConfigServiceWithDecisions(repo settingscontract.AppConfigRepository, audit accessservice.AuditService, options DecisionSettingsOptions) *AppConfigServiceImpl {
 	service := NewAppConfigService(repo, audit)
 	service.decisionOptions = options
 	return service
@@ -62,25 +64,36 @@ func (s *AppConfigServiceImpl) UpdateDecisionSettings(ctx context.Context, value
 	if err := validateDecisionValues(values); err != nil {
 		return nil, err
 	}
-	current, err := s.GetDecisionSettings(ctx)
+	before, err := s.GetDecisionSettings(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if current.Effective.Stale {
+	if before.Effective.Stale {
 		return nil, fmt.Errorf("decision settings refresh failed; refusing update from stale configuration")
 	}
-	updated, changed, err := updateConfigSection(ctx, s,
-		configSectionUpdate{"decisions", values, actorRole, clientIP, correlationID},
-		func(entries map[string]domain.AppConfigEntry) (domain.DecisionConfigSettings, error) {
-			return decisionSettingsFromEntries(entries, s.decisionOptions.Provider)
-		}, decisionSettingsPayload)
+	now := s.now().UTC()
+	changed, err := s.repo.UpdateValues(ctx, values, now.Format(time.RFC3339Nano), now)
 	if err != nil {
-		s.decisionLog(ctx, slog.LevelError, "decision.settings.persistence_failed", observability.String("error", err.Error()), observability.String("transaction_outcome", "rolled_back"))
+		s.decisionLog(ctx, slog.LevelError, "decision.settings.persistence_failed", observability.LogAttr{Key: "error", Value: err.Error()})
 		return nil, err
 	}
-	updated.Effective.LastVerifiedAt = s.now().UTC()
+	s.invalidate()
 	if changed {
-		s.decisionLog(ctx, slog.LevelInfo, "decision.settings.updated", observability.String("action", "save_supplied_preferences"), observability.LogAttr{Key: "changes", Value: values}, observability.String("settings_revision", updated.Effective.Revision))
+		if s.audit != nil {
+			err = s.audit.Append(ctx, accessservice.AuditLogEntry{Operation: "APP_CONFIG_UPDATE", EntityType: "app_config", EntityID: "decisions", ActorRole: actorRole, ClientIP: clientIP, CorrelationID: correlationID, BeforePayload: decisionSettingsPayload(before), AfterPayload: map[string]any{"supplied_changes": values}, Metadata: map[string]any{"section": "decisions"}})
+			if err != nil {
+				s.decisionLog(ctx, slog.LevelError, "decision.settings.audit_failed", observability.LogAttr{Key: "error", Value: err.Error()}, observability.LogAttr{Key: "action", Value: "report_persisted_change_without_audit"})
+				return nil, fmt.Errorf("decision settings persisted but audit failed: %w", err)
+			}
+		}
+		s.decisionLog(ctx, slog.LevelInfo, "decision.settings.updated", observability.LogAttr{Key: "action", Value: "save_supplied_preferences"}, observability.LogAttr{Key: "changes", Value: values}, observability.LogAttr{Key: "settings_revision", Value: now.Format(time.RFC3339Nano)})
+	}
+	updated, err := s.GetDecisionSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if updated.Effective.Stale {
+		return nil, fmt.Errorf("decision settings persisted but refresh failed")
 	}
 	return updated, nil
 }

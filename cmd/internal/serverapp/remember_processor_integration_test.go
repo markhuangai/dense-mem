@@ -9,15 +9,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	assessmentfixture "github.com/markhuangai/dense-mem/internal/testfixture/assessment"
 	"log/slog"
 	"net/url"
 	"os"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/markhuangai/dense-mem/internal/modelprovider"
-	assessmentfixture "github.com/markhuangai/dense-mem/internal/testfixture/assessment"
 
 	"github.com/google/uuid"
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
@@ -29,6 +28,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	remembercontract "github.com/markhuangai/dense-mem/internal/remember/contract"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
+	rememberprocessor "github.com/markhuangai/dense-mem/internal/remember/service/processor"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
@@ -55,7 +55,7 @@ func TestEvidenceOnlyPostgresRetiredRememberReceipts(t *testing.T) {
 	ledger := knowledgepostgres.NewStore(appDB, rls)
 	transcript, records := captureOntologyPublicationConsole(t, func() {
 		logger := observability.NewWithProtector(slog.LevelDebug, observability.NewCredentialProtector("retirement-credential-canary"))
-		service := rememberapp.NewService(rememberapp.Dependencies{Synchronous: rememberapp.NewSynchronousProcessor(rememberapp.ProcessorDependencies{Ledger: ledger, Logger: logger})})
+		service := rememberapp.NewService(rememberapp.Dependencies{Synchronous: rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{Ledger: ledger, Logger: logger})})
 		for _, version := range []string{"dense-mem.v2.7.0", "dense-mem.v2.6.8", "dense-mem.v2.6.3", "remember_request_hash_v1"} {
 			for _, outcome := range []string{"completed", "rejected", "quarantined", "failed"} {
 				t.Run(version+"/"+outcome, func(t *testing.T) {
@@ -155,7 +155,7 @@ func TestRememberServiceRejectsMigratedAttemptThroughPostgres(t *testing.T) {
 		},
 	}))
 
-	processor := rememberapp.NewSynchronousProcessor(rememberapp.ProcessorDependencies{
+	processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
 		Ledger: ledger, Assessor: nil, EmbeddingExecutor: nil, Limits: assessor.DefaultSemanticAssessmentLimits(),
 		Metrics: observability.NoopDiscoverabilityMetrics(),
 	})
@@ -192,7 +192,7 @@ func TestRememberServiceRejectsMigratedAttemptThroughPostgres(t *testing.T) {
 			realLedger := knowledgepostgres.NewStore(appDB, rls)
 			ledger := newRememberProcessorIntegrationStaleLedger(realLedger, testCase.cause)
 			ledger.recordFailureDelay = testCase.recordFailureDelay
-			processor := rememberapp.NewSynchronousProcessor(rememberapp.ProcessorDependencies{
+			processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
 				Ledger: ledger, Assessor: &rememberProcessorIntegrationRegistrationAssessor{},
 				EmbeddingExecutor: semanticwrite.NewProviderExecutor(rememberProcessorIntegrationEmbedder{}), Limits: assessor.DefaultSemanticAssessmentLimits(),
 				Metrics: observability.NoopDiscoverabilityMetrics(), IsStaleInput: rememberapp.IsRememberStaleInputError,
@@ -519,6 +519,43 @@ func (rememberProcessorIntegrationEmbedder) Dimensions() int   { return 1 }
 func (rememberProcessorIntegrationEmbedder) IsAvailable() bool { return true }
 
 var _ embeddingcontract.EmbeddingProviderInterface = rememberProcessorIntegrationEmbedder{}
+
+func insertHistoricalRememberOutcome(
+	t *testing.T,
+	ctx context.Context,
+	adminDB, appDB *gorm.DB,
+	rls *storagepostgres.RLS,
+	teamID, ownerID, attemptID uuid.UUID,
+	key, requestHash, outcome string,
+) {
+	t.Helper()
+	ledger := knowledgepostgres.NewStore(appDB, rls)
+	if outcome != "replayed" {
+		require.NoError(t, ledger.RecordRememberAttempt(ctx, knowledgecontract.RememberAttemptRecordInput{
+			TeamID: teamID.String(), OwnerProfileID: ownerID.String(), AttemptID: attemptID.String(),
+			IdempotencyKey: key, RequestHash: requestHash, ContractVersion: domain.ContractVersion,
+			SubmissionKind: "remember", Outcome: outcome, ErrorCode: "historical_" + outcome,
+			PublicResult: map[string]any{"processing_state": "failed"},
+		}))
+		return
+	}
+
+	canonicalID := uuid.New()
+	require.NoError(t, ledger.RecordRememberAttempt(ctx, knowledgecontract.RememberAttemptRecordInput{
+		TeamID: teamID.String(), OwnerProfileID: ownerID.String(), AttemptID: canonicalID.String(),
+		IdempotencyKey: key, RequestHash: requestHash, ContractVersion: domain.ContractVersion,
+		SubmissionKind: "remember", Outcome: "completed",
+		PublicResult: map[string]any{"processing_state": "completed"},
+	}))
+	require.NoError(t, rls.WithSystemTx(ctx, adminDB, func(tx *gorm.DB) error {
+		return tx.Exec(`
+			INSERT INTO remember_attempts (
+				team_id, attempt_id, owner_profile_id, idempotency_key, request_hash,
+				contract_version, submission_kind, outcome, canonical_attempt_id, public_result, completed_at
+			) VALUES (?::uuid, ?::uuid, ?::uuid, ?, ?, ?, 'remember', 'replayed', ?::uuid, '{}'::jsonb, now())
+		`, teamID, attemptID, ownerID, key, requestHash, domain.ContractVersion, canonicalID).Error
+	}))
+}
 
 func rememberProcessorActorContext(t *testing.T, ctx context.Context, db *gorm.DB, rls *storagepostgres.RLS, teamID, ownerID uuid.UUID) context.Context {
 	t.Helper()

@@ -50,24 +50,24 @@ func NewControlPortalServerWithMetrics(
 	logger httpcontract.LogProvider,
 	securitySvcs ...settings.SecurityService,
 ) (*echo.Echo, error) {
-	return NewControlPortalServerWithServices(
+	return newControlPortalServerWithMetricsAndTelemetry(
 		cfg,
 		teamSvc,
 		credentialSvc,
 		metricsSvc,
-		ControlPortalServices{},
+		ControlPortalTelemetry{},
 		health,
 		logger,
 		securitySvcs...,
 	)
 }
 
-func NewControlPortalServerWithServices(
+func newControlPortalServerWithMetricsAndTelemetry(
 	cfg httpcontract.ConfigProvider,
 	teamSvc handler.TeamServiceInterface,
 	credentialSvc handler.CredentialServiceInterface,
 	metricsSvc operations.UsageMetricsReader,
-	telemetry ControlPortalServices,
+	telemetry ControlPortalTelemetry,
 	health HealthConfig,
 	logger httpcontract.LogProvider,
 	securitySvcs ...settings.SecurityService,
@@ -127,117 +127,114 @@ func NewControlPortalServerWithServices(
 		e.GET("/metrics", echo.WrapHandler(telemetry.ScrapeHandler), httpmw.TelemetryScrapeTokenMiddleware(telemetry.ScrapeToken))
 	}
 
-	identity := &controlIdentityHandler{sso: telemetry.SSO, directory: telemetry.Directory, controlIdentity: telemetry.ControlIdentity, logger: logger}
-	diagnostics := &controlDiagnosticsHandler{auditExport: telemetry.AuditExport, diagnostics: telemetry.Diagnostics,
-		metrics: metricsSvc, postgresPool: telemetry.PostgresPool, telemetry: telemetry.Reader, operationLogs: telemetry.Logs,
-		recallFeedback: telemetry.RecallFeedback, convergence: telemetry.Convergence, rememberAttempts: telemetry.RememberAttempts,
-		rememberInvocations: telemetry.RememberInvocations, health: health, logger: logger}
-	settings := &controlConfigHandler{verifierModel: cfg.GetAIVerifierModel(), embeddingModel: cfg.GetAIEmbeddingModel(), appConfig: telemetry.Config, decisions: telemetry.Decisions, topicMaintenance: telemetry.TopicMaintenance, security: securitySvc}
-	access := &controlAccessHandler{teams: teamSvc, credentials: credentialSvc, privateMemory: telemetry.PrivateMemory, evidenceConflicts: telemetry.EvidenceConflicts}
-
+	control := &controlPortalHandler{teams: teamSvc, credentials: credentialSvc, security: securitySvc, metrics: metricsSvc, telemetry: telemetry.Reader, operationLogs: telemetry.Logs, recallFeedback: telemetry.RecallFeedback, topicMaintenance: telemetry.TopicMaintenance, evidenceConflicts: telemetry.EvidenceConflicts, convergence: telemetry.Convergence, rememberAttempts: telemetry.RememberAttempts, rememberInvocations: telemetry.RememberInvocations, privateMemory: telemetry.PrivateMemory, health: health, sso: telemetry.SSO, directory: telemetry.Directory, controlIdentity: telemetry.ControlIdentity, appConfig: telemetry.Config, logger: logger, verifierModel: cfg.GetAIVerifierModel(), embeddingModel: cfg.GetAIEmbeddingModel()}
+	control.postgresPool = telemetry.PostgresPool
 	if telemetry.ControlIdentity != nil {
-		registerControlIdentityRoutes(e, identity)
+		registerControlIdentityRoutes(e, control)
 	}
 	api := e.Group("/control/api")
 	api.Use(controlPortalMiddleware(cfg.GetControlPortalToken(), securitySvc, telemetry.ControlIdentity))
 	api.Use(httpmw.TelemetryHTTPMiddleware(telemetry.HTTPMetrics))
+	control.auditExport = telemetry.AuditExport
+	control.diagnostics = telemetry.Diagnostics
 	if telemetry.AuditExport != nil {
-		api.GET("/audit/export", diagnostics.exportAudit)
+		api.GET("/audit/export", control.exportAudit)
 	}
 	if telemetry.Diagnostics != nil {
-		api.GET("/diagnostics/bundle", diagnostics.diagnosticBundle)
+		api.GET("/diagnostics/bundle", control.diagnosticBundle)
 	}
-	api.GET("/session", identity.session)
-	api.GET("/metrics", diagnostics.getMetrics)
-	api.GET("/telemetry", diagnostics.getTelemetry)
+	api.GET("/session", control.session)
+	api.GET("/metrics", control.getMetrics)
+	api.GET("/telemetry", control.getTelemetry)
 	if telemetry.Convergence != nil {
-		api.GET("/search/convergence", diagnostics.getSearchConvergence)
+		api.GET("/search/convergence", control.getSearchConvergence)
 	}
 	if telemetry.Logs != nil {
-		api.GET("/logs", diagnostics.listOperationLogs)
+		api.GET("/logs", control.listOperationLogs)
 	}
 	if telemetry.RememberAttempts != nil {
-		api.GET("/remember-attempts", diagnostics.listRememberAttemptDiagnostics)
-		api.GET("/teams/:teamId/remember-attempts/:attemptId", diagnostics.getRememberAttemptDiagnostic)
+		api.GET("/remember-attempts", control.listRememberAttemptDiagnostics)
+		api.GET("/teams/:teamId/remember-attempts/:attemptId", control.getRememberAttemptDiagnostic)
 	}
-	registerRememberInvocationDiagnosticsRoutes(api, diagnostics, telemetry)
+	registerRememberInvocationDiagnosticsRoutes(api, control, telemetry)
+	control.decisions = telemetry.Decisions
 	if telemetry.Decisions != nil {
-		api.GET("/config/decisions", settings.getDecisionConfig)
-		api.PATCH("/config/decisions", settings.updateDecisionConfig, httpmw.BindAndValidateStrict[controlDecisionConfigRequest](decisionConfigBodyKey))
+		api.GET("/config/decisions", control.getDecisionConfig)
+		api.PATCH("/config/decisions", control.updateDecisionConfig, httpmw.BindAndValidateStrict[controlDecisionConfigRequest](decisionConfigBodyKey))
 	}
 	if telemetry.RecallFeedback != nil {
-		api.GET("/recall-feedback-events", diagnostics.listRecallFeedbackEvents)
-		api.GET("/recall-feedback-events/:recallId", diagnostics.getRecallFeedbackEvent)
+		api.GET("/recall-feedback-events", control.listRecallFeedbackEvents)
+		api.GET("/recall-feedback-events/:recallId", control.getRecallFeedbackEvent)
 	}
-	api.GET("/teams", access.listTeams)
-	api.POST("/teams", access.createTeam)
-	api.PATCH("/teams/:teamId", access.updateTeam)
-	api.DELETE("/teams/:teamId", access.deleteTeam)
+	api.GET("/teams", control.listTeams)
+	api.POST("/teams", control.createTeam)
+	api.PATCH("/teams/:teamId", control.updateTeam)
+	api.DELETE("/teams/:teamId", control.deleteTeam)
 	if telemetry.EvidenceConflicts != nil {
-		api.GET("/teams/:teamId/evidence-conflicts", access.listEvidenceConflicts)
-		api.GET("/teams/:teamId/evidence-conflicts/:conflictId", access.getEvidenceConflict)
-		api.POST("/teams/:teamId/evidence-conflicts/:conflictId/resolution", access.resolveEvidenceConflict, httpmw.BindAndValidateStrict[controlEvidenceConflictResolutionRequest](evidenceConflictResolutionBodyKey))
+		api.GET("/teams/:teamId/evidence-conflicts", control.listEvidenceConflicts)
+		api.GET("/teams/:teamId/evidence-conflicts/:conflictId", control.getEvidenceConflict)
+		api.POST("/teams/:teamId/evidence-conflicts/:conflictId/resolution", control.resolveEvidenceConflict, httpmw.BindAndValidateStrict[controlEvidenceConflictResolutionRequest](evidenceConflictResolutionBodyKey))
 	}
-	api.GET("/teams/:teamId/credentials", access.listCredentials)
-	api.POST("/teams/:teamId/credentials", access.createCredential)
-	api.PATCH("/teams/:teamId/credentials/:credentialId", access.updateCredential)
-	api.POST("/teams/:teamId/credentials/:credentialId/rotate", access.rotateCredential)
-	api.DELETE("/teams/:teamId/credentials/:credentialId", access.deleteCredential)
-	api.GET("/security/settings", settings.getSecuritySettings)
-	api.PATCH("/security/settings", settings.updateSecuritySettings)
-	api.GET("/security/bans", settings.listSecurityBans)
-	api.POST("/security/bans", settings.createSecurityBan)
-	api.DELETE("/security/bans/:ip", settings.deleteSecurityBan)
+	api.GET("/teams/:teamId/credentials", control.listCredentials)
+	api.POST("/teams/:teamId/credentials", control.createCredential)
+	api.PATCH("/teams/:teamId/credentials/:credentialId", control.updateCredential)
+	api.POST("/teams/:teamId/credentials/:credentialId/rotate", control.rotateCredential)
+	api.DELETE("/teams/:teamId/credentials/:credentialId", control.deleteCredential)
+	api.GET("/security/settings", control.getSecuritySettings)
+	api.PATCH("/security/settings", control.updateSecuritySettings)
+	api.GET("/security/bans", control.listSecurityBans)
+	api.POST("/security/bans", control.createSecurityBan)
+	api.DELETE("/security/bans/:ip", control.deleteSecurityBan)
 	if telemetry.Config != nil {
-		api.GET("/config/general", settings.getGeneralConfig)
-		api.PATCH("/config/general", settings.updateGeneralConfig)
-		api.GET("/config/sso", settings.getSSOConfig)
-		api.PATCH("/config/sso", settings.updateSSOConfig)
-		api.GET("/config/operation-logs", settings.getOperationLogConfig)
-		api.PATCH("/config/operation-logs", settings.updateOperationLogConfig)
-		api.GET("/config/recall-feedback", settings.getRecallFeedbackConfig)
-		api.PATCH("/config/recall-feedback", settings.updateRecallFeedbackConfig)
-		api.GET("/config/telemetry-pricing", settings.getTelemetryPricingConfig)
-		api.PATCH("/config/telemetry-pricing", settings.updateTelemetryPricingConfig)
-		api.GET("/config/private-memory", settings.getPrivateMemoryConfig)
-		api.PATCH("/config/private-memory", settings.updatePrivateMemoryConfig, httpmw.BindAndValidateStrict[controlPrivateMemoryConfigRequest](privateMemoryConfigBodyKey))
+		api.GET("/config/general", control.getGeneralConfig)
+		api.PATCH("/config/general", control.updateGeneralConfig)
+		api.GET("/config/sso", control.getSSOConfig)
+		api.PATCH("/config/sso", control.updateSSOConfig)
+		api.GET("/config/operation-logs", control.getOperationLogConfig)
+		api.PATCH("/config/operation-logs", control.updateOperationLogConfig)
+		api.GET("/config/recall-feedback", control.getRecallFeedbackConfig)
+		api.PATCH("/config/recall-feedback", control.updateRecallFeedbackConfig)
+		api.GET("/config/telemetry-pricing", control.getTelemetryPricingConfig)
+		api.PATCH("/config/telemetry-pricing", control.updateTelemetryPricingConfig)
+		api.GET("/config/private-memory", control.getPrivateMemoryConfig)
+		api.PATCH("/config/private-memory", control.updatePrivateMemoryConfig, httpmw.BindAndValidateStrict[controlPrivateMemoryConfigRequest](privateMemoryConfigBodyKey))
 	}
-	registerTopicMaintenanceRoutes(api, settings)
+	registerTopicMaintenanceRoutes(api, control)
 	if telemetry.PrivateMemory != nil {
-		api.GET("/private-memory/spaces", access.listPrivateMemorySpaces)
-		api.POST("/private-memory/spaces/:spaceId/legal-hold", access.placePrivateMemoryLegalHold, httpmw.BindAndValidateStrict[dto.PrivateMemoryLegalHoldRequest](privateMemoryLegalHoldBodyKey))
-		api.DELETE("/private-memory/spaces/:spaceId/legal-hold", access.releasePrivateMemoryLegalHold)
-		api.POST("/private-memory/spaces/:spaceId/erasures", access.requestControlPrivateMemoryErasure, httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
-		api.GET("/private-memory/erasures", access.listPrivateMemoryErasures)
-		api.GET("/private-memory/erasures/:operationId", access.getPrivateMemoryErasure)
-		api.POST("/private-memory/retention-runs", access.runPrivateMemoryRetention, httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
-		api.GET("/private-memory/retention-runs", access.listPrivateMemoryRetentionRuns)
+		api.GET("/private-memory/spaces", control.listPrivateMemorySpaces)
+		api.POST("/private-memory/spaces/:spaceId/legal-hold", control.placePrivateMemoryLegalHold, httpmw.BindAndValidateStrict[dto.PrivateMemoryLegalHoldRequest](privateMemoryLegalHoldBodyKey))
+		api.DELETE("/private-memory/spaces/:spaceId/legal-hold", control.releasePrivateMemoryLegalHold)
+		api.POST("/private-memory/spaces/:spaceId/erasures", control.requestControlPrivateMemoryErasure, httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
+		api.GET("/private-memory/erasures", control.listPrivateMemoryErasures)
+		api.GET("/private-memory/erasures/:operationId", control.getPrivateMemoryErasure)
+		api.POST("/private-memory/retention-runs", control.runPrivateMemoryRetention, httpmw.BindAndValidateStrict[dto.PrivateMemoryErasureRequest](privateMemoryErasureBodyKey))
+		api.GET("/private-memory/retention-runs", control.listPrivateMemoryRetentionRuns)
 	}
 	if telemetry.SSO != nil {
-		api.GET("/sso/providers", identity.listSSOProviders)
-		api.POST("/sso/providers", identity.createSSOProvider)
-		api.PATCH("/sso/providers/:providerId", identity.updateSSOProvider)
-		api.DELETE("/sso/providers/:providerId", identity.deleteSSOProvider)
-		api.GET("/sso/providers/:providerId/mappings", identity.listSSOMappings)
-		api.POST("/sso/providers/:providerId/mappings", identity.createSSOMapping)
-		api.PATCH("/sso/providers/:providerId/mappings/:mappingId", identity.updateSSOMapping)
-		api.DELETE("/sso/providers/:providerId/mappings/:mappingId", identity.deleteSSOMapping)
+		api.GET("/sso/providers", control.listSSOProviders)
+		api.POST("/sso/providers", control.createSSOProvider)
+		api.PATCH("/sso/providers/:providerId", control.updateSSOProvider)
+		api.DELETE("/sso/providers/:providerId", control.deleteSSOProvider)
+		api.GET("/sso/providers/:providerId/mappings", control.listSSOMappings)
+		api.POST("/sso/providers/:providerId/mappings", control.createSSOMapping)
+		api.PATCH("/sso/providers/:providerId/mappings/:mappingId", control.updateSSOMapping)
+		api.DELETE("/sso/providers/:providerId/mappings/:mappingId", control.deleteSSOMapping)
 	}
 	if telemetry.Directory != nil {
-		api.GET("/sso/directory/connectors", identity.listDirectoryConnectors)
-		api.GET("/sso/providers/:providerId/directory-connector", identity.getDirectoryConnector)
-		api.POST("/sso/providers/:providerId/directory-connector", identity.createDirectoryConnector)
-		api.PATCH("/sso/directory/connectors/:connectorId", identity.updateDirectoryConnector)
-		api.POST("/sso/directory/connectors/:connectorId/credentials/rotate", identity.rotateDirectoryCredentials)
-		api.GET("/sso/directory/connectors/:connectorId/preview", identity.previewDirectoryConnector)
-		api.POST("/sso/directory/connectors/:connectorId/status", identity.setDirectoryConnectorStatus)
-		api.POST("/sso/directory/connectors/:connectorId/groups/:groupId/adopt", identity.adoptDirectoryGroupTeam)
+		api.GET("/sso/directory/connectors", control.listDirectoryConnectors)
+		api.GET("/sso/providers/:providerId/directory-connector", control.getDirectoryConnector)
+		api.POST("/sso/providers/:providerId/directory-connector", control.createDirectoryConnector)
+		api.PATCH("/sso/directory/connectors/:connectorId", control.updateDirectoryConnector)
+		api.POST("/sso/directory/connectors/:connectorId/credentials/rotate", control.rotateDirectoryCredentials)
+		api.GET("/sso/directory/connectors/:connectorId/preview", control.previewDirectoryConnector)
+		api.POST("/sso/directory/connectors/:connectorId/status", control.setDirectoryConnectorStatus)
+		api.POST("/sso/directory/connectors/:connectorId/groups/:groupId/adopt", control.adoptDirectoryGroupTeam)
 	}
 	if telemetry.ControlIdentity != nil {
-		api.GET("/sso/providers/:providerId/control-admin-groups", identity.listControlAdminGroups)
-		api.POST("/sso/providers/:providerId/control-admin-groups", identity.createControlAdminGroup)
-		api.PATCH("/sso/providers/:providerId/control-admin-groups/:groupId", identity.updateControlAdminGroup)
-		api.DELETE("/sso/providers/:providerId/control-admin-groups/:groupId", identity.deleteControlAdminGroup)
+		api.GET("/sso/providers/:providerId/control-admin-groups", control.listControlAdminGroups)
+		api.POST("/sso/providers/:providerId/control-admin-groups", control.createControlAdminGroup)
+		api.PATCH("/sso/providers/:providerId/control-admin-groups/:groupId", control.updateControlAdminGroup)
+		api.DELETE("/sso/providers/:providerId/control-admin-groups/:groupId", control.deleteControlAdminGroup)
 	}
 
 	if staticDir := defaultPortalStaticDir(); staticDir != "" {
@@ -247,7 +244,7 @@ func NewControlPortalServerWithServices(
 	return e, nil
 }
 
-func (h *controlDiagnosticsHandler) getMetrics(c *echo.Context) error {
+func (h *controlPortalHandler) getMetrics(c *echo.Context) error {
 	if h.metrics == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "usage metrics unavailable")
 	}
@@ -277,7 +274,7 @@ func (h *controlDiagnosticsHandler) getMetrics(c *echo.Context) error {
 	}})
 }
 
-func (h *controlDiagnosticsHandler) getTelemetry(c *echo.Context) error {
+func (h *controlPortalHandler) getTelemetry(c *echo.Context) error {
 	if h.telemetry == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "telemetry unavailable")
 	}
@@ -292,7 +289,7 @@ func (h *controlDiagnosticsHandler) getTelemetry(c *echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": snapshot})
 }
 
-func (h *controlAccessHandler) listTeams(c *echo.Context) error {
+func (h *controlPortalHandler) listTeams(c *echo.Context) error {
 	limit, offset := controlPagination(c)
 	teams, err := h.teams.List(c.Request().Context(), limit, offset)
 	if err != nil {
@@ -313,7 +310,7 @@ func (h *controlAccessHandler) listTeams(c *echo.Context) error {
 	return response.PaginatedOK(c, items, response.Pagination{Limit: limit, Offset: offset, Total: total})
 }
 
-func (h *controlAccessHandler) createTeam(c *echo.Context) error {
+func (h *controlPortalHandler) createTeam(c *echo.Context) error {
 	var body dto.CreateTeamRequest
 	if err := c.Bind(&body); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
@@ -337,7 +334,7 @@ func (h *controlAccessHandler) createTeam(c *echo.Context) error {
 	return c.JSON(nethttp.StatusCreated, map[string]any{"data": item})
 }
 
-func (h *controlAccessHandler) updateTeam(c *echo.Context) error {
+func (h *controlPortalHandler) updateTeam(c *echo.Context) error {
 	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
@@ -372,7 +369,7 @@ func (h *controlAccessHandler) updateTeam(c *echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": item})
 }
 
-func (h *controlAccessHandler) deleteTeam(c *echo.Context) error {
+func (h *controlPortalHandler) deleteTeam(c *echo.Context) error {
 	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
@@ -383,7 +380,7 @@ func (h *controlAccessHandler) deleteTeam(c *echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": map[string]string{"status": "deleted"}})
 }
 
-func (h *controlAccessHandler) listCredentials(c *echo.Context) error {
+func (h *controlPortalHandler) listCredentials(c *echo.Context) error {
 	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
@@ -404,7 +401,7 @@ func (h *controlAccessHandler) listCredentials(c *echo.Context) error {
 	return response.PaginatedOK(c, items, response.Pagination{Limit: limit, Offset: offset, Total: total})
 }
 
-func (h *controlAccessHandler) createCredential(c *echo.Context) error {
+func (h *controlPortalHandler) createCredential(c *echo.Context) error {
 	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
@@ -446,7 +443,7 @@ func (h *controlAccessHandler) createCredential(c *echo.Context) error {
 	})
 }
 
-func (h *controlAccessHandler) updateCredential(c *echo.Context) error {
+func (h *controlPortalHandler) updateCredential(c *echo.Context) error {
 	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
@@ -498,7 +495,7 @@ func (h *controlAccessHandler) updateCredential(c *echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlCredential(credential)})
 }
 
-func (h *controlAccessHandler) rotateCredential(c *echo.Context) error {
+func (h *controlPortalHandler) rotateCredential(c *echo.Context) error {
 	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
@@ -540,7 +537,7 @@ func (h *controlAccessHandler) rotateCredential(c *echo.Context) error {
 	})
 }
 
-func (h *controlAccessHandler) deleteCredential(c *echo.Context) error {
+func (h *controlPortalHandler) deleteCredential(c *echo.Context) error {
 	teamID, err := parseControlUUID(controlTeamIDParam(c), "team ID")
 	if err != nil {
 		return err
@@ -555,7 +552,7 @@ func (h *controlAccessHandler) deleteCredential(c *echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": map[string]string{"status": "deleted"}})
 }
 
-func (h *controlConfigHandler) getSecuritySettings(c *echo.Context) error {
+func (h *controlPortalHandler) getSecuritySettings(c *echo.Context) error {
 	if h.security == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "security service unavailable")
 	}
@@ -566,7 +563,7 @@ func (h *controlConfigHandler) getSecuritySettings(c *echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlSecuritySettings(settings)})
 }
 
-func (h *controlConfigHandler) updateSecuritySettings(c *echo.Context) error {
+func (h *controlPortalHandler) updateSecuritySettings(c *echo.Context) error {
 	if h.security == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "security service unavailable")
 	}
@@ -601,7 +598,7 @@ func (h *controlConfigHandler) updateSecuritySettings(c *echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlSecuritySettings(updated)})
 }
 
-func (h *controlConfigHandler) listSecurityBans(c *echo.Context) error {
+func (h *controlPortalHandler) listSecurityBans(c *echo.Context) error {
 	if h.security == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "security service unavailable")
 	}
@@ -618,7 +615,7 @@ func (h *controlConfigHandler) listSecurityBans(c *echo.Context) error {
 	return response.PaginatedOK(c, items, response.Pagination{Limit: limit, Offset: offset, Total: total})
 }
 
-func (h *controlConfigHandler) createSecurityBan(c *echo.Context) error {
+func (h *controlPortalHandler) createSecurityBan(c *echo.Context) error {
 	if h.security == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "security service unavailable")
 	}
@@ -644,7 +641,7 @@ func (h *controlConfigHandler) createSecurityBan(c *echo.Context) error {
 	return c.JSON(nethttp.StatusCreated, map[string]any{"data": toControlSecurityBan(*ban)})
 }
 
-func (h *controlConfigHandler) deleteSecurityBan(c *echo.Context) error {
+func (h *controlPortalHandler) deleteSecurityBan(c *echo.Context) error {
 	if h.security == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "security service unavailable")
 	}
@@ -895,7 +892,7 @@ type controlTeamResponse struct {
 	UpdatedAt string `json:"updated_at"`
 }
 
-func (h *controlAccessHandler) toControlTeam(ctx context.Context, team *domain.Team) (controlTeamResponse, error) {
+func (h *controlPortalHandler) toControlTeam(ctx context.Context, team *domain.Team) (controlTeamResponse, error) {
 	return controlTeamResponse{
 		ID:          team.ID,
 		Name:        team.Name,

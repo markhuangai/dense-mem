@@ -363,8 +363,15 @@ func TestContextLoggerUsesTrustedActorAndCorrelation(t *testing.T) {
 
 func TestContextLoggerUsesTrustedActorAndCorrelationForConsoleAndSink(t *testing.T) {
 	var buf bytes.Buffer
+	state := &sinkState{}
 	sink := &recordingLogSink{}
-	root := NewConsoleWithProtector(LevelTrace, nil, &buf)
+	root := &Logger{
+		logger: slog.New(newTeeHandler(
+			newCredentialRedactingHandler(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: LevelTrace}), nil),
+			newOperationLogHandlerWithState(LevelTrace, state, nil),
+		)),
+		root: &loggerRoot{sink: state},
+	}
 	require.NoError(t, root.AttachSink(sink))
 	teamID, ownerID := uuid.New(), uuid.New()
 	ctx := correlation.WithID(context.Background(), "trusted-console-correlation")
@@ -395,9 +402,16 @@ func TestTrustedCorrelationProtectionCoversCredentialsAndBounds(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var console bytes.Buffer
+			state := &sinkState{}
 			protector := NewCredentialProtector("configured-secret")
 			sink := &recordingLogSink{}
-			root := NewConsoleWithProtector(LevelTrace, protector, &console)
+			root := &Logger{
+				logger: slog.New(newTeeHandler(
+					newCredentialRedactingHandler(slog.NewJSONHandler(&console, &slog.HandlerOptions{Level: LevelTrace}), protector),
+					newOperationLogHandlerWithState(LevelTrace, state, protector),
+				)),
+				root: &loggerRoot{sink: state},
+			}
 			require.NoError(t, root.AttachSink(sink))
 
 			ctx := context.Background()
@@ -570,8 +584,11 @@ func TestLoggerWith(t *testing.T) {
 
 func TestOperationLogHandlerBuildsSanitizedRecords(t *testing.T) {
 	sink := &recordingLogSink{}
-	handler := newCredentialRedactingHandler(operationLogHandler{level: slog.LevelDebug, sink: sink},
-		NewCredentialProtector("secret-key", "Bearer secret", "hidden")).WithAttrs([]slog.Attr{
+	handler := (operationLogHandler{
+		level:     slog.LevelDebug,
+		sink:      sink,
+		protector: NewCredentialProtector("secret-key", "Bearer secret", "hidden"),
+	}).WithAttrs([]slog.Attr{
 		slog.String("team_id", "team-1"),
 		slog.String("api_key", "secret-key"),
 	})
@@ -667,7 +684,7 @@ func TestCredentialRedactingHandlerProtectsPerCallSecretInBoundAttributes(t *tes
 
 func TestOperationLogHandlerReturnsSinkErrors(t *testing.T) {
 	writeErr := errors.New("write failed")
-	handler := operationLogHandler{level: slog.LevelDebug, sink: failingLogSink{err: writeErr}}
+	handler := newOperationLogHandler(slog.LevelDebug, failingLogSink{err: writeErr})
 
 	err := handler.Handle(context.Background(), slog.NewRecord(time.Now(), slog.LevelInfo, "persist me", 0))
 
@@ -678,7 +695,7 @@ func TestNewWithSinksAndTeeHandler(t *testing.T) {
 	sink := &recordingLogSink{}
 	handler := newTeeHandler(
 		slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelWarn}),
-		operationLogHandler{level: slog.LevelDebug, sink: sink},
+		newOperationLogHandler(slog.LevelDebug, sink),
 	)
 	logger := slog.New(handler)
 
@@ -819,6 +836,7 @@ func TestLoggerContextAndHandlerCompatibilityBranches(t *testing.T) {
 	assert.NotContains(t, sink.records[0].Message, "configured-secret")
 
 	var nilHandler slog.Handler
+	assert.NotNil(t, newRedactingHandler(nilHandler))
 	assert.NotNil(t, newCredentialRedactingHandler(nilHandler, nil))
 	assert.Nil(t, legacySanitizeLogValue("token", "hidden"))
 	assert.Equal(t, 42, legacySanitizeLogValue("count", 42))
@@ -829,8 +847,16 @@ func TestLoggerContextAndHandlerCompatibilityBranches(t *testing.T) {
 	assert.False(t, ok)
 	_, ok = sanitizeSlogAttr(slog.String("vector", "[0.1]"))
 	assert.False(t, ok)
+	var compatibilityOutput bytes.Buffer
+	compatibilityHandler := newRedactingHandler(slog.NewJSONHandler(&compatibilityOutput, &slog.HandlerOptions{Level: LevelTrace}))
+	assert.True(t, compatibilityHandler.Enabled(context.Background(), LevelTrace))
+	require.NoError(t, compatibilityHandler.Handle(context.Background(), slog.NewRecord(time.Now(), LevelTrace, "compatibility", 0)))
+	groupedCompatibility := compatibilityHandler.WithAttrs([]slog.Attr{slog.String("safe", "value")}).WithGroup("compatibility")
+	require.NoError(t, groupedCompatibility.Handle(context.Background(), slog.NewRecord(time.Now(), LevelTrace, "grouped", 0)))
+	assert.Contains(t, compatibilityOutput.String(), "value")
+
 	state := &sinkState{}
-	handler := operationLogHandler{level: LevelTrace, state: state}
+	handler := newOperationLogHandlerWithState(LevelTrace, state, NewCredentialProtector("secret"))
 	assert.NoError(t, handler.Handle(WithSinkSuppressed(context.Background()), slog.NewRecord(time.Time{}, slog.LevelInfo, "suppressed", 0)))
 	assert.NoError(t, handler.Handle(context.Background(), slog.NewRecord(time.Time{}, slog.LevelInfo, "no sink", 0)))
 
@@ -863,7 +889,7 @@ func TestLoggerBoundsUnsupportedDiagnosticsAndNilProtectorSink(t *testing.T) {
 	require.Len(t, sink.records, 1)
 	assert.Equal(t, "without protector", sink.records[0].Message)
 	legacySink := &recordingLogSink{}
-	legacyOperation := newLegacyCredentialRedactingHandler(operationLogHandler{level: LevelTrace, sink: legacySink}, nil)
+	legacyOperation := operationLogHandler{level: LevelTrace, sink: legacySink, legacyCompatibility: true}
 	legacyRecord := slog.NewRecord(time.Now(), slog.LevelWarn, "password=legacy", 0)
 	legacyRecord.AddAttrs(slog.String("token", "legacy-token"), slog.String("safe", "kept"))
 	require.NoError(t, legacyOperation.Handle(withLegacyLogging(context.Background()), legacyRecord))

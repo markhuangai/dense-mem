@@ -60,7 +60,7 @@ func TestControlPortalRememberInvocationRoutes(t *testing.T) {
 			RequestBody: `{"evidence":[]}`, ProviderExchanges: []rememberapp.RememberInvocationDiagnosticExchange{{Kind: "provider_exchange", Component: "assessor"}},
 		},
 	}
-	server, err := NewControlPortalServerWithServices(&config.Config{ControlHTTPAddr: "127.0.0.1:8090", ControlPortalToken: "secret"}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalServices{RememberInvocations: reader}, HealthConfig{}, nil)
+	server, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{ControlHTTPAddr: "127.0.0.1:8090", ControlPortalToken: "secret"}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{RememberInvocations: reader}, HealthConfig{}, nil)
 	require.NoError(t, err)
 
 	do := func(path string) *httptest.ResponseRecorder {
@@ -109,12 +109,12 @@ func TestControlPortalRememberInvocationValidationAndErrors(t *testing.T) {
 		require.Error(t, err, path)
 	}
 
-	unavailable := &controlDiagnosticsHandler{}
+	unavailable := &controlPortalHandler{}
 	require.ErrorContains(t, unavailable.listRememberInvocationDiagnostics(newContext("/")), "unavailable")
 	require.ErrorContains(t, unavailable.getRememberInvocationDiagnostic(withInvocationParams(newContext("/"), uuid.NewString(), uuid.NewString())), "unavailable")
 
 	reader := &invocationReaderStub{listErr: rememberapp.ErrRememberInvocationDiagnosticsUnavailable, detailErr: rememberapp.ErrRememberInvocationDiagnosticsUnavailable}
-	h := &controlDiagnosticsHandler{rememberInvocations: reader}
+	h := &controlPortalHandler{rememberInvocations: reader}
 	require.ErrorContains(t, h.listRememberInvocationDiagnostics(newContext("/")), "unavailable")
 	require.ErrorContains(t, h.getRememberInvocationDiagnostic(withInvocationParams(newContext("/"), "bad", uuid.NewString())), "team ID")
 	require.ErrorContains(t, h.getRememberInvocationDiagnostic(withInvocationParams(newContext("/"), uuid.NewString(), "bad")), "invocation ID")
@@ -170,7 +170,7 @@ func TestInvocationDetailUsesExactInvocationAndSameTeamTransportRows(t *testing.
 		{Message: "remember_invocation_completed", CorrelationID: correlationID, Attrs: map[string]any{"invocation_id": uuid.NewString(), "phase": "wrong-phase"}, Error: "wrong-cause"},
 		{Message: "http_request", CorrelationID: correlationID, Attrs: map[string]any{"invocation_id": invocationID.String(), "delivery_stage": "write_observed"}},
 	}}
-	h := &controlDiagnosticsHandler{
+	h := &controlPortalHandler{
 		rememberInvocations: &invocationReaderStub{detail: &rememberapp.RememberInvocationDiagnosticDetail{
 			RememberInvocationDiagnosticSummary: rememberapp.RememberInvocationDiagnosticSummary{TeamID: teamID.String(), InvocationID: invocationID.String(), CorrelationID: correlationID},
 		}},
@@ -201,7 +201,7 @@ func TestInvocationDetailMarksPartialLogEnrichmentUnavailable(t *testing.T) {
 			TeamID: teamID.String(), InvocationID: invocationID.String(), CorrelationID: correlationID,
 		},
 	}
-	h := &controlDiagnosticsHandler{
+	h := &controlPortalHandler{
 		rememberInvocations: &invocationReaderStub{detail: detail},
 		operationLogs: &invocationLogReaderStub{rows: []domain.OperationLog{
 			{Message: "http_request", CorrelationID: correlationID, Attrs: map[string]any{
@@ -226,7 +226,7 @@ func TestInvocationDetailSurfacesEnrichmentUnavailable(t *testing.T) {
 			TeamID: teamID.String(), InvocationID: invocationID.String(), CorrelationID: "corr-error",
 		},
 	}
-	h := &controlDiagnosticsHandler{
+	h := &controlPortalHandler{
 		rememberInvocations: &invocationReaderStub{detail: detail},
 		operationLogs:       &invocationLogReaderStub{err: errors.New("operation logs unavailable")},
 	}
@@ -250,7 +250,7 @@ func TestInvocationDetailLeavesDeliveryStageUnknownForAmbiguousCorrelation(t *te
 			TeamID: teamID.String(), InvocationID: invocationID.String(), CorrelationID: correlationID, DeliveryStage: "unknown_receipt",
 		},
 	}
-	h := &controlDiagnosticsHandler{
+	h := &controlPortalHandler{
 		rememberInvocations: &invocationReaderStub{detail: detail},
 		operationLogs:       logs,
 	}
@@ -270,7 +270,7 @@ func TestInvocationDetailLeavesDeliveryStageUnknownForCorrelationOnlyTransportRo
 			TeamID: teamID.String(), InvocationID: invocationID.String(), CorrelationID: correlationID, DeliveryStage: "unknown_receipt",
 		},
 	}
-	h := &controlDiagnosticsHandler{
+	h := &controlPortalHandler{
 		rememberInvocations: &invocationReaderStub{detail: detail},
 		operationLogs: &invocationLogReaderStub{rows: []domain.OperationLog{
 			{Message: "http_request", CorrelationID: correlationID, Attrs: map[string]any{"delivery_stage": "write_observed"}},
@@ -290,7 +290,7 @@ func TestInvocationDetailMarksEmptyLogEnrichmentUnavailable(t *testing.T) {
 			TeamID: teamID.String(), InvocationID: uuid.NewString(), CorrelationID: "filtered-correlation", DeliveryStage: "unknown_receipt",
 		},
 	}
-	h := &controlDiagnosticsHandler{
+	h := &controlPortalHandler{
 		rememberInvocations: &invocationReaderStub{detail: detail},
 		operationLogs:       &invocationLogReaderStub{},
 	}

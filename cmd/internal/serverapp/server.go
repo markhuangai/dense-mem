@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	sessionpostgres "github.com/markhuangai/dense-mem/internal/session/postgres"
 	"log/slog"
 	"net"
 	nethttp "net/http"
@@ -30,6 +29,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres/lockadmission"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
+	"github.com/markhuangai/dense-mem/internal/topicassignment"
 	topics "github.com/markhuangai/dense-mem/internal/topics"
 	topicspostgres "github.com/markhuangai/dense-mem/internal/topics/postgres"
 )
@@ -128,7 +128,7 @@ func RunActiveServer(
 	recallFeedbackEventRepo := recallpostgres.NewFeedbackStore(pgDB.GetDB(), rlsHelper)
 	privateMemoryRepo := privacy.NewStore(pgDB.GetDB(), rlsHelper)
 	knowledgeStore := knowledgepostgres.NewStore(pgDB.GetDB(), rlsHelper)
-	conflictStore := conflictpostgres.NewStore(pgDB.GetDB(), rlsHelper)
+	conflictStore := conflictpostgres.NewStore(pgDB.GetDB(), rlsHelper, knowledgeStore)
 	traceStore := buildTraceStore(pgDB.GetDB(), rlsHelper)
 	evidenceConflictService := buildEvidenceConflictApplication(conflictStore)
 	if err := checkActiveAuthority(authority); err != nil {
@@ -236,7 +236,7 @@ func RunActiveServer(
 		Logger:            logger,
 	}
 	recallStore.WithTopicDiagnostics(logger, diagnosticProtector)
-	publicationDiagnostics := topics.PublicationDiagnostics(rootDiagnosticLogger(logger), diagnosticProtector)
+	publicationDiagnostics := topicPublicationDiagnostics(rootDiagnosticLogger(logger), diagnosticProtector)
 	topicStore.WithPublicationDiagnostics(publicationDiagnostics)
 	telemetry, err := buildTelemetryApplication(startupCtx, cfg, appConfigService, telemetryLifecycleRepo, logger, diagnosticProtector)
 	if err != nil {
@@ -275,21 +275,19 @@ func RunActiveServer(
 	sessionAssessmentLimits.MaxEvidenceItems = 100
 	topicMaintenance := buildTopicMaintenance(topicStore, appConfigService, assessorProvider, assessmentLimits, sessionModels.remember,
 		time.Duration(cfg.GetAIVerifierTimeoutSeconds())*time.Second, time.Duration(cfg.Decision.TimeoutSeconds)*time.Second,
-		auditService, rootDiagnosticLogger(logger), topics.MaintenanceDiagnostics(operationLogService, diagnosticProtector, rootDiagnosticLogger(logger)))
+		auditService, rootDiagnosticLogger(logger), topicMaintenanceDiagnostics(operationLogService, diagnosticProtector, rootDiagnosticLogger(logger)))
 	rootLogger := rootDiagnosticLogger(logger)
-	topicAssignment := topics.NewAssignmentService(topicStore, appConfigService, assessorProvider, decisions, assessmentLimits, sessionModels.remember, rootLogger)
+	topicAssignment := topicassignment.NewService(topicStore, appConfigService, assessorProvider, decisions, assessmentLimits, sessionModels.remember, rootLogger)
 	knowledgeStore.WithTopicAssignments(topicStore)
 	topicMaintenance.WithTopicProcessing(topicAssignment, topicStore, topicStore, topics.CommunityAssessor{
 		Transport: assessorProvider, Decisions: decisions, Settings: appConfigService, Limits: assessmentLimits, Logger: rootLogger,
-	}, appConfigService)
+	})
 	applications := buildApplicationBundle(applicationCompositionDependencies{
 		TopicAssignment:      topicAssignment,
 		PublicSeedAdmission:  seedAdmission,
 		Knowledge:            knowledgeStore,
-		SessionRepository:    sessionpostgres.New(pgDB.GetDB(), rlsHelper, knowledgeStore.CommitEvidenceTx, knowledgeStore.WithSubmissionLock),
 		RememberPersistence:  knowledgeStore,
 		TraceStore:           traceStore,
-		MemoryPackReader:     traceStore,
 		Search:               searchRepo,
 		RecallSearch:         recallStore,
 		RecallFeedbackEvents: recallFeedbackEventRepo,
@@ -384,7 +382,7 @@ func RunActiveServer(
 	}
 	e := transport.e
 	runtimeCtx.Echo = e
-	publicServer := densehttp.NewHTTPServer(e, logger)
+	publicServer := densehttp.NewHTTPServer(e, transportLogger(logger))
 	controlServer := transport.controlServer
 	telemetryServer := transport.telemetryServer
 	if err := processCtx.Err(); err != nil {
@@ -408,8 +406,8 @@ func RunActiveServer(
 	var controlListener, telemetryListener net.Listener
 	closeBoundListeners := func() {
 		_ = publicListener.Close()
-		_ = closeOptionalListener(controlListener)
-		_ = closeOptionalListener(telemetryListener)
+		_ = controlListenerClose(controlListener)
+		_ = telemetryListenerClose(telemetryListener)
 	}
 	if controlServer != nil {
 		controlListener, err = bindHTTPServer(controlServer, cfg.GetControlHTTPAddr())
@@ -472,12 +470,19 @@ func RunActiveServer(
 			return abortStartup(fmt.Errorf("failed to start runtime background jobs: %w", err))
 		}
 	}
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
+
 	// Start all configured workers and listeners exactly once after binding.
 	if err := startupCheck(); err != nil {
 		return abortStartup(err)
 	}
 	activityWriter.Start(lifecycle.Context())
 	lifecycle.add(managedRuntimeWorker{name: "credential activity", shutdown: activityWriter.Shutdown, shutdownTimeout: writerShutdownTimeout})
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
 	if err := startupCheck(); err != nil {
 		return abortStartup(err)
 	}
@@ -511,13 +516,17 @@ func RunActiveServer(
 	if err := startupCheck(); err != nil {
 		return abortStartup(err)
 	}
-	lifecycle.startDiagnosticRetention(knowledgeStore.PurgeExpiredDiagnostics, time.Hour, rootSlogLogger(logger))
+	diagnosticDone := knowledgeStore.StartRememberAttemptDiagnosticPurger(lifecycle.Context(), time.Hour, rootSlogLogger(logger))
+	lifecycle.add(managedRuntimeWorker{name: "remember diagnostics", done: diagnosticDone, shutdown: knowledgeStore.ShutdownRememberAttemptDiagnosticPurger})
 	if err := startupCheck(); err != nil {
 		return abortStartup(err)
 	}
 	lifecycle.start("topic maintenance", func(ctx context.Context) {
 		topics.NewMaintenanceScheduler(topicMaintenance, rootSlogLogger(logger)).Start(ctx)
 	})
+	if err := startupCheck(); err != nil {
+		return abortStartup(err)
+	}
 	if err := startupCheck(); err != nil {
 		return abortStartup(err)
 	}
@@ -609,6 +618,7 @@ func RunActiveServer(
 	if err := lifecycle.shutdown(workerCtx); err != nil {
 		runErr = errors.Join(runErr, err)
 		if errors.Is(err, ErrRuntimeShutdownTimeout) {
+			runErr = errors.Join(runErr, ErrRuntimeShutdownTimeout)
 			closeBackend = false
 			closeOperationLogDB = false
 		}
@@ -617,7 +627,14 @@ func RunActiveServer(
 	return runErr
 }
 
-func closeOptionalListener(listener net.Listener) error {
+func controlListenerClose(listener net.Listener) error {
+	if listener == nil {
+		return nil
+	}
+	return listener.Close()
+}
+
+func telemetryListenerClose(listener net.Listener) error {
 	if listener == nil {
 		return nil
 	}

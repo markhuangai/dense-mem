@@ -4,7 +4,6 @@ import (
 	"context"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -273,9 +272,6 @@ func (m *PrometheusMetrics) RegisterOperationalTelemetryCollector(reader operati
 type OperationalTelemetryCollector struct {
 	reader           operationscontract.OperationalTelemetryReader
 	collection       singleflight.Group
-	snapshotMu       sync.Mutex
-	snapshot         operationscontract.OperationalTelemetrySnapshot
-	snapshotExpires  time.Time
 	status           *prometheus.Desc
 	rememberAttempts *prometheus.Desc
 }
@@ -296,19 +292,9 @@ func (c *OperationalTelemetryCollector) Describe(ch chan<- *prometheus.Desc) {
 
 func (c *OperationalTelemetryCollector) readOperationalTelemetry() <-chan singleflight.Result {
 	return c.collection.DoChan("canonical-ledger", func() (any, error) {
-		c.snapshotMu.Lock()
-		defer c.snapshotMu.Unlock()
-		if time.Now().Before(c.snapshotExpires) {
-			return c.snapshot, nil
-		}
 		ctx, cancel := context.WithTimeout(context.Background(), operationalLedgerCollectionTimeout)
 		defer cancel()
-		snapshot, err := c.reader.ReadOperationalTelemetry(ctx)
-		if err == nil {
-			c.snapshot = snapshot
-			c.snapshotExpires = time.Now().Add(15 * time.Second)
-		}
-		return snapshot, err
+		return c.reader.ReadOperationalTelemetry(ctx)
 	})
 }
 

@@ -1,38 +1,42 @@
 package postgres
 
-import (
-	"github.com/markhuangai/dense-mem/internal/domain"
-	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-)
+import "github.com/markhuangai/dense-mem/internal/domain"
 
-func rememberPublicResult(input SynchronousRememberCommitInput, evidence []EvidenceFragment, semantic *submissionSemanticCommitState) *knowledge.RememberReceipt {
-	target, _ := input.Metadata["target_space"].(domain.MemorySpaceKind)
-	if explicit, ok := input.Metadata["target_space"].(string); ok {
-		target = domain.MemorySpaceKind(explicit)
+func rememberPublicResult(input SynchronousRememberCommitInput, evidence []EvidenceFragment, semantic *submissionSemanticCommitState) map[string]any {
+	result := map[string]any{
+		"space_kind":       input.Metadata["target_space"],
+		"contract_version": domain.ContractVersion, "submission_id": input.IngestID,
+		"submission_kind": "remember", "processing_state": "completed",
+		"search_state": "not_required", "correlation_id": rememberCorrelationID(input.Metadata),
+		"evidence": []map[string]any{},
+		"errors":   []map[string]any{},
 	}
-	result := &knowledge.RememberReceipt{
-		SpaceKind: domain.MemorySpaceKind(target), ContractVersion: domain.ContractVersion, SubmissionID: input.IngestID,
-		SubmissionKind: "remember", ProcessingState: "completed", SearchState: "not_required", CorrelationID: rememberCorrelationID(input.Metadata),
-		Evidence: make([]knowledge.SubmissionEvidenceStatus, 0, len(evidence)), Errors: []knowledge.SubmissionStatusError{},
-	}
+	warnings := make([]string, 0, 2)
 	if input.CandidateContextOmittedCandidates > 0 {
-		result.Warnings = []string{"optional duplicate candidates were omitted to fit the configured assessor budget"}
+		warnings = append(warnings, "optional duplicate candidates were omitted to fit the configured assessor budget")
+	}
+	if len(warnings) > 0 {
+		result["warnings"] = warnings
 	}
 	if len(semantic.SearchDocuments) > 0 || rememberHasReusedEvidence(evidence) {
-		result.SearchState = string(domain.SearchProjectionCurrent)
+		result["search_state"] = string(domain.SearchProjectionCurrent)
 	}
+	evidenceResults := make([]map[string]any, 0, len(evidence))
 	for _, item := range evidence {
-		entry := knowledge.SubmissionEvidenceStatus{
-			Disposition: "stored", EvidenceID: item.FragmentID, EvidenceIndex: item.EvidenceIndex, ContentHash: item.ContentHash,
-			SupersededEvidenceIDs: append([]string{}, item.SupersededEvidenceIDs...), SearchState: result.SearchState,
+		entry := map[string]any{
+			"disposition": "stored", "evidence_id": item.FragmentID, "evidence_index": item.EvidenceIndex,
+			"content_hash":            item.ContentHash,
+			"superseded_evidence_ids": append([]string{}, item.SupersededEvidenceIDs...),
+			"search_state":            result["search_state"],
 		}
 		if p := item.Partition; p != nil {
-			entry.EvidenceIndex, entry.PartitionIndex = p.SubmittedIndex, &p.Index
-			entry.SourceItemID, entry.SpanStart, entry.SpanEnd = p.SourceItemID, &p.Start, &p.End
-			entry.OccurrenceID = item.OccurrenceID
+			entry["evidence_index"], entry["partition_index"] = p.SubmittedIndex, p.Index
+			entry["source_item_id"], entry["span_start"], entry["span_end"] = p.SourceItemID, p.Start, p.End
+			entry["occurrence_id"] = item.OccurrenceID
 		}
-		result.Evidence = append(result.Evidence, entry)
+		evidenceResults = append(evidenceResults, entry)
 	}
+	result["evidence"] = evidenceResults
 	return result
 }
 

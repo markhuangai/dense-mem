@@ -61,7 +61,7 @@ func TestPrivateMemoryReadOnlyCommitRetractionAndLiveSharedRevocation(t *testing
 	require.NoError(t, err)
 	stored, err := store.CommitRememberWithEmbeddings(privateContext, private, rememberTestEmbeddings(prepared, false))
 	require.NoError(t, err)
-	require.Equal(t, "private", string(stored.Receipt.SpaceKind))
+	require.Equal(t, "private", stored.PublicResult["space_kind"])
 	traces := tracepostgres.New(app, rls)
 	visible, err := traces.TraceEvidence(privateContext, tracecontract.Input{TeamID: team, EvidenceID: private.Evidence[0].FragmentID})
 	require.NoError(t, err)

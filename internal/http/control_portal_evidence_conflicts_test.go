@@ -19,7 +19,7 @@ import (
 func TestEvidenceOnlyUnitControlEvidenceConflictsValidatePublicInputs(t *testing.T) {
 	team, conflict := uuid.NewString(), uuid.NewString()
 	base := "/control/api/teams/" + team + "/evidence-conflicts"
-	server, err := NewControlPortalServerWithServices(&config.Config{ControlHTTPAddr: "127.0.0.1:8090", ControlPortalToken: "secret"}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalServices{EvidenceConflicts: evidenceconflict.New(&evidenceConflictReaderStub{})}, HealthConfig{}, nil)
+	server, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{ControlHTTPAddr: "127.0.0.1:8090", ControlPortalToken: "secret"}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{EvidenceConflicts: evidenceconflict.New(&evidenceConflictReaderStub{})}, HealthConfig{}, nil)
 	require.NoError(t, err)
 	for _, test := range []struct {
 		path   string
@@ -60,7 +60,7 @@ func TestEvidenceOnlyUnitControlEvidenceConflictsBoundApplicationFailures(t *tes
 		{evidenceconflict.ErrInvalid, http.StatusUnprocessableEntity}, {evidenceconflict.ErrNotFound, http.StatusNotFound}, {evidenceconflict.ErrNotOpen, http.StatusConflict}, {evidenceconflict.ErrUnavailable, http.StatusServiceUnavailable}, {errors.New("private database detail"), http.StatusInternalServerError},
 	} {
 		reader := &evidenceConflictReaderStub{resolveErr: test.cause}
-		server, err := NewControlPortalServerWithServices(&config.Config{ControlHTTPAddr: "127.0.0.1:8090", ControlPortalToken: "secret"}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalServices{EvidenceConflicts: evidenceconflict.New(reader)}, HealthConfig{}, nil)
+		server, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{ControlHTTPAddr: "127.0.0.1:8090", ControlPortalToken: "secret"}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{EvidenceConflicts: evidenceconflict.New(reader)}, HealthConfig{}, nil)
 		require.NoError(t, err)
 		req := httptest.NewRequest(http.MethodPost, "/control/api/teams/"+uuid.NewString()+"/evidence-conflicts/"+uuid.NewString()+"/resolution", strings.NewReader(`{"expected_version":1,"decision":"dismiss","reason":"reviewed"}`))
 		req.Header.Set("Authorization", "Bearer secret")
@@ -96,9 +96,9 @@ func (s *evidenceConflictReaderStub) ResolveEvidenceConflict(_ context.Context, 
 
 func TestControlPortalEvidenceConflictStaticTokenCarriesActorAndNoStore(t *testing.T) {
 	reader := &evidenceConflictReaderStub{}
-	server, err := NewControlPortalServerWithServices(&config.Config{
+	server, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr: "127.0.0.1:8090", ControlPortalToken: "secret",
-	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalServices{EvidenceConflicts: evidenceconflict.New(reader)}, HealthConfig{}, nil)
+	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{EvidenceConflicts: evidenceconflict.New(reader)}, HealthConfig{}, nil)
 	require.NoError(t, err)
 
 	teamID, conflictID := uuid.NewString(), uuid.NewString()
@@ -116,9 +116,9 @@ func TestControlPortalEvidenceConflictStaticTokenCarriesActorAndNoStore(t *testi
 
 func TestControlPortalEvidenceConflictMapsStaleResolutionToConflict(t *testing.T) {
 	reader := &evidenceConflictReaderStub{resolveErr: evidenceconflict.ErrVersionStale}
-	server, err := NewControlPortalServerWithServices(&config.Config{
+	server, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr: "127.0.0.1:8090", ControlPortalToken: "secret",
-	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalServices{EvidenceConflicts: evidenceconflict.New(reader)}, HealthConfig{}, nil)
+	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{EvidenceConflicts: evidenceconflict.New(reader)}, HealthConfig{}, nil)
 	require.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodPost, "/control/api/teams/"+uuid.NewString()+"/evidence-conflicts/"+uuid.NewString()+"/resolution", strings.NewReader(`{"expected_version":1,"decision":"dismiss","reason":"not supported"}`))
@@ -132,9 +132,9 @@ func TestControlPortalEvidenceConflictMapsStaleResolutionToConflict(t *testing.T
 }
 
 func TestControlPortalEvidenceConflictUnknownDetailIsNotFound(t *testing.T) {
-	server, err := NewControlPortalServerWithServices(&config.Config{
+	server, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr: "127.0.0.1:8090", ControlPortalToken: "secret",
-	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalServices{EvidenceConflicts: evidenceconflict.New(&evidenceConflictReaderStub{})}, HealthConfig{}, nil)
+	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{EvidenceConflicts: evidenceconflict.New(&evidenceConflictReaderStub{})}, HealthConfig{}, nil)
 	require.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodGet, "/control/api/teams/"+uuid.NewString()+"/evidence-conflicts/"+uuid.NewString(), nil)

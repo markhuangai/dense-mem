@@ -17,7 +17,11 @@ import (
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
+var errAuthorityBlocked = operations.ErrAuthorityBlocked
+
 const cutoverMarkerVersion = operations.CutoverMarkerVersion
+
+type authorityMode = operations.AuthorityMode
 
 const authorityActive = operations.AuthorityActive
 

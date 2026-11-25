@@ -28,7 +28,7 @@ func newRecallKnowledgeConflictFixtureStore(db *gorm.DB, rls storagepostgres.RLS
 	knowledge := knowledgepostgres.NewStore(db, rls)
 	return &recallKnowledgeConflictFixtureStore{
 		Store:               knowledge,
-		recallConflictStore: conflictpostgres.NewStore(db, rls),
+		recallConflictStore: conflictpostgres.NewStore(db, rls, knowledge),
 	}
 }
 

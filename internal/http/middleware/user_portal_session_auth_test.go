@@ -11,6 +11,7 @@ import (
 	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/require"
 
+	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
@@ -171,4 +172,4 @@ func TestPrincipalAndActorContextRejectsInconsistentActor(t *testing.T) {
 	}
 }
 
-var _ accessservice.CredentialStore = (*mockCredentialRepository)(nil)
+var _ accesspostgres.CredentialRepository = (*mockCredentialRepository)(nil)

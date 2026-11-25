@@ -2,7 +2,9 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -19,138 +21,110 @@ type traceExecutionInput struct {
 
 func (r *Store) TraceEvidence(ctx context.Context, input TraceEvidenceInput) (*EvidenceTraceResult, error) {
 	input = tracecontract.NormalizeInput(input)
-	results, err := r.TraceEvidenceBatch(ctx, input, []string{input.EvidenceID})
-	if err != nil {
-		return nil, err
-	}
-	return results[0], nil
-}
-
-func (r *Store) TraceEvidenceBatch(ctx context.Context, input TraceEvidenceInput, ids []string) ([]*EvidenceTraceResult, error) {
-	input = tracecontract.NormalizeInput(input)
 	if id, err := uuid.Parse(input.TeamID); err != nil || id == uuid.Nil {
 		return nil, tracecontract.ErrEvidenceIDInvalid
 	}
-	if len(ids) == 0 || len(ids) > 8 {
+	if id, err := uuid.Parse(input.EvidenceID); err != nil || id == uuid.Nil {
 		return nil, tracecontract.ErrEvidenceIDInvalid
 	}
-	for _, value := range ids {
-		if id, err := uuid.Parse(value); err != nil || id == uuid.Nil {
-			return nil, tracecontract.ErrEvidenceIDInvalid
-		}
-	}
-	results := make([]*EvidenceTraceResult, 0, len(ids))
+	result := &EvidenceTraceResult{Occurrences: []TraceEvidenceFragment{}, SourceRevisions: []tracecontract.TraceSourceRevision{}, Decisions: []tracecontract.TraceEvidenceDecision{}, Lifecycle: []TraceEvidenceLifecycleEvent{}, SearchDocuments: []TraceSearchDocument{}, Omissions: []string{}}
 	err := r.withTeamTx(ctx, input.TeamID, func(tx *gorm.DB) error {
-		resolved, err := storage.ResolveMemoryHandlesTx(ctx, tx, input.TeamID, "evidence_fragments", ids, "")
+		resolved, err := storage.ResolveMemoryHandleTx(ctx, tx, input.TeamID, "evidence_fragments", input.EvidenceID, "")
 		if err != nil {
 			return err
 		}
-		roots, err := loadTraceEvidenceRoots(ctx, tx, input, resolved)
+		input.EvidenceID = resolved
+		root, err := loadTraceEvidenceRoot(ctx, tx, input)
+		if errors.Is(err, sql.ErrNoRows) {
+			return tracecontract.ErrEvidenceNotFound
+		}
 		if err != nil {
 			return err
 		}
-		traces := make(map[string]*EvidenceTraceResult, len(roots))
-		for _, id := range resolved {
-			root := roots[id]
-			if root == nil {
-				return tracecontract.ErrEvidenceNotFound
-			}
-			if traces[root.FragmentID] == nil {
-				trace, err := traceEvidenceInTx(ctx, tx, input, root)
-				if err != nil {
-					return err
-				}
-				traces[root.FragmentID] = trace
-			}
-			results = append(results, traces[root.FragmentID])
+		result.Evidence = root
+		input.EvidenceID = root.FragmentID
+		execution := traceExecutionInput{Input: input, spaceID: root.SpaceID}
+		remaining := input.MaxEvents
+		occurrenceIDs, err := traceEvidenceOccurrenceIDs(ctx, tx, execution)
+		if err != nil {
+			return err
 		}
+		occurrences, err := loadTraceEvidenceOccurrences(ctx, tx, execution, occurrenceIDs)
+		if err != nil {
+			return err
+		}
+		result.Occurrences = tracecontract.BoundEvents(occurrences, &remaining, result, "occurrences")
+		partitionIDs := append([]string{root.FragmentID}, occurrenceIDs...)
+		partitions, err := loadTracePartitions(ctx, tx, input.TeamID, root.SpaceID, partitionIDs)
+		if err != nil {
+			return err
+		}
+		root.Partition = partitions[root.FragmentID]
+		for i := range result.Occurrences {
+			result.Occurrences[i].Partition = partitions[result.Occurrences[i].OccurrenceID]
+		}
+		sources := []string{}
+		if root.SourceID != "" {
+			sources = append(sources, root.SourceID)
+		}
+		for _, occurrence := range result.Occurrences {
+			if occurrence.SourceID != "" {
+				sources = append(sources, occurrence.SourceID)
+			}
+		}
+		revisions, err := loadTraceSourceRevisions(ctx, tx, execution, sources, remaining+1)
+		if err != nil {
+			return err
+		}
+		result.SourceRevisions = tracecontract.BoundEvents(revisions, &remaining, result, "source_revisions")
+		decisions, err := loadTraceEvidenceDecisions(ctx, tx, execution, remaining+1)
+		if err != nil {
+			return err
+		}
+		result.Decisions = tracecontract.BoundEvents(decisions, &remaining, result, "decisions")
+		if boolDefault(input.IncludeTransitions, true) {
+			lifecycleIDs := []string{root.FragmentID}
+			for _, occurrence := range occurrences {
+				lifecycleIDs = append(lifecycleIDs, occurrence.OccurrenceID)
+			}
+			lifecycle, err := loadTraceEvidenceLifecycleEvents(ctx, tx, input.TeamID, root.SpaceID, lifecycleIDs, remaining+1)
+			if err != nil {
+				return err
+			}
+			result.Lifecycle = tracecontract.BoundEvents(lifecycle, &remaining, result, "lifecycle")
+		} else {
+			result.Omissions = append(result.Omissions, "lifecycle_excluded_by_request")
+		}
+		documents, err := loadTraceEvidenceSearch(ctx, tx, execution, remaining+1)
+		if err != nil {
+			return err
+		}
+		result.SearchDocuments = tracecontract.BoundEvents(documents, &remaining, result, "search_documents")
+		if !boolDefault(input.IncludeEvidenceContent, true) {
+			result.Omissions = append(result.Omissions, "evidence_content_excluded_by_request")
+		}
+		truncated := root.ContentTruncated
+		for _, occurrence := range result.Occurrences {
+			truncated = truncated || occurrence.ContentTruncated
+		}
+		if truncated {
+			result.Truncated = true
+			result.Omissions = append(result.Omissions, "evidence_content_max_runes")
+		}
+		result.Selection = map[string]any{"evidence_id": root.FragmentID, "space_id": root.SpaceID, "generation": root.SpaceGeneration, "occurrences": len(result.Occurrences), "source_revisions": len(result.SourceRevisions), "decisions": len(result.Decisions), "lifecycle": len(result.Lifecycle), "events_remaining": remaining}
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return results, nil
-}
-
-func traceEvidenceInTx(ctx context.Context, tx *gorm.DB, input TraceEvidenceInput, root *TraceEvidenceFragment) (*EvidenceTraceResult, error) {
-	result := &EvidenceTraceResult{Occurrences: []TraceEvidenceFragment{}, SourceRevisions: []tracecontract.TraceSourceRevision{}, Decisions: []tracecontract.TraceEvidenceDecision{}, Lifecycle: []TraceEvidenceLifecycleEvent{}, SearchDocuments: []TraceSearchDocument{}, Omissions: []string{}}
-	result.Evidence = root
-	input.EvidenceID = root.FragmentID
-	execution := traceExecutionInput{Input: input, spaceID: root.SpaceID}
-	remaining := input.MaxEvents
-	occurrenceIDs, err := traceEvidenceOccurrenceIDs(ctx, tx, execution)
-	if err != nil {
-		return nil, err
-	}
-	occurrences, err := loadTraceEvidenceOccurrences(ctx, tx, execution, occurrenceIDs)
-	if err != nil {
-		return nil, err
-	}
-	result.Occurrences = tracecontract.BoundEvents(occurrences, &remaining, result, "occurrences")
-	partitionIDs := append([]string{root.FragmentID}, occurrenceIDs...)
-	partitions, err := loadTracePartitions(ctx, tx, input.TeamID, root.SpaceID, partitionIDs)
-	if err != nil {
-		return nil, err
-	}
-	root.Partition = partitions[root.FragmentID]
-	for i := range result.Occurrences {
-		result.Occurrences[i].Partition = partitions[result.Occurrences[i].OccurrenceID]
-	}
-	sources := []string{}
-	if root.SourceID != "" {
-		sources = append(sources, root.SourceID)
-	}
-	for _, occurrence := range result.Occurrences {
-		if occurrence.SourceID != "" {
-			sources = append(sources, occurrence.SourceID)
-		}
-	}
-	revisions, err := loadTraceSourceRevisions(ctx, tx, execution, sources, remaining+1)
-	if err != nil {
-		return nil, err
-	}
-	result.SourceRevisions = tracecontract.BoundEvents(revisions, &remaining, result, "source_revisions")
-	decisions, err := loadTraceEvidenceDecisions(ctx, tx, execution, remaining+1)
-	if err != nil {
-		return nil, err
-	}
-	result.Decisions = tracecontract.BoundEvents(decisions, &remaining, result, "decisions")
-	if boolDefault(input.IncludeTransitions, true) {
-		lifecycleIDs := []string{root.FragmentID}
-		for _, occurrence := range occurrences {
-			lifecycleIDs = append(lifecycleIDs, occurrence.OccurrenceID)
-		}
-		lifecycle, err := loadTraceEvidenceLifecycleEvents(ctx, tx, input.TeamID, root.SpaceID, lifecycleIDs, remaining+1)
-		if err != nil {
-			return nil, err
-		}
-		result.Lifecycle = tracecontract.BoundEvents(lifecycle, &remaining, result, "lifecycle")
-	} else {
-		result.Omissions = append(result.Omissions, "lifecycle_excluded_by_request")
-	}
-	documents, err := loadTraceEvidenceSearch(ctx, tx, execution, remaining+1)
-	if err != nil {
-		return nil, err
-	}
-	result.SearchDocuments = tracecontract.BoundEvents(documents, &remaining, result, "search_documents")
-	if !boolDefault(input.IncludeEvidenceContent, true) {
-		result.Omissions = append(result.Omissions, "evidence_content_excluded_by_request")
-	}
-	truncated := root.ContentTruncated
-	for _, occurrence := range result.Occurrences {
-		truncated = truncated || occurrence.ContentTruncated
-	}
-	if truncated {
-		result.Truncated = true
-		result.Omissions = append(result.Omissions, "evidence_content_max_runes")
-	}
-	result.Selection = map[string]any{"evidence_id": root.FragmentID, "space_id": root.SpaceID, "generation": root.SpaceGeneration, "occurrences": len(result.Occurrences), "source_revisions": len(result.SourceRevisions), "decisions": len(result.Decisions), "lifecycle": len(result.Lifecycle), "events_remaining": remaining}
 	return result, nil
 }
 
-func loadTraceEvidenceRoots(ctx context.Context, tx *gorm.DB, input TraceEvidenceInput, ids []string) (map[string]*TraceEvidenceFragment, error) {
+func loadTraceEvidenceRoot(ctx context.Context, tx *gorm.DB, input TraceEvidenceInput) (*TraceEvidenceFragment, error) {
 	include := boolDefault(input.IncludeEvidenceContent, true)
-	rows, err := tx.WithContext(ctx).Raw(`SELECT selected.fragment_id::text,fragment.team_id::text,fragment.fragment_id::text,fragment.ingest_id::text,
+	var row TraceEvidenceFragment
+	var metadata, sessionJSON string
+	err := tx.WithContext(ctx).Raw(`SELECT fragment.team_id::text,fragment.fragment_id::text,fragment.ingest_id::text,
         fragment.owner_profile_id::text,fragment.space_id::text,fragment.space_generation,
         COALESCE(fragment.source_id::text,''),COALESCE(fragment.source_revision_id::text,''),COALESCE(source.source_key,''),
         COALESCE(source.source_kind,''),COALESCE(revision.revision_token,''),COALESCE(source.current_revision_id::text,''),fragment.evidence_index,
@@ -169,38 +143,29 @@ func loadTraceEvidenceRoots(ctx context.Context, tx *gorm.DB, input TraceEvidenc
           AND revision.owner_profile_id=fragment.owner_profile_id AND revision.space_id=fragment.space_id
         LEFT JOIN session_submissions AS session ON session.team_id=fragment.team_id AND session.submission_id=fragment.ingest_id
           AND session.owner_profile_id=fragment.owner_profile_id AND session.space_id=fragment.space_id AND session.space_generation=fragment.space_generation
-        WHERE selected.team_id=?::uuid AND selected.fragment_id=ANY(?::uuid[])
+        WHERE selected.team_id=?::uuid AND selected.fragment_id=?::uuid
           AND (space.kind='team_shared' OR dense_mem_space_allowed(space.id))
           AND `+activeSemanticSpaceGenerationSQL("selected")+` AND `+activeSemanticSpaceGenerationSQL("fragment")+`
           AND (source.source_id IS NULL OR `+activeSemanticSpaceGenerationSQL("source")+`)
-          AND (revision.source_revision_id IS NULL OR `+activeSemanticSpaceGenerationSQL("revision")+`)`, include, input.MaxFragmentContentRunes, include, input.MaxFragmentContentRunes, input.TeamID, pq.Array(ids)).Rows()
+          AND (revision.source_revision_id IS NULL OR `+activeSemanticSpaceGenerationSQL("revision")+`)
+        LIMIT 1`, include, input.MaxFragmentContentRunes, include, input.MaxFragmentContentRunes, input.TeamID, input.EvidenceID).Row().Scan(
+		&row.TeamID, &row.FragmentID, &row.IngestID, &row.OwnerProfileID, &row.SpaceID, &row.SpaceGeneration,
+		&row.SourceID, &row.SourceRevisionID, &row.SourceKey, &row.SourceKind, &row.RevisionToken, &row.CurrentRevisionID, &row.EvidenceIndex,
+		&row.Content, &row.ContentHash, &row.ContentTruncated, &row.SourceType, &row.Authority, &row.SourceRef, pq.Array(&row.Labels), &metadata, &row.CreatedAt, &sessionJSON)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	roots := make(map[string]*TraceEvidenceFragment, len(ids))
-	for rows.Next() {
-		var id, metadata, sessionJSON string
-		var row TraceEvidenceFragment
-		if err := rows.Scan(&id,
-			&row.TeamID, &row.FragmentID, &row.IngestID, &row.OwnerProfileID, &row.SpaceID, &row.SpaceGeneration,
-			&row.SourceID, &row.SourceRevisionID, &row.SourceKey, &row.SourceKind, &row.RevisionToken, &row.CurrentRevisionID, &row.EvidenceIndex,
-			&row.Content, &row.ContentHash, &row.ContentTruncated, &row.SourceType, &row.Authority, &row.SourceRef, pq.Array(&row.Labels), &metadata, &row.CreatedAt, &sessionJSON); err != nil {
-			return nil, err
-		}
-		row.ContentOmitted = !include
-		if err := json.Unmarshal([]byte(metadata), &row.Metadata); err != nil {
-			return nil, err
-		}
-		if sessionJSON != "null" {
-			row.Session = &tracecontract.SessionProvenance{}
-			if err := json.Unmarshal([]byte(sessionJSON), row.Session); err != nil {
-				return nil, err
-			}
-		}
-		roots[id] = &row
+	row.ContentOmitted = !include
+	if err := json.Unmarshal([]byte(metadata), &row.Metadata); err != nil {
+		return nil, err
 	}
-	return roots, rows.Err()
+	if sessionJSON != "null" {
+		row.Session = &tracecontract.SessionProvenance{}
+		if err := json.Unmarshal([]byte(sessionJSON), row.Session); err != nil {
+			return nil, err
+		}
+	}
+	return &row, nil
 }
 
 func traceEvidenceOccurrenceIDs(ctx context.Context, tx *gorm.DB, input traceExecutionInput) ([]string, error) {

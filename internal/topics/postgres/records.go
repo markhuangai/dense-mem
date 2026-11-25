@@ -55,8 +55,11 @@ func (d *storedRecordDecoder) decode(body []byte) (topic.Record, error) {
 
 func catalogRevision(tx *gorm.DB, fence scope) (int64, error) {
 	var revision int64
-	err := tx.Raw(`SELECT COALESCE(max(revision),0) FROM topic_publications WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?`,
-		fence.TeamID, fence.SpaceID, fence.Generation).Row().Scan(&revision)
+	err := tx.Raw(`SELECT revision FROM topic_catalog_heads WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?`, fence.TeamID, fence.SpaceID, fence.Generation).Row().Scan(&revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		notePublicationRevision(tx, 0)
+		return 0, nil
+	}
 	if err == nil {
 		notePublicationRevision(tx, revision)
 	}
@@ -218,7 +221,7 @@ func (s *Store) currentView(tx *gorm.DB, fence scope, record topic.Record) (topi
 }
 
 func (s *Store) organizationViews(tx *gorm.DB, fence scope, records []topic.Record) ([]topic.RecordView, error) {
-	result := make([]topic.RecordView, 0, len(records))
+	var result []topic.RecordView
 	for len(records) > 0 {
 		count := min(topic.MaxOrganizationSources, len(records))
 		for {
@@ -402,9 +405,12 @@ func (s *Store) ListRecords(ctx context.Context, teamID string, kind topic.Kind,
 			result.NextID = records[limit-1].ID
 			records = records[:limit]
 		}
-		result.Records, err = s.organizationViews(tx, fence, records)
-		if err != nil {
-			return err
+		for _, record := range records {
+			view, err := s.currentView(tx, fence, record)
+			if err != nil {
+				return err
+			}
+			result.Records = append(result.Records, view)
 		}
 		if err := attachCommunityPlacement(tx, fence, result.Records); err != nil {
 			return err

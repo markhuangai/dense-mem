@@ -161,119 +161,119 @@
       "package": "./internal/recall/postgres",
       "run": "^TestRecallOntologyGroupingKnownIDsAndStaleSources$",
       "phase": "precheck",
-      "source": "internal/recall/postgres/recall_topic_integration_test.go"
+      "source": "internal/recall/postgres/recall_ontology_integration_test.go"
     },
     {
       "id": "repository/TestRecallOntologyDiscoveryAliasesAndTemporalFallback",
       "package": "./internal/recall/postgres",
       "run": "^TestRecallOntologyDiscoveryAliasesAndTemporalFallback$",
       "phase": "precheck",
-      "source": "internal/recall/postgres/recall_topic_integration_test.go"
+      "source": "internal/recall/postgres/recall_ontology_integration_test.go"
     },
     {
       "id": "repository/TestRecallOntologyOptionalFailureAndRequiredFailureRemainDistinct",
       "package": "./internal/recall/postgres",
       "run": "^TestRecallOntologyOptionalFailureAndRequiredFailureRemainDistinct$",
       "phase": "precheck",
-      "source": "internal/recall/postgres/recall_topic_integration_test.go"
+      "source": "internal/recall/postgres/recall_ontology_integration_test.go"
     },
     {
       "id": "repository/TestRecallOntologyPrivateForeignAndOldGenerationSources",
       "package": "./internal/recall/postgres",
       "run": "^TestRecallOntologyPrivateForeignAndOldGenerationSources$",
       "phase": "precheck",
-      "source": "internal/recall/postgres/recall_topic_scope_integration_test.go"
+      "source": "internal/recall/postgres/recall_ontology_scope_integration_test.go"
     },
     {
       "id": "repository/TestRecallOntologyHydrationUsesOneSnapshotAcrossRetraction",
       "package": "./internal/recall/postgres",
       "run": "^TestRecallOntologyHydrationUsesOneSnapshotAcrossRetraction$",
       "phase": "precheck",
-      "source": "internal/recall/postgres/recall_topic_scope_integration_test.go"
+      "source": "internal/recall/postgres/recall_ontology_scope_integration_test.go"
     },
     {
       "id": "repository/TestRecallOntologySourceRevisionCorrectionAndDefinitionStaleness",
       "package": "./internal/recall/postgres",
       "run": "^TestRecallOntologySourceRevisionCorrectionAndDefinitionStaleness$",
       "phase": "precheck",
-      "source": "internal/recall/postgres/recall_topic_scope_integration_test.go"
+      "source": "internal/recall/postgres/recall_ontology_scope_integration_test.go"
     },
     {
       "id": "repository/TestRecallOntologyFrozenCohort",
       "package": "./internal/recall/postgres",
       "run": "^TestRecallOntologyFrozenCohort$",
       "phase": "precheck",
-      "source": "internal/recall/postgres/recall_topic_cohort_integration_test.go"
+      "source": "internal/recall/postgres/recall_ontology_cohort_integration_test.go"
     },
     {
       "id": "repository/TestRecallOntologyPunctuatedKeysAndAliases",
       "package": "./internal/recall/postgres",
       "run": "^TestRecallOntologyPunctuatedKeysAndAliases$",
       "phase": "precheck",
-      "source": "internal/recall/postgres/recall_topic_integration_test.go"
+      "source": "internal/recall/postgres/recall_ontology_integration_test.go"
     },
     {
       "id": "repository/TestRecallOntologyFeedbackAlternatesDoNotInflateResults",
       "package": "./internal/recall/postgres",
       "run": "^TestRecallOntologyFeedbackAlternatesDoNotInflateResults$",
       "phase": "precheck",
-      "source": "internal/recall/postgres/recall_topic_integration_test.go"
+      "source": "internal/recall/postgres/recall_ontology_integration_test.go"
     },
     {
       "id": "repository/TestRecallOntologyReaderResetsBetweenTransactions",
       "package": "./internal/recall/postgres",
       "run": "^TestRecallOntologyReaderResetsBetweenTransactions$",
       "phase": "precheck",
-      "source": "internal/recall/postgres/recall_topic_scope_integration_test.go"
+      "source": "internal/recall/postgres/recall_ontology_scope_integration_test.go"
     },
     {
       "id": "repository/TestRecallOntologyDiscoveryHydrationEnforcesEligibilityAndState",
       "package": "./internal/recall/postgres",
       "run": "^TestRecallOntologyDiscoveryHydrationEnforcesEligibilityAndState$",
       "phase": "precheck",
-      "source": "internal/recall/postgres/recall_topic_scope_integration_test.go"
+      "source": "internal/recall/postgres/recall_ontology_scope_integration_test.go"
     },
     {
       "id": "repository/TestRecallOntologyMigratedAliasRemainsIneligibleWithCurrentProjection",
       "package": "./internal/recall/postgres",
       "run": "^TestRecallOntologyMigratedAliasRemainsIneligibleWithCurrentProjection$",
       "phase": "precheck",
-      "source": "internal/recall/postgres/recall_topic_scope_integration_test.go"
+      "source": "internal/recall/postgres/recall_ontology_scope_integration_test.go"
     },
     {
       "id": "repository/TestRecallOntologyPrefetchedGroupsReadNewEvidenceAndReauthorize",
       "package": "./internal/recall/postgres",
       "run": "^TestRecallOntologyPrefetchedGroupsReadNewEvidenceAndReauthorize$",
       "phase": "precheck",
-      "source": "internal/recall/postgres/recall_topic_scope_integration_test.go"
+      "source": "internal/recall/postgres/recall_ontology_scope_integration_test.go"
     },
     {
       "id": "repository/TestRecallOntologyManagementLockedCohort",
       "package": "./internal/recall/postgres",
       "run": "^TestRecallOntologyManagementLockedCohort$",
       "phase": "precheck",
-      "source": "internal/recall/postgres/topic_management_cohort_integration_test.go"
+      "source": "internal/recall/postgres/ontology_management_cohort_integration_test.go"
     },
     {
       "id": "repository/TestRecallOntologyScoringDoesNotBoostExistingCandidates",
       "package": "./internal/recall/postgres",
       "run": "^TestRecallOntologyScoringDoesNotBoostExistingCandidates$",
       "phase": "precheck",
-      "source": "internal/recall/postgres/recall_topic_scoring_integration_test.go"
+      "source": "internal/recall/postgres/recall_ontology_scoring_integration_test.go"
     },
     {
       "id": "repository/TestRecallOntologyScoringUsesQueryAndBoundedSources",
       "package": "./internal/recall/postgres",
       "run": "^TestRecallOntologyScoringUsesQueryAndBoundedSources$",
       "phase": "precheck",
-      "source": "internal/recall/postgres/recall_topic_scoring_integration_test.go"
+      "source": "internal/recall/postgres/recall_ontology_scoring_integration_test.go"
     },
     {
       "id": "repository/TestRecallOntologyScoringKeepsSourceLookupsBounded",
       "package": "./internal/recall/postgres",
       "run": "^TestRecallOntologyScoringKeepsSourceLookupsBounded$",
       "phase": "precheck",
-      "source": "internal/recall/postgres/recall_topic_scoring_integration_test.go"
+      "source": "internal/recall/postgres/recall_ontology_scoring_integration_test.go"
     },
     {
       "id": "recall/TestEvidenceOnlyPostgresTopicFiltersRespectRuntimeDisable",

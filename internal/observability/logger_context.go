@@ -8,16 +8,17 @@ import (
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 )
 
-func trustedContextAttrs(ctx context.Context, protector credentialSnapshotter) map[string]string {
+func trustedContextAttrs(ctx context.Context, protector *CredentialProtector) map[string]string {
 	attrs := make(map[string]string, 3)
 	if ctx == nil {
 		return attrs
 	}
+	secrets := AuthenticationSecretsFromContext(ctx)
 	_, hasActor := requestctx.ActorFromContext(ctx)
 	if id := correlation.FromContext(ctx); id != "" &&
 		(!correlation.IsClientProvided(ctx) || correlation.IsSafeClientID(id)) &&
 		(!correlation.IsClientProvided(ctx) || hasActor || requestctx.AuthenticationVerifiedFromContext(ctx)) {
-		attrs["correlation_id"] = protectTrustedCorrelationID(id, protector)
+		attrs["correlation_id"] = protectTrustedCorrelationID(id, protector, secrets)
 	}
 	if actor, ok := requestctx.ActorFromContext(ctx); ok {
 		if actor.TeamID != uuid.Nil {

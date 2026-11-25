@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { reconstructDiagnosticBody } from "./topic_assessment_diagnostics.mjs";
+import { reconstructDiagnosticBody } from "./ontology_assessment_diagnostics.mjs";
 
 const userURL = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");
 const controlURL = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");

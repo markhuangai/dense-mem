@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/config"
 	cryptoutil "github.com/markhuangai/dense-mem/internal/crypto"
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -552,7 +553,7 @@ func TestDirectorySCIMFailureRetainsOuterBearerSecretContext(t *testing.T) {
 }
 
 type directorySCIMRepositoryStub struct {
-	accessservice.DirectoryIdentityStore
+	accesspostgres.DirectoryIdentityRepository
 	connector       *domain.DirectoryConnector
 	users           map[uuid.UUID]*domain.DirectoryUser
 	groups          map[uuid.UUID]*domain.DirectoryGroup

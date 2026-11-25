@@ -141,13 +141,13 @@ func TestPrometheusTelemetryService_QueriesTypedScope(t *testing.T) {
 
 	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		queriesMu.Lock()
-		queries = append(queries, r.FormValue("query"))
+		queries = append(queries, r.URL.Query().Get("query"))
 		queriesMu.Unlock()
 		switch r.URL.Path {
 		case "/api/v1/query":
-			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[1770000000,"42"]}]}}`))
+			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"value":[1770000000,"42"]}]}}`))
 		case "/api/v1/query_range":
-			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"matrix","result":[{"values":[[1770000000,"0.5"],[1770000060,"1.25"]]}]}}`))
+			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"values":[[1770000000,"0.5"],[1770000060,"1.25"]]}]}}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -242,9 +242,9 @@ func TestPrometheusTelemetryService_SnapshotTimeoutBoundsSequentialQueries(t *te
 		time.Sleep(25 * time.Millisecond)
 		switch r.URL.Path {
 		case "/api/v1/query":
-			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[1770000000,"42"]}]}}`))
+			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"value":[1770000000,"42"]}]}}`))
 		case "/api/v1/query_range":
-			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"matrix","result":[{"values":[[1770000000,"0.5"]]}]}}`))
+			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"values":[[1770000000,"0.5"]]}]}}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -352,15 +352,15 @@ func TestPrometheusTelemetryService_ValidationBranches(t *testing.T) {
 
 func TestPrometheusTelemetryServiceKeepsSuccessfulItemsWhenOneQueryFails(t *testing.T) {
 	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.FormValue("query"), "status_class") {
+		if strings.Contains(r.URL.Query().Get("query"), "status_class") {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
 		if r.URL.Path == "/api/v1/query_range" {
-			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"matrix","result":[{"values":[[1770000000,"1"],[1770000060,"1"]]}]}}`))
+			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"values":[[1770000000,"1"],[1770000060,"1"]]}]}}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[1770000000,"1"]}]}}`))
+		_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"value":[1770000000,"1"]}]}}`))
 	}))
 	defer prom.Close()
 
@@ -386,20 +386,20 @@ func TestPrometheusTelemetryServiceKeepsSuccessfulItemsWhenOneQueryFails(t *test
 
 func TestPrometheusTelemetryServicePreservesSparseFirstObservations(t *testing.T) {
 	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		query := r.FormValue("query")
+		query := r.URL.Query().Get("query")
 		if r.URL.Path == "/api/v1/query_range" {
 			if strings.Contains(query, "densemem_http_requests_total") {
-				_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"matrix","result":[{"values":[[1770000000,"0"],[1770000060,"0.5"]]}]}}`))
+				_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"values":[[1770000000,"0"],[1770000060,"0.5"]]}]}}`))
 				return
 			}
-			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"matrix","result":[]}}`))
+			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[]}}`))
 			return
 		}
 		if strings.Contains(query, "densemem_http_requests_total") {
-			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[1770000060,"1"]}]}}`))
+			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"value":[1770000060,"1"]}]}}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+		_, _ = w.Write([]byte(`{"status":"success","data":{"result":[]}}`))
 	}))
 	defer prom.Close()
 
@@ -434,10 +434,10 @@ func TestPrometheusTelemetryServiceLimitsQueryConcurrency(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 		active.Add(-1)
 		if r.URL.Path == "/api/v1/query_range" {
-			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"matrix","result":[]}}`))
+			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[]}}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[]}}`))
+		_, _ = w.Write([]byte(`{"status":"success","data":{"result":[]}}`))
 	}))
 	defer prom.Close()
 
@@ -455,10 +455,10 @@ func TestPrometheusTelemetryServiceLimitsQueryConcurrency(t *testing.T) {
 func TestPrometheusTelemetryServiceReportsFeatureAndScopeStates(t *testing.T) {
 	prom := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/query_range" {
-			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"matrix","result":[{"values":[[1770000000,"1"]]}]}}`))
+			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"values":[[1770000000,"1"]]}]}}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[1770000000,"1"]}]}}`))
+		_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"value":[1770000000,"1"]}]}}`))
 	}))
 	defer prom.Close()
 
@@ -695,6 +695,15 @@ type captureTelemetryLogger struct {
 	attrs       []string
 	warnMessage string
 	warnAttrs   []string
+}
+
+func containsTelemetryAttr(attrs []string, want string) bool {
+	for _, attr := range attrs {
+		if attr == want {
+			return true
+		}
+	}
+	return false
 }
 
 func hasTelemetryAttrPrefix(attrs []string, prefix string) bool {

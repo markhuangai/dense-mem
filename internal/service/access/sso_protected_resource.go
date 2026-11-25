@@ -12,12 +12,15 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 )
 
 var (
 	ErrOAuthAccessDenied error = oauthAccessDeniedError{}
 	ErrOAuthTeamRequired error = oauthTeamRequiredError{}
 )
+
+const oauthValidatorReconfigurationLimit = 4
 
 type oauthAccessDeniedError struct{}
 
@@ -33,13 +36,10 @@ type OAuthProtectedResourceMetadata struct {
 }
 
 type oauthProtectedResourceState struct {
-	mu         sync.RWMutex
-	validators map[string]oauthValidatorEntry
-}
-
-type oauthValidatorEntry struct {
+	mu          sync.RWMutex
 	validator   *OAuthProtectedResourceValidator
 	fingerprint [sha256.Size]byte
+	configured  bool
 }
 
 type oauthProviderSnapshot struct {
@@ -67,26 +67,26 @@ func (s *SSOService) AuthenticateOAuthBearer(ctx context.Context, raw string, pa
 	if s == nil || s.repo == nil || !IsJWTBearer(raw) {
 		return nil, ErrOAuthTokenInvalid
 	}
-	token, err := parseOAuthAccessToken(raw)
+	issuer, err := unverifiedOAuthIssuer(raw)
 	if err != nil {
 		return nil, ErrOAuthTokenInvalid
 	}
-	snapshot, err := s.oauthProvidersForIssuer(ctx, token.issuer)
+	snapshot, err := s.oauthProviderSnapshot(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if _, unavailable := snapshot.unavailableIssuers[token.issuer]; unavailable {
+	if _, unavailable := snapshot.unavailableIssuers[issuer]; unavailable {
 		return nil, ErrOAuthProviderUnavailable
 	}
 	if len(snapshot.profiles) == 0 {
 		return nil, ErrOAuthTokenInvalid
 	}
 
-	validated, provider, err := s.validateOAuthBearer(ctx, token, snapshot)
+	validated, provider, err := s.validateOAuthBearer(ctx, raw, snapshot)
 	if err != nil {
 		return nil, err
 	}
-	identitySubject, err := requiredExactOAuthString(token.claims, provider.IdentityClaim)
+	identitySubject, err := validatedOAuthIdentityClaim(raw, provider.IdentityClaim)
 	if err != nil {
 		return nil, err
 	}
@@ -173,18 +173,6 @@ func (s *SSOService) oauthProviderSnapshot(ctx context.Context) (oauthProviderSn
 	if err != nil {
 		return oauthProviderSnapshot{}, ErrOAuthProviderUnavailable
 	}
-	return validatedOAuthProviders(providers)
-}
-
-func (s *SSOService) oauthProvidersForIssuer(ctx context.Context, issuer string) (oauthProviderSnapshot, error) {
-	providers, err := s.repo.ListEnabledOAuthIssuer(ctx, issuer)
-	if err != nil {
-		return oauthProviderSnapshot{}, ErrOAuthProviderUnavailable
-	}
-	return validatedOAuthProviders(providers)
-}
-
-func validatedOAuthProviders(providers []*domain.SSOProvider) (oauthProviderSnapshot, error) {
 	profilesByIssuer := make(map[string]domain.OAuthProtectedResourceProfile, len(providers))
 	byName := make(map[string]*domain.SSOProvider, len(providers))
 	unavailableIssuers := make(map[string]struct{})
@@ -239,47 +227,77 @@ func validatedOAuthProviders(providers []*domain.SSOProvider) (oauthProviderSnap
 	}, nil
 }
 
-func (s *SSOService) validateOAuthBearer(ctx context.Context, token parsedOAuthAccessToken, snapshot oauthProviderSnapshot) (*domain.OAuthValidatedToken, *domain.SSOProvider, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, nil, err
-	}
-	s.oauth.mu.RLock()
-	entry := s.oauth.validators[token.issuer]
-	s.oauth.mu.RUnlock()
-	if entry.validator == nil || entry.fingerprint != snapshot.fingerprint {
-		s.oauth.mu.Lock()
-		cached := s.oauth.validators[token.issuer]
-		if cached.validator == nil || cached.fingerprint != snapshot.fingerprint {
-			validator, err := NewOAuthProtectedResourceValidator(snapshot.profiles, OAuthProtectedResourceValidatorOptions{
-				HTTPClient: s.httpClient, Now: s.now,
-			})
+func (s *SSOService) validateOAuthBearer(ctx context.Context, raw string, snapshot oauthProviderSnapshot) (*domain.OAuthValidatedToken, *domain.SSOProvider, error) {
+	for attempt := 0; attempt < oauthValidatorReconfigurationLimit; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		s.oauth.mu.RLock()
+		if s.oauth.configured && s.oauth.validator != nil && s.oauth.fingerprint == snapshot.fingerprint {
+			validated, err := s.oauth.validator.Validate(ctx, raw)
 			if err != nil {
+				s.oauth.mu.RUnlock()
+				return nil, nil, err
+			}
+			provider := snapshot.providers[validated.ProfileName]
+			s.oauth.mu.RUnlock()
+			if provider == nil || provider.IssuerURL != validated.Issuer {
+				return nil, nil, ErrOAuthTokenInvalid
+			}
+			return validated, provider, nil
+		}
+		s.oauth.mu.RUnlock()
+
+		s.oauth.mu.Lock()
+		if err := ctx.Err(); err != nil {
+			s.oauth.mu.Unlock()
+			return nil, nil, err
+		}
+		if !s.oauth.configured || s.oauth.validator == nil || s.oauth.fingerprint != snapshot.fingerprint {
+			if s.oauth.validator == nil {
+				validator, err := NewOAuthProtectedResourceValidator(snapshot.profiles, OAuthProtectedResourceValidatorOptions{
+					HTTPClient: s.httpClient,
+					Now:        s.now,
+				})
+				if err != nil {
+					s.oauth.mu.Unlock()
+					return nil, nil, ErrOAuthProviderUnavailable
+				}
+				s.oauth.validator = validator
+			} else if err := s.oauth.validator.Configure(snapshot.profiles); err != nil {
 				s.oauth.mu.Unlock()
 				return nil, nil, ErrOAuthProviderUnavailable
 			}
-			// Share key material before publishing the new configuration snapshot.
-			validator.retainCompatibleJWKS(cached.validator, token.issuer)
-			if s.oauth.validators == nil {
-				s.oauth.validators = make(map[string]oauthValidatorEntry)
-			}
-			if len(s.oauth.validators) >= domain.OAuthProtectedResourceMaximumProfiles {
-				clear(s.oauth.validators)
-			}
-			cached = oauthValidatorEntry{validator: validator, fingerprint: snapshot.fingerprint}
-			s.oauth.validators[token.issuer] = cached
+			s.oauth.fingerprint = snapshot.fingerprint
+			s.oauth.configured = true
 		}
-		entry = cached
 		s.oauth.mu.Unlock()
 	}
-	validated, err := entry.validator.validateParsed(ctx, token)
+	return nil, nil, ErrOAuthProviderUnavailable
+}
+
+func validatedOAuthIdentityClaim(raw, claimName string) (string, error) {
+	_, claimsJSON, err := strictOAuthJWTParts(raw)
 	if err != nil {
-		return nil, nil, err
+		return "", ErrOAuthTokenInvalid
 	}
-	provider := snapshot.providers[validated.ProfileName]
-	if provider == nil || provider.IssuerURL != validated.Issuer {
-		return nil, nil, ErrOAuthTokenInvalid
+	var claims map[string]json.RawMessage
+	if err := json.Unmarshal(claimsJSON, &claims); err != nil || claims == nil {
+		return "", ErrOAuthTokenInvalid
 	}
-	return validated, provider, nil
+	return requiredExactOAuthString(claims, claimName)
+}
+
+func unverifiedOAuthIssuer(raw string) (string, error) {
+	headerJSON, claimsJSON, err := strictOAuthJWTParts(raw)
+	if err != nil || jsonstrict.RejectDuplicateFields(headerJSON) != nil || jsonstrict.RejectDuplicateFields(claimsJSON) != nil {
+		return "", ErrOAuthTokenInvalid
+	}
+	var claims map[string]json.RawMessage
+	if err := json.Unmarshal(claimsJSON, &claims); err != nil || claims == nil {
+		return "", ErrOAuthTokenInvalid
+	}
+	return requiredExactOAuthString(claims, "iss")
 }
 
 func oauthValidatedTeamID(raw string) (*uuid.UUID, error) {

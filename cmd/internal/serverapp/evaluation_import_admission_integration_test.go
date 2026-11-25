@@ -33,6 +33,7 @@ import (
 	knowledgepostgres "github.com/markhuangai/dense-mem/internal/knowledge/postgres"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
+	rememberprocessor "github.com/markhuangai/dense-mem/internal/remember/service/processor"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
@@ -334,7 +335,7 @@ func newImportAdmissionService(t *testing.T, pool int, authenticated bool) *impo
 	h.release = sync.OnceFunc(func() { close(gate) })
 	t.Cleanup(h.release)
 	store := knowledgepostgres.NewStore(app, rls)
-	processor := rememberapp.NewSynchronousProcessor(rememberapp.ProcessorDependencies{
+	processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
 		Ledger: store, Assessor: h.provider,
 		EmbeddingExecutor: semanticwrite.NewProviderExecutor(rememberProcessorIntegrationSearchEmbedder{model: model, dimensions: dimensions}),
 		Limits:            assessor.DefaultSemanticAssessmentLimits(), Metrics: observability.NoopDiscoverabilityMetrics(),
@@ -357,6 +358,7 @@ func newImportAdmissionService(t *testing.T, pool int, authenticated bool) *impo
 		})
 		e.Use(middleware.AuthMiddlewareWithOptions(credentials, nil, nil, middleware.AuthOptions{CredentialVerifier: auth.CredentialVerifier, CredentialLookupPrefixes: crypto.GetLookupPrefixes}))
 		e.Use(middleware.TeamResolutionMiddleware(accessservice.NewTeamService(accesspostgres.NewTeamRepository(app, rls), nil, nil)))
+		e.Use(middleware.AuthorizeTeam(middleware.NewTeamAuthorizationService(nil)))
 		e.Use(middleware.LastUsedMiddleware(h.activity))
 	}
 	mcp := handler.NewMCPHandler(reg, nil)

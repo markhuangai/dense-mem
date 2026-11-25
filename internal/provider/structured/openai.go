@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -222,7 +223,7 @@ func (v *OpenAI) Complete(ctx context.Context, request modelprovider.StructuredR
 		return modelprovider.StructuredResult{}, &RateLimitError{
 			Provider:   openAIVerifierProvider,
 			Message:    "provider returned HTTP 429",
-			RetryAfter: modelprovider.RetryAfterSeconds(httpResp.Header.Get("Retry-After"), time.Now()),
+			RetryAfter: openAIRetryAfterSeconds(httpResp.Header.Get("Retry-After"), time.Now()),
 		}
 	}
 	if httpResp.StatusCode != http.StatusOK {
@@ -332,6 +333,32 @@ func openAIHTTPFailureClass(statusCode int) string {
 	}
 }
 
+func openAIRetryAfterSeconds(value string, now time.Time) int {
+	value = strings.TrimSpace(value)
+	if seconds, err := strconv.Atoi(value); err == nil {
+		if seconds >= int(providerFailureMaxRetryAfter/time.Second) {
+			return int(providerFailureMaxRetryAfter / time.Second)
+		}
+		if seconds > 0 {
+			return seconds
+		}
+		return 0
+	}
+	retryAt, err := http.ParseTime(value)
+	if err != nil {
+		return 0
+	}
+	delay := retryAt.Sub(now)
+	if delay <= 0 {
+		return 0
+	}
+	seconds := int((delay + time.Second - 1) / time.Second)
+	if seconds >= int(providerFailureMaxRetryAfter/time.Second) {
+		return int(providerFailureMaxRetryAfter / time.Second)
+	}
+	return seconds
+}
+
 func openAIRequestTimedOutOrCanceled(ctx context.Context, err error) bool {
 	if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {
 		return true
@@ -339,6 +366,8 @@ func openAIRequestTimedOutOrCanceled(ctx context.Context, err error) bool {
 	var timeout interface{ Timeout() bool }
 	return errors.As(err, &timeout) && timeout.Timeout()
 }
+
+const providerFailureMaxRetryAfter = 5 * time.Minute
 
 type ProviderError = modelprovider.ProviderError
 type TimeoutError = modelprovider.TimeoutError

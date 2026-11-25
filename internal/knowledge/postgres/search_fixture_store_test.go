@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
@@ -78,9 +79,11 @@ func (s *searchFixtureStore) FinishSearchReconciliationRun(ctx context.Context, 
 	return s.projection.FinishSearchReconciliationRun(ctx, input)
 }
 func (s *searchFixtureStore) GetSearchConvergence(ctx context.Context, input searchmaintenance.SearchConvergenceInput) (*searchmaintenance.SearchConvergence, error) {
-	return s.read.GetSearchConvergence(ctx, input)
+	return s.projection.GetSearchConvergence(ctx, input)
 }
 
 var _ searchcontract.SearchRepository = (*searchFixtureStore)(nil)
 var _ knowledgecontract.SearchDocumentOwner = (*searchFixtureStore)(nil)
 var _ knowledgecontract.SearchProjectionRepository = (*searchFixtureStore)(nil)
+
+func fixtureUUID(value string) uuid.UUID { return uuid.MustParse(value) }

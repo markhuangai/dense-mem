@@ -15,7 +15,7 @@ func bindMemoryPackTool(tool Tool, deps Dependencies) Tool {
 		if deps.MemoryPackBindings.Service == nil {
 			return nil, ErrToolUnavailable
 		}
-		if err := validateBindingInput(ctx, tool, input); err != nil {
+		if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
 			return nil, fmt.Errorf("export_memory_pack: invalid input: %w", err)
 		}
 		var req memorypackapp.ExportRequest

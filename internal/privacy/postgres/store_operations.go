@@ -532,7 +532,7 @@ func (r *PrivateMemoryRepositoryImpl) ClaimNext(ctx context.Context, workerID st
 }
 
 func (r *PrivateMemoryRepositoryImpl) ExecuteClaim(ctx context.Context, operationID uuid.UUID, workerID string, fence int64) (*domain.PrivateMemoryErasureOperation, error) {
-	ordered, lineage, err := r.preparedManifest(ctx)
+	ordered, err := r.preparedManifest(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -612,7 +612,7 @@ func (r *PrivateMemoryRepositoryImpl) ExecuteClaim(ctx context.Context, operatio
 		if err := tx.WithContext(ctx).Exec(`SET CONSTRAINTS ALL DEFERRED`).Error; err != nil {
 			return err
 		}
-		counts, err := purgePrivateMemoryLineageTx(ctx, tx, space, operation.ID, operation.LegacySourceSpaceID, destinations, ordered, lineage)
+		counts, err := purgePrivateMemoryLineageTx(ctx, tx, space, operation.ID, operation.LegacySourceSpaceID, destinations, ordered)
 		if err != nil {
 			return err
 		}
@@ -798,20 +798,19 @@ func (r *PrivateMemoryRepositoryImpl) ReleaseClaim(ctx context.Context, operatio
 	return wrapPrivateMemoryError("release erasure claim", err)
 }
 
-func (r *PrivateMemoryRepositoryImpl) preparedManifest(ctx context.Context) ([]string, map[string]*privateMigrationTable, error) {
+func (r *PrivateMemoryRepositoryImpl) preparedManifest(ctx context.Context) ([]string, error) {
 	r.manifestMu.RLock()
 	ordered := append([]string(nil), r.ordered...)
-	lineage := r.lineage
 	r.manifestMu.RUnlock()
 	if len(ordered) > 0 {
-		return ordered, lineage, nil
+		return ordered, nil
 	}
 	if err := r.Prepare(ctx); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	r.manifestMu.RLock()
 	defer r.manifestMu.RUnlock()
-	return append([]string(nil), r.ordered...), r.lineage, nil
+	return append([]string(nil), r.ordered...), nil
 }
 
 func validatePrivateMemoryErasureInput(input PrivateMemoryErasureRequest) error {

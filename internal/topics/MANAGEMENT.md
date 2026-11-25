@@ -1,45 +1,73 @@
 # Topics and Community placement
 
-Team managers inspect Topics and their publication history in the team portal.
-Saving requires the write grant. Cookie-authenticated writes require the portal
-CSRF token. MCP remains the external memory contract.
+Team managers use **Topics** in the team portal. The first-party management
+routes live under `/ui/api/topics`. Inspection requires read access. Saving,
+discarding, publishing, and rollback require write access. Cookie-authenticated
+writes require the portal CSRF token. MCP remains the external memory contract.
 
-Select a Topic or create a definition. Change its label, description, aliases,
-or optional parent. Add the changes, enter a reason, and select **Save**. The
-portal sends a bounded edit list to `POST /ui/api/topics/edits` with an operation
-key and each record's current edit version. An active parent can be outside
-the catalog page. The server checks the versions, parent scope, and hierarchy
-before saving the revisions, history, audit and replay in one transaction.
+A manager can edit a Topic's name, description, aliases, and optional broader
+Topic. The server checks that the parent is current and active, prevents cycles,
+and bounds the hierarchy to 32 links. A parent can lie outside the current
+catalog page. Historical override records remain in publication history.
+Managers can remove retired actions from an open draft before reuse.
 
-A version conflict returns 409. Refresh the record, review the current values,
-and apply the changes again. An unchanged operation-key retry returns the
-committed result. A changed body needs a new key. The original owner can read
-older drafts in History. After authorization, the legacy write routes replay
-already committed requests and return 410 for new commands.
+## Save, preview, publish, and roll back
+
+Drafts belong to their authenticated creator. Save an edit against the current
+catalog revision with an audit reason. Preview runs publication checks without
+calling a provider or changing state. It shows up to ten source examples, plus
+counts and a truncation indicator. A stale draft stays open for refresh and
+review. Each accepted command appends a revision. An unchanged operation-key
+retry returns the original result. Changed content with the same key conflicts.
+
+Publication commits revisions, dependencies, audit, replay, and draft completion
+together. Edits can invalidate affected memberships immediately. Topic
+assignment rechecks affected eligible Evidence through the bounded background
+worker. Rollback appends a compensating publication after checking intervening
+revisions and validating restored state. Exact Evidence keeps its own history
+and provenance.
 
 ## Topic assignment and Community placement
 
-Remember publishes validated direct memberships in its Evidence transaction.
-An independent assignment can commit while another Evidence write is running.
-Automatic placement uses the version of the child and optional parent. The
-parent contributes to browsing without expanding Recall. A Topic filter selects
-the union of direct, eligible memberships. Private Evidence is ineligible for
-shared organization.
+With organization enabled, Remember publishes validated direct memberships in
+its Evidence transaction. A passage can join several Topics and can also justify
+a new Topic. A genuinely unclear passage can remain uncategorized. The periodic
+worker revisits eligible Evidence and places Topics under broader Topics or
+records them as standalone. Evidence equivalence has a separate assessment path.
+A pause stops background admissions while foreground assignment and current Topic
+reads are available. Disabling organization defers assignment and Topic reads.
+Ordinary Evidence remains searchable.
 
-Pausing maintenance stops background work while foreground assignment continues.
-Changing organization to disabled takes effect at the next settings read.
+Recall filters on the union of selected Topics' current direct memberships.
+Children do not expand that filter. Related-topic hints count authorized unseen
+Evidence and report truncation. Unavailable selected Topics return
+`topic_unavailable`. Private Evidence is ineligible for shared organization.
 
-## Operator diagnosis and upgrade
+## Operator diagnosis
 
-At TRACE, protected stdout records manager outcomes and diagnostic payload
-chunks. Join the correlation, operation, team and profile IDs, check the chunk
-count, and verify the digest before reading the captured values. A stale Save
-records the expected and observed version. Authorization rejection records the
-outcome without the request body.
+At the default TRACE level, protected JSON stdout carries manager publication
+and provider details. Join `topic_semantic_draft_preview`,
+`topic_semantic_manager_command`, `topic_semantic_manager_rejected`, and
+`topic_semantic_publication_failed` to protected `topic_semantic_publication`
+payload chunks by trusted team/profile, correlation, operation, draft, and
+publication IDs. Where applicable, follow the run, batch, assessment, and
+exchange IDs into provider request and response records. Check the manifest
+count and SHA-256 before interpreting an excerpt. Missing, expired, and
+truncated payloads limit the available diagnosis.
 
-Stop all application services and verify a restorable backup before upgrading.
-Migrations support fresh installs and databases from v2.8.0 onward. Bring
-older populated databases through released v2.8.0 first. The relational copy
-resumes from persisted batches and verifies identities, counts and fingerprints
-before releasing the write fence. Recover from backup before reopening writes.
-Use forward repair once the application accepts writes.
+The control portal can also read retained failure captures when collection and
+retention permit. It recognizes historical capture identifiers. Role, scope, and
+owner mismatches reveal neither foreign records nor protected payloads.
+
+## Storage upgrade
+
+Startup drains or refuses incompatible maintenance writers and verifies the
+physical Topic storage migration before listeners open. It preserves published
+Topic IDs, memberships, equivalence, hierarchy, audit lineage, and historical
+receipts. Use a verified pre-cutover PostgreSQL backup for recovery before new
+writes. After new writes, recover forward with a compatible binary.
+
+`ontology_management`, `ontology_organization`, and `ontology_upgrade` remain
+registered Development E2E selectors. Retain actual PostgreSQL and production
+entry-point evidence, including paused foreground assignment, stale revisions,
+protected stdout, and current direct Recall.

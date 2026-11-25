@@ -145,13 +145,20 @@ func (r *Store) organizationEvidenceCandidates(ctx context.Context, tx *gorm.DB,
 	if len(organization.Sources) == 0 {
 		return nil, nil
 	}
+	var hits []SearchHit
 	ids := organizationSourceIDs(organization.Sources, topiccontract.EvidenceSource)
+	states := map[string]string{}
+	for _, hit := range hits {
+		ids = append(ids, hit.SourceID)
+		states[hit.SourceID] = hit.SearchState
+	}
+	ids = domain.NormalizeReadIDList(ids)
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	additional := make([]SearchHit, 0, len(ids))
+	additional := []SearchHit{}
 	for _, id := range ids {
-		additional = append(additional, SearchHit{TeamID: input.TeamID, SourceKind: "evidence", SourceID: id})
+		additional = append(additional, SearchHit{TeamID: input.TeamID, SourceKind: "evidence", SourceID: id, SearchState: states[id]})
 	}
 	sort.Slice(additional, func(i, j int) bool { return additional[i].SourceID < additional[j].SourceID })
 	return mergeRecallExpansion(nil, additional, limit), nil
@@ -272,7 +279,7 @@ func (r *Store) RelatedEvidenceTopics(ctx context.Context, input RecallEvidenceI
 		}
 		countInput := input
 		countInput.TopicIDs, countInput.TopicEvidenceIDs = nil, nil
-		eligible, err := eligibleRecallEvidenceIDs(ctx, tx, countInput, contract, ids)
+		eligible, err := hydrateRecallEvidence(ctx, tx, countInput, contract, ids)
 		if err != nil {
 			return err
 		}
@@ -334,7 +341,7 @@ func (r *Store) RelatedEvidenceTopics(ctx context.Context, input RecallEvidenceI
 	return result, err
 }
 
-func sortedRecallEvidenceIDs[T any](hits map[string]T) []string {
+func sortedRecallEvidenceIDs(hits map[string]RecallEvidenceHit) []string {
 	ids := make([]string, 0, len(hits))
 	for id := range hits {
 		ids = append(ids, id)

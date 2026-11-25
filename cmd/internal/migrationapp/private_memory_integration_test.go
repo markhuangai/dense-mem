@@ -41,10 +41,6 @@ func TestRunUpAutomaticallyMigratesLegacyPrivateHistory(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, repository.MigratePrivateMemory(ctx, report.SourceFingerprint))
 			}
-			require.ErrorContains(t, RunUp(ctx, db, 0, newRecordingLogger()), "through released v2.8.0")
-			require.NoError(t, migrator.PreparePrivateMemoryMigration(ctx))
-			require.NoError(t, migratePrivateMemory(ctx, db, ""))
-			require.NoError(t, migrator.RunUpThroughEvidenceOnly(ctx))
 			require.NoError(t, RunUp(ctx, db, 0, newRecordingLogger()))
 			report, err := privacypostgres.NewPrivateMemoryRepository(db, storage.NewRLS()).InspectPrivateMemoryMigration(ctx)
 			require.NoError(t, err)
@@ -95,9 +91,9 @@ func TestRunUpSerializesPrivateMigrationAndCancelsWaitingStarter(t *testing.T) {
 	defer cancelWait()
 	canceled := make(chan error, 1)
 	done := make(chan error, 2)
-	go func() { canceled <- migratePrivateMemory(waitCtx, db, "") }()
+	go func() { canceled <- RunUp(waitCtx, db, 0, newRecordingLogger()) }()
 	for range 2 {
-		go func() { done <- migratePrivateMemory(ctx, db, "") }()
+		go func() { done <- RunUp(ctx, db, 0, newRecordingLogger()) }()
 	}
 	require.Eventually(t, func() bool {
 		var waiting int
@@ -121,7 +117,6 @@ func TestRunUpSerializesPrivateMigrationAndCancelsWaitingStarter(t *testing.T) {
 			t.Fatal("concurrent startup did not finish")
 		}
 	}
-	require.NoError(t, migrator.RunUpThroughEvidenceOnly(ctx))
 	report, err := privacypostgres.NewPrivateMemoryRepository(db, storage.NewRLS()).InspectPrivateMemoryMigration(ctx)
 	require.NoError(t, err)
 	require.Equal(t, "complete", report.Status)
@@ -179,11 +174,8 @@ func TestRunUpBlocksAmbiguousPrivateWriter(t *testing.T) {
 		return tx.Exec(`INSERT INTO entity_records(team_id,entity_kind,space_id)
  SELECT ?,'project',id FROM memory_spaces WHERE team_id=? AND kind='profile_private'`, team, team).Error
 	}))
-	require.ErrorContains(t, RunUp(ctx, db, 0, newRecordingLogger()), "through released v2.8.0")
-	migrator, err := storage.NewMigrator(db)
-	require.NoError(t, err)
-	require.NoError(t, migrator.PreparePrivateMemoryMigration(ctx))
-	require.ErrorIs(t, migratePrivateMemory(ctx, db, ""), privacy.ErrPrivateMemoryMigrationBlocked)
+	err := RunUp(ctx, db, 0, newRecordingLogger())
+	require.ErrorIs(t, err, privacy.ErrPrivateMemoryMigrationBlocked)
 	require.NoError(t, storage.NewRLS().WithSystemTx(ctx, db, func(tx *gorm.DB) error {
 		var phase string
 		if err := tx.Raw(`SELECT phase FROM private_memory_migration_state WHERE singleton`).Row().Scan(&phase); err != nil {

@@ -31,7 +31,7 @@ export function TopicEditor({ records, target, disabled, onAdd, onDirtyChange }:
     if (!valid) return;
     const editing = target?.definition ? target : null;
     const edit: TopicEdit = {
-      action: "define", kind: "topic", expected_version: editing?.edit_version ?? editing?.version ?? 0,
+      action: "define", kind: "topic", expected_version: editing?.version ?? 0,
       ...(editing ? { record_id: editing.id } : {}),
       definition: {
         key: key.trim(), label: label.trim(), description: description.trim(),
@@ -51,7 +51,7 @@ export function TopicEditor({ records, target, disabled, onAdd, onDirtyChange }:
         <FieldRow label="Aliases, separated by commas" htmlFor="topic-definition-aliases"><Input id="topic-definition-aliases" aria-label="Definition aliases" value={aliases} onChange={(event) => setAliases(event.target.value)} /></FieldRow>
         <FieldRow label="Parent definition ID" htmlFor="topic-definition-parent"><Input id="topic-definition-parent" aria-label="Definition parent" list="topic-parents" value={parent} onChange={(event) => { setParent(event.target.value); }} /><datalist id="topic-parents">{definitions.filter((record) => record.kind === "topic" && record.id !== target?.id).map((record) => <option key={record.id} value={record.id}>{record.definition!.label}</option>)}</datalist></FieldRow>
         <p>Parent topics organize memory. Recall follows direct membership.</p>
-      <Button variant="default" className="primary-button" type="submit" disabled={!valid}>Add topic change</Button>
+      <Button variant="default" className="primary-button" type="submit" disabled={!valid}>Add topic to draft</Button>
     </fieldset>
   </form>;
 }

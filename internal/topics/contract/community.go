@@ -13,11 +13,10 @@ type CommunityCandidate struct {
 }
 
 type CommunityInput struct {
-	Topic            CommunityCandidate   `json:"topic"`
-	Current          string               `json:"current_parent,omitempty"`
-	Candidates       []CommunityCandidate `json:"candidates"`
-	WorkID           string               `json:"-"`
-	EndpointVersions map[string]int64     `json:"-"`
+	Topic      CommunityCandidate   `json:"topic"`
+	Current    string               `json:"current_parent,omitempty"`
+	Candidates []CommunityCandidate `json:"candidates"`
+	WorkID     string               `json:"-"`
 }
 
 type CommunityOutcome struct {

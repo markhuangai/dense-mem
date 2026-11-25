@@ -260,9 +260,20 @@ func NewWithProtector(level slog.Level, protector *CredentialProtector) *Logger 
 }
 
 func NewConsoleWithProtector(level slog.Level, protector *CredentialProtector, writer io.Writer) *Logger {
+	if protector == nil {
+		protector = NewCredentialProtector()
+	}
 	state := &sinkState{}
-	sinks := newTeeHandler(newConsoleJSONHandler(writer, level), operationLogHandler{level: level, state: state})
-	return &Logger{logger: slog.New(newCredentialRedactingHandler(sinks, protector)), root: &loggerRoot{sink: state}}
+	root := &loggerRoot{sink: state}
+	console := newCredentialRedactingHandler(
+		newConsoleJSONHandler(writer, level),
+		protector,
+	)
+	operation := newOperationLogHandlerWithState(level, state, protector)
+	return &Logger{
+		logger: slog.New(newTeeHandler(console, operation)),
+		root:   root,
+	}
 }
 
 func newConsoleJSONHandler(writer io.Writer, level slog.Level) slog.Handler {
@@ -296,11 +307,13 @@ func NewWithSecrets(level slog.Level, secrets ...string) *Logger {
 // support binaries and tests. It does not attach an operation-log sink.
 func NewConsoleWithHandler(handler slog.Handler) *Logger {
 	state := &sinkState{}
-	if handler == nil {
-		handler = slog.NewTextHandler(io.Discard, nil)
+	protector := NewCredentialProtector()
+	operation := newOperationLogHandlerWithState(LevelTrace, state, protector)
+	operation.legacyCompatibility = true
+	return &Logger{
+		logger: slog.New(newTeeHandler(newLegacyCredentialRedactingHandler(handler, protector), operation)),
+		root:   &loggerRoot{sink: state},
 	}
-	sinks := newTeeHandler(handler, operationLogHandler{level: LevelTrace, state: state})
-	return &Logger{logger: slog.New(newLegacyCredentialRedactingHandler(sinks, nil)), root: &loggerRoot{sink: state}}
 }
 
 // NewWithHandler is retained for existing test constructors. Production
@@ -531,6 +544,7 @@ func (h teeHandler) Enabled(ctx context.Context, level slog.Level) bool {
 }
 
 func (h teeHandler) Handle(ctx context.Context, record slog.Record) error {
+	record = normalizeTrustedRecord(ctx, record)
 	var firstErr error
 	for _, handler := range h.handlers {
 		if !handler.Enabled(ctx, record.Level) {
@@ -560,11 +574,24 @@ func (h teeHandler) WithGroup(name string) slog.Handler {
 }
 
 type operationLogHandler struct {
-	level  slog.Level
-	sink   LogSink
-	state  *sinkState
-	attrs  []slog.Attr
-	groups []string
+	level               slog.Level
+	sink                LogSink
+	state               *sinkState
+	protector           *CredentialProtector
+	attrs               []slog.Attr
+	groups              []string
+	legacyCompatibility bool
+}
+
+func newOperationLogHandler(level slog.Level, sink LogSink) slog.Handler {
+	return operationLogHandler{level: level, sink: sink, protector: NewCredentialProtector()}
+}
+
+func newOperationLogHandlerWithState(level slog.Level, state *sinkState, protector *CredentialProtector) operationLogHandler {
+	if protector == nil {
+		protector = NewCredentialProtector()
+	}
+	return operationLogHandler{level: level, state: state, protector: protector}
 }
 
 func (h operationLogHandler) Enabled(_ context.Context, level slog.Level) bool {
@@ -582,29 +609,27 @@ func (h operationLogHandler) Handle(ctx context.Context, record slog.Record) err
 		return nil
 	}
 	attrs := map[string]any{}
-	prefix := strings.Join(h.groups, ".")
-	add := func(attr slog.Attr) bool {
-		key := attr.Key
-		if key == "" {
-			return true
-		}
-		if prefix != "" {
-			key = prefix + "." + key
-		}
-		attrs[key] = slogValueAny(attr.Value)
-		return true
-	}
+	secrets := AuthenticationSecretsFromContext(ctx)
+	legacy := h.legacyCompatibility && legacyLogging(ctx)
 	for _, attr := range h.attrs {
-		add(attr)
+		h.appendAttr(attrs, attr, secrets, legacy)
 	}
-	record.Attrs(add)
-	if ctx != nil {
-		protected, _ := ctx.Value(protectedLogContextKey{}).(protectedLogContext)
-		for key, value := range protected.trusted {
-			attrs[key] = value
-		}
-		if protected.unavailable != CredentialProtectionAvailable {
-			attrs["diagnostic_unavailable_reason"] = int(protected.unavailable)
+	record.Attrs(func(attr slog.Attr) bool {
+		h.appendAttr(attrs, attr, secrets, legacy)
+		return true
+	})
+	applyTrustedContext(ctx, attrs, h.protector)
+	message := record.Message
+	if legacy {
+		message = legacyRedactSensitiveText(message)
+	}
+	if h.protector != nil {
+		protectedMessage := h.protector.Snapshot(message, MaxOperationMetadataBytes, secrets...)
+		if protectedMessage.UnavailableReason != CredentialProtectionAvailable {
+			attrs["diagnostic_unavailable_reason"] = int(protectedMessage.UnavailableReason)
+			message = "[diagnostic unavailable]"
+		} else if protectedText, ok := protectedMessage.Value.(string); ok {
+			message = protectedText
 		}
 	}
 	teamID := stringAttr(attrs, "team_id")
@@ -617,7 +642,7 @@ func (h operationLogHandler) Handle(ctx context.Context, record slog.Record) err
 		Timestamp:     record.Time.UTC(),
 		Severity:      severityName(record.Level),
 		SeverityRank:  severityRank(record.Level),
-		Message:       record.Message,
+		Message:       message,
 		Source:        sourceFromPC(record.PC),
 		Function:      functionFromPC(record.PC),
 		TeamID:        teamID,
@@ -666,15 +691,106 @@ func BoundOperationAttrs(attrs map[string]any) map[string]any {
 }
 
 func (h operationLogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	h.attrs = append(append([]slog.Attr(nil), h.attrs...), attrs...)
-	return h
+	next := operationLogHandler{
+		level:               h.level,
+		sink:                h.sink,
+		state:               h.state,
+		protector:           h.protector,
+		attrs:               append([]slog.Attr{}, h.attrs...),
+		groups:              append([]string{}, h.groups...),
+		legacyCompatibility: h.legacyCompatibility,
+	}
+	next.attrs = append(next.attrs, attrs...)
+	return next
 }
 
 func (h operationLogHandler) WithGroup(name string) slog.Handler {
-	if strings.TrimSpace(name) != "" {
-		h.groups = append(append([]string(nil), h.groups...), name)
+	next := operationLogHandler{
+		level:               h.level,
+		sink:                h.sink,
+		state:               h.state,
+		protector:           h.protector,
+		attrs:               append([]slog.Attr{}, h.attrs...),
+		groups:              append([]string{}, h.groups...),
+		legacyCompatibility: h.legacyCompatibility,
 	}
-	return h
+	if strings.TrimSpace(name) != "" {
+		next.groups = append(next.groups, name)
+	}
+	return next
+}
+
+func (h operationLogHandler) appendAttr(attrs map[string]any, attr slog.Attr, secrets []string, legacy bool) {
+	attr.Value = attr.Value.Resolve()
+	if attr.Key == "" {
+		return
+	}
+	if isRetentionField(attr.Key) {
+		return
+	}
+	key := attr.Key
+	if len(h.groups) > 0 {
+		key = strings.Join(append(append([]string{}, h.groups...), attr.Key), ".")
+	}
+	if legacy {
+		safe, ok := legacySanitizeSlogAttr(attr)
+		if !ok {
+			return
+		}
+		attrs[key] = h.protectValue(slogValueAny(safe.Value), attrs, secrets)
+		return
+	}
+	if attr.Value.Kind() == slog.KindGroup {
+		group := map[string]any{}
+		for _, child := range attr.Value.Group() {
+			if child.Key == "" || isRetentionField(child.Key) {
+				continue
+			}
+			group[child.Key] = sanitizeLogValue(child.Key, slogValueAny(child.Value.Resolve()))
+		}
+		attrs[key] = h.protectValue(group, attrs, secrets)
+		return
+	}
+	attrs[key] = h.protectValue(sanitizeLogValue(key, slogValueAny(attr.Value)), attrs, secrets)
+}
+
+func (h operationLogHandler) protectValue(value any, attrs map[string]any, secrets []string) any {
+	if h.protector == nil {
+		return value
+	}
+	protected := h.protector.Snapshot(value, MaxOperationMetadataBytes, secrets...)
+	if protected.UnavailableReason != CredentialProtectionAvailable {
+		if _, exists := attrs["diagnostic_unavailable_reason"]; !exists {
+			attrs["diagnostic_unavailable_reason"] = int(protected.UnavailableReason)
+		}
+		return nil
+	}
+	return protected.Value
+}
+
+func applyTrustedContext(ctx context.Context, attrs map[string]any, protector *CredentialProtector) {
+	for key, value := range trustedContextAttrs(ctx, protector) {
+		attrs[key] = value
+	}
+}
+
+func normalizeTrustedRecord(ctx context.Context, record slog.Record) slog.Record {
+	trusted := trustedContextAttrs(ctx, nil)
+	if len(trusted) == 0 {
+		return record
+	}
+	normalized := slog.NewRecord(record.Time, record.Level, record.Message, record.PC)
+	record.Attrs(func(attr slog.Attr) bool {
+		if _, ok := trusted[attr.Key]; ok {
+			return true
+		}
+		normalized.AddAttrs(attr)
+		return true
+	})
+	for key, value := range trusted {
+		normalized.AddAttrs(slog.String(key, value))
+	}
+	return normalized
 }
 
 func slogValueAny(value slog.Value) any {
@@ -755,6 +871,46 @@ func sanitizeLogValueDepth(key string, value any, depth int) any {
 	default:
 		return value
 	}
+}
+
+type redactingHandler struct {
+	delegate slog.Handler
+}
+
+func newRedactingHandler(delegate slog.Handler) slog.Handler {
+	if delegate == nil {
+		return slog.NewTextHandler(io.Discard, nil)
+	}
+	return redactingHandler{delegate: delegate}
+}
+
+func (h redactingHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return h.delegate.Enabled(ctx, level)
+}
+
+func (h redactingHandler) Handle(ctx context.Context, record slog.Record) error {
+	sanitized := slog.NewRecord(record.Time, record.Level, record.Message, record.PC)
+	record.Attrs(func(attr slog.Attr) bool {
+		if safe, ok := sanitizeSlogAttr(attr); ok {
+			sanitized.AddAttrs(safe)
+		}
+		return true
+	})
+	return h.delegate.Handle(ctx, sanitized)
+}
+
+func (h redactingHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	safe := make([]slog.Attr, 0, len(attrs))
+	for _, attr := range attrs {
+		if sanitized, ok := sanitizeSlogAttr(attr); ok {
+			safe = append(safe, sanitized)
+		}
+	}
+	return redactingHandler{delegate: h.delegate.WithAttrs(safe)}
+}
+
+func (h redactingHandler) WithGroup(name string) slog.Handler {
+	return redactingHandler{delegate: h.delegate.WithGroup(name)}
 }
 
 func severityName(level slog.Level) string {

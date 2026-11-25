@@ -63,25 +63,13 @@ func waitForTopicStorageDrain(ctx context.Context, db *gorm.DB, logger infoLogge
 	for {
 		var work [3]int64
 		err := postgres.NewRLS().WithSystemReadOnlyRepeatableTx(ctx, db, func(tx *gorm.DB) error {
-			var topicInstalled, ontologyInstalled bool
-			if err := tx.Raw(`SELECT to_regclass('public.topic_maintenance_state') IS NOT NULL,
-				to_regclass('public.ontology_maintenance_state') IS NOT NULL`).Row().Scan(&topicInstalled, &ontologyInstalled); err != nil {
+			var installed bool
+			if err := tx.Raw(`SELECT to_regclass('public.ontology_maintenance_state') IS NOT NULL`).Row().Scan(&installed); err != nil || !installed {
 				return err
 			}
-			var prefix string
-			switch {
-			case topicInstalled:
-				prefix = "topic"
-			case ontologyInstalled:
-				prefix = "ontology"
-			default:
-				return nil
-			}
-			query := fmt.Sprintf(`SELECT
-				(SELECT count(*) FROM %[1]s_maintenance_batches WHERE status='running' AND lease_until>clock_timestamp()),
-				(SELECT count(*) FROM %[1]s_maintenance_teams WHERE lease_until>clock_timestamp()),
-				(SELECT count(*) FROM %[1]s_maintenance_attempts WHERE reconciled_at IS NULL)`, prefix)
-			return tx.Raw(query).Row().Scan(&work[0], &work[1], &work[2])
+			return tx.Raw(`SELECT (SELECT count(*) FROM ontology_maintenance_batches WHERE status='running' AND lease_until>clock_timestamp()),
+				(SELECT count(*) FROM ontology_maintenance_teams WHERE lease_until>clock_timestamp()),
+				(SELECT count(*) FROM ontology_maintenance_attempts WHERE reconciled_at IS NULL)`).Row().Scan(&work[0], &work[1], &work[2])
 		})
 		if err != nil {
 			return fmt.Errorf("observe topic storage drain: %w", err)

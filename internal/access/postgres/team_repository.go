@@ -11,7 +11,6 @@ import (
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
-	accesscontract "github.com/markhuangai/dense-mem/internal/access/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
@@ -19,20 +18,37 @@ import (
 // emptyMetadata is an empty JSON object for postgres jsonb columns
 var emptyMetadata = map[string]any{}
 
-// teamRepository implements the TeamRepository interface.
+// TeamRepository is the companion interface for team data access.
+// Consumers and tests depend on this abstraction rather than the concrete struct.
+type TeamRepository interface {
+	Create(ctx context.Context, team *domain.Team) error
+	GetByID(ctx context.Context, id uuid.UUID) (*domain.Team, error)
+	List(ctx context.Context, limit, offset int) ([]*domain.Team, error)
+	Count(ctx context.Context) (int64, error)
+	Update(ctx context.Context, team *domain.Team) error
+	SoftDelete(ctx context.Context, id uuid.UUID) error
+	HardDelete(ctx context.Context, id uuid.UUID) error
+	CountActiveKeys(ctx context.Context, teamID uuid.UUID) (int64, error)
+	NameExists(ctx context.Context, name string) (bool, error)
+}
+
+// TeamRepositoryImpl implements the TeamRepository interface.
 // Every query runs inside an RLS-aware transaction so Postgres FORCE RLS
 // policies (app.current_profile_id / app.tx_mode) enforce tenant isolation
 // even if a caller ever reaches the repository without the service layer.
-type teamRepository struct {
+type TeamRepositoryImpl struct {
 	db  *gorm.DB
 	rls storagepostgres.RLSHelper
 }
 
+// Ensure TeamRepositoryImpl implements TeamRepository
+var _ TeamRepository = (*TeamRepositoryImpl)(nil)
+
 // NewTeamRepository creates a new team repository instance.
 // rls is required; nil causes a panic at first use. Callers should pass
 // postgres.NewRLS() for production and an RLSHelper mock for unit tests.
-func NewTeamRepository(db *gorm.DB, rls storagepostgres.RLSHelper) *teamRepository {
-	return &teamRepository{db: db, rls: rls}
+func NewTeamRepository(db *gorm.DB, rls storagepostgres.RLSHelper) *TeamRepositoryImpl {
+	return &TeamRepositoryImpl{db: db, rls: rls}
 }
 
 func marshalJSONBMap(value map[string]any) (string, error) {
@@ -92,7 +108,7 @@ func scanTeamRow(rows *sql.Rows) (*domain.Team, error) {
 
 // Create creates a new team with server-side UUID generation.
 // Enforces unique lower(name) among non-deleted rows and sets status='active'.
-func (r *teamRepository) Create(ctx context.Context, team *domain.Team) error {
+func (r *TeamRepositoryImpl) Create(ctx context.Context, team *domain.Team) error {
 	// Generate UUID server-side if not provided
 	if team.ID == uuid.Nil {
 		team.ID = uuid.New()
@@ -122,9 +138,6 @@ func (r *teamRepository) Create(ctx context.Context, team *domain.Team) error {
 	})
 
 	if err != nil {
-		if isPostgresUniqueConstraint(err, "idx_teams_name_unique_active") {
-			return accesscontract.ErrTeamNameConflict
-		}
 		return fmt.Errorf("failed to create team: %w", err)
 	}
 	team.Status = "active"
@@ -136,7 +149,7 @@ func (r *teamRepository) Create(ctx context.Context, team *domain.Team) error {
 // Uses internal/system RLS context because callers include middleware paths that
 // resolve teams without yet knowing whether the requester is authorized.
 // Authorization is enforced at the HTTP middleware layer, not here.
-func (r *teamRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Team, error) {
+func (r *TeamRepositoryImpl) GetByID(ctx context.Context, id uuid.UUID) (*domain.Team, error) {
 	var team *domain.Team
 
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
@@ -170,7 +183,7 @@ func (r *teamRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.Tea
 
 // List retrieves teams with pagination, excluding soft-deleted rows.
 // Default limit=20, max limit=100, sorted by created_at DESC, id ASC.
-func (r *teamRepository) List(ctx context.Context, limit, offset int) ([]*domain.Team, error) {
+func (r *TeamRepositoryImpl) List(ctx context.Context, limit, offset int) ([]*domain.Team, error) {
 	// Apply defaults and limits
 	if limit <= 0 {
 		limit = 20
@@ -217,7 +230,7 @@ func (r *teamRepository) List(ctx context.Context, limit, offset int) ([]*domain
 }
 
 // Count returns the total number of non-deleted teams.
-func (r *teamRepository) Count(ctx context.Context) (int64, error) {
+func (r *TeamRepositoryImpl) Count(ctx context.Context) (int64, error) {
 	var count int64
 
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
@@ -236,7 +249,7 @@ func (r *teamRepository) Count(ctx context.Context) (int64, error) {
 }
 
 // Update updates an existing team, excluding soft-deleted rows.
-func (r *teamRepository) Update(ctx context.Context, team *domain.Team) error {
+func (r *TeamRepositoryImpl) Update(ctx context.Context, team *domain.Team) error {
 	team.UpdatedAt = time.Now().UTC()
 
 	metadata, err := marshalJSONBMap(team.Metadata)
@@ -266,9 +279,6 @@ func (r *teamRepository) Update(ctx context.Context, team *domain.Team) error {
 	})
 
 	if err != nil {
-		if isPostgresUniqueConstraint(err, "idx_teams_name_unique_active") {
-			return accesscontract.ErrTeamNameConflict
-		}
 		return fmt.Errorf("failed to update team: %w", err)
 	}
 
@@ -276,7 +286,7 @@ func (r *teamRepository) Update(ctx context.Context, team *domain.Team) error {
 }
 
 // SoftDelete tombstones a team and revokes its active team credentials.
-func (r *teamRepository) SoftDelete(ctx context.Context, id uuid.UUID) error {
+func (r *TeamRepositoryImpl) SoftDelete(ctx context.Context, id uuid.UUID) error {
 	now := time.Now().UTC()
 
 	// Soft-delete is an UPDATE; must satisfy profiles_self_access (id = app.current_profile_id).
@@ -288,12 +298,12 @@ func (r *teamRepository) SoftDelete(ctx context.Context, id uuid.UUID) error {
 			WHERE id = $1 AND deleted_at IS NULL
 			FOR UPDATE
 		`, id).Row().Scan(&lockedID); errors.Is(err, sql.ErrNoRows) {
-			return accesscontract.ErrTeamNotFound
+			return gorm.ErrRecordNotFound
 		} else if err != nil {
 			return err
 		}
 		if lockedID == "" {
-			return accesscontract.ErrTeamNotFound
+			return gorm.ErrRecordNotFound
 		}
 		if err := tx.Exec(`
 			UPDATE teams
@@ -333,7 +343,7 @@ func (r *teamRepository) SoftDelete(ctx context.Context, id uuid.UUID) error {
 // HardDelete removes a team row and its Postgres-owned child rows.
 // audit_log is intentionally not deleted: it is append-only and no longer has
 // live FKs to teams/api_keys, so historical audit entries remain immutable.
-func (r *teamRepository) HardDelete(ctx context.Context, id uuid.UUID) error {
+func (r *TeamRepositoryImpl) HardDelete(ctx context.Context, id uuid.UUID) error {
 	err := r.rls.WithTeamTx(ctx, r.db, id.String(), func(tx *gorm.DB) error {
 		// Serialize all team-scoped diagnostic inserts, including global records
 		// that cannot take a memory-space lock, before purging their rows.
@@ -427,7 +437,7 @@ func (r *teamRepository) HardDelete(ctx context.Context, id uuid.UUID) error {
 }
 
 // CountActiveKeys counts the number of non-revoked, non-expired active keys for a team.
-func (r *teamRepository) CountActiveKeys(ctx context.Context, teamID uuid.UUID) (int64, error) {
+func (r *TeamRepositoryImpl) CountActiveKeys(ctx context.Context, teamID uuid.UUID) (int64, error) {
 	var count int64
 
 	err := r.rls.WithTeamTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
@@ -450,7 +460,7 @@ func (r *teamRepository) CountActiveKeys(ctx context.Context, teamID uuid.UUID) 
 }
 
 // NameExists checks if a team name exists (case-insensitive) among non-deleted rows.
-func (r *teamRepository) NameExists(ctx context.Context, name string) (bool, error) {
+func (r *TeamRepositoryImpl) NameExists(ctx context.Context, name string) (bool, error) {
 	var count int64
 
 	// NameExists must see all teams (collision detection is cross-tenant);

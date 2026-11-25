@@ -571,11 +571,11 @@ for (const entry of fs.readdirSync(directory).filter((item) => item.endsWith(".j
 
 if (records.length === 0) throw new Error("no populated precheck database capability fragments");
 
-const topicIndex = records.findIndex((record) => record.capability === "topics");
-const isolateTopics = topicIndex >= 0 && records.length >= 3;
+const ontologyIndex = records.findIndex((record) => record.capability === "ontology");
+const isolateOntology = ontologyIndex >= 0 && records.length >= 3;
 const caseSelections = [];
 if (shardCount >= 6) {
-  const topics = records[topicIndex];
+  const ontology = records[ontologyIndex];
   const dedicated = [
     "repository/TestOntologyMaintenanceCurrentReceiptCompletion",
     "repository/TestOntologyMaintenanceFinalizationAdmissionAndIsolation",
@@ -589,7 +589,7 @@ if (shardCount >= 6) {
       "repository/TestOntologyUnavailableSnapshotRetainsScopedHandleForMaintenance",
       "repository/TestOntologyOrganizationPreservesValidLargeSourceContext",
       "repository/TestOntologyOrganizationPreservesPerRecordDependencyBounds",
-    ].filter((id) => topics?.caseIds.includes(id)),
+    ].filter((id) => ontology?.caseIds.includes(id)),
   ].sort();
   const measurement = "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement";
   const coalescing = "repository/TestOntologyMaintenanceCoalescingMeasurement";
@@ -601,20 +601,20 @@ if (shardCount >= 6) {
       "repository/TestOntologyMaintenanceCoalescingPages",
       "repository/TestOntologyMaintenanceMatchingCohort",
     );
-    if (!topics?.caseIds.includes(coalescing)) throw new Error("seven precheck shards require both complete measurement cohorts");
+    if (!ontology?.caseIds.includes(coalescing)) throw new Error("seven precheck shards require both complete measurement cohorts");
   }
-  const measurements = [...(topics?.caseIds.includes(coalescing) ? [coalescing] : []), measurement];
+  const measurements = [...(ontology?.caseIds.includes(coalescing) ? [coalescing] : []), measurement];
   const isolated = [...dedicated, ...measurements];
-  if (!topics || isolated.some((id) => !topics.caseIds.includes(id)) || topics.caseIds.length <= isolated.length || records.length < 5) {
-    throw new Error("six precheck shards require dedicated Topic cases, discovery measurement, remaining Topic cases, and four populated capability groups; seven also isolates coalescing");
+  if (!ontology || isolated.some((id) => !ontology.caseIds.includes(id)) || ontology.caseIds.length <= isolated.length || records.length < 5) {
+    throw new Error("six precheck shards require dedicated ontology cases, discovery measurement, remaining ontology, and four populated capability groups; seven also isolates coalescing");
   }
-  const remaining = topics.caseIds.filter((id) => !isolated.includes(id)).sort().join(",");
+  const remaining = ontology.caseIds.filter((id) => !isolated.includes(id)).sort().join(",");
   if (shardCount === 7) caseSelections.push(coalescing, measurement, dedicated.sort().join(","), remaining);
   else caseSelections.push(dedicated.join(","), measurements.join(","), remaining);
   groups.splice(0, caseSelections.length);
 }
-if (isolateTopics) {
-  records.splice(topicIndex, 1);
+if (isolateOntology) {
+  records.splice(ontologyIndex, 1);
   if (shardCount === 3) groups.pop();
 }
 
@@ -661,7 +661,7 @@ if (shardCount >= 6 && groups.some((group) => group.capabilities.length === 0)) 
   throw new Error(`${shardCount} precheck shards require ${shardCount} populated selections`);
 }
 for (const ids of caseSelections) process.stdout.write(`cases:${ids}\n`);
-if (isolateTopics && shardCount === 3) process.stdout.write("topics\n");
+if (isolateOntology && shardCount === 3) process.stdout.write("ontology\n");
 for (const group of groups) {
   if (group.capabilities.length > 0) {
     process.stdout.write(`${group.capabilities.join(",")}\n`);

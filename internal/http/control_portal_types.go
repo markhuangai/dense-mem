@@ -21,7 +21,7 @@ type PostgresPoolMetrics struct {
 	WaitDurationNS   int64     `json:"wait_duration_ns"`
 }
 
-type ControlPortalServices struct {
+type ControlPortalTelemetry struct {
 	AuditExport         AuditExportReader
 	Diagnostics         DiagnosticBundleReader
 	Reader              operations.TelemetryReader
@@ -44,40 +44,30 @@ type ControlPortalServices struct {
 	PostgresPool        func() PostgresPoolMetrics
 }
 
-type controlIdentityHandler struct {
-	sso             *accessservice.SSOService
-	directory       *accessservice.DirectoryIdentityService
-	controlIdentity *accessservice.ControlIdentityService
-	logger          httpcontract.LogProvider
-}
-
-type controlDiagnosticsHandler struct {
+type controlPortalHandler struct {
 	auditExport         AuditExportReader
 	diagnostics         DiagnosticBundleReader
+	teams               handler.TeamServiceInterface
+	credentials         handler.CredentialServiceInterface
+	security            settings.SecurityService
 	metrics             operations.UsageMetricsReader
 	postgresPool        func() PostgresPoolMetrics
 	telemetry           operations.TelemetryReader
 	operationLogs       operations.OperationLogReader
 	recallFeedback      recall.RecallFeedbackEventReader
+	topicMaintenance    *topics.MaintenanceService
+	evidenceConflicts   evidenceconflict.Reader
 	convergence         searchapp.SearchConvergenceReader
 	rememberAttempts    rememberapp.RememberAttemptDiagnosticsReader
 	rememberInvocations rememberapp.RememberInvocationDiagnosticsReader
+	privateMemory       PrivateMemoryServiceInterface
 	health              HealthConfig
+	sso                 *accessservice.SSOService
+	directory           *accessservice.DirectoryIdentityService
+	controlIdentity     *accessservice.ControlIdentityService
+	appConfig           settings.AppConfigService
+	decisions           settings.DecisionConfigService
 	logger              httpcontract.LogProvider
-}
-
-type controlConfigHandler struct {
-	verifierModel    string
-	embeddingModel   string
-	appConfig        settings.AppConfigService
-	decisions        settings.DecisionConfigService
-	topicMaintenance *topics.MaintenanceService
-	security         settings.SecurityService
-}
-
-type controlAccessHandler struct {
-	teams             handler.TeamServiceInterface
-	credentials       handler.CredentialServiceInterface
-	privateMemory     PrivateMemoryServiceInterface
-	evidenceConflicts evidenceconflict.Reader
+	verifierModel       string
+	embeddingModel      string
 }

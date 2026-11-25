@@ -11,16 +11,28 @@ import (
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
-type userPortalSessionRepository struct {
+// UserPortalSessionRepository stores opaque browser sessions in PostgreSQL.
+// The repository is intentionally system-scoped because the session token is
+// the credential used before an authenticated team and owner context exists.
+type UserPortalSessionRepository interface {
+	CreateSession(ctx context.Context, session *domain.UserPortalSession) error
+	GetSession(ctx context.Context, sessionHash string) (*domain.UserPortalSession, error)
+	DeleteSession(ctx context.Context, sessionHash string) error
+	DeleteExpiredSessions(ctx context.Context, now time.Time) error
+}
+
+type UserPortalSessionRepositoryImpl struct {
 	db  *gorm.DB
 	rls storagepostgres.RLSHelper
 }
 
-func NewUserPortalSessionRepository(db *gorm.DB, rls storagepostgres.RLSHelper) *userPortalSessionRepository {
-	return &userPortalSessionRepository{db: db, rls: rls}
+var _ UserPortalSessionRepository = (*UserPortalSessionRepositoryImpl)(nil)
+
+func NewUserPortalSessionRepository(db *gorm.DB, rls storagepostgres.RLSHelper) *UserPortalSessionRepositoryImpl {
+	return &UserPortalSessionRepositoryImpl{db: db, rls: rls}
 }
 
-func (r *userPortalSessionRepository) CreateSession(ctx context.Context, session *domain.UserPortalSession) error {
+func (r *UserPortalSessionRepositoryImpl) CreateSession(ctx context.Context, session *domain.UserPortalSession) error {
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			INSERT INTO public.user_portal_sessions (
@@ -34,7 +46,7 @@ func (r *userPortalSessionRepository) CreateSession(ctx context.Context, session
 	return nil
 }
 
-func (r *userPortalSessionRepository) GetSession(ctx context.Context, sessionHash string) (*domain.UserPortalSession, error) {
+func (r *UserPortalSessionRepositoryImpl) GetSession(ctx context.Context, sessionHash string) (*domain.UserPortalSession, error) {
 	var session *domain.UserPortalSession
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
@@ -64,7 +76,7 @@ func (r *userPortalSessionRepository) GetSession(ctx context.Context, sessionHas
 	return session, nil
 }
 
-func (r *userPortalSessionRepository) DeleteSession(ctx context.Context, sessionHash string) error {
+func (r *UserPortalSessionRepositoryImpl) DeleteSession(ctx context.Context, sessionHash string) error {
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			DELETE FROM public.user_portal_sessions
@@ -77,7 +89,7 @@ func (r *userPortalSessionRepository) DeleteSession(ctx context.Context, session
 	return nil
 }
 
-func (r *userPortalSessionRepository) DeleteExpiredSessions(ctx context.Context, now time.Time) error {
+func (r *UserPortalSessionRepositoryImpl) DeleteExpiredSessions(ctx context.Context, now time.Time) error {
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			DELETE FROM public.user_portal_sessions

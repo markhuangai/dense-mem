@@ -5,9 +5,9 @@ import (
 	"errors"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	"github.com/markhuangai/dense-mem/internal/topicassignment"
+	assignment "github.com/markhuangai/dense-mem/internal/topicassignment/contract"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
-	assignment "github.com/markhuangai/dense-mem/internal/topics/assignment"
 	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
 )
 
@@ -16,7 +16,7 @@ type IncrementalAssignments interface {
 	CommitMaintenanceAssignments(context.Context, contract.MaintenanceClaim, []assignment.Publication) ([]contract.OrganizationOutcome, error)
 }
 
-func (s *MaintenanceService) WithTopicProcessing(assigner *AssignmentService, store IncrementalAssignments, communities contract.CommunityRepository, placement CommunityAssessor, decisions modelprovider.DecisionSettings) *MaintenanceService {
+func (s *MaintenanceService) WithTopicProcessing(assigner *topicassignment.Service, store IncrementalAssignments, communities contract.CommunityRepository, placement CommunityAssessor) *MaintenanceService {
 	s.deps.Communities, s.deps.Placement = communities, placement
 	s.deps.Assign = func(ctx context.Context, claim contract.MaintenanceClaim, policy domain.TopicMaintenanceConfig, accounting assessment.AttemptAccounting) (contract.OrganizationResult, error) {
 		var result contract.OrganizationResult
@@ -33,18 +33,15 @@ func (s *MaintenanceService) WithTopicProcessing(assigner *AssignmentService, st
 			slices[i] = assignment.Slice{EvidenceID: snapshot.ID, SourceFingerprint: fingerprint, Index: i, Text: contract.SourceDisplayText(snapshot), PriorInputHash: claim.PriorAssignmentHashes[contract.SourceKey(snapshot.SourceHandle)]}
 		}
 		var settings *domain.DecisionRuntimeConfig
-		if assigner.decisions != nil {
-			if decisions == nil {
-				return result, errors.New("decision settings unavailable for topic assignment")
-			}
-			value, err := decisions.DecisionRuntimeConfig(ctx)
+		if placement.Decisions != nil {
+			value, err := placement.Settings.DecisionRuntimeConfig(ctx)
 			if err != nil {
 				return result, err
 			}
 			settings = &value
 		}
 		input := assignment.Scope{TeamID: claim.TeamID, SpaceID: claim.SpaceID, Generation: claim.Generation, OperationID: claim.ID}
-		outcomes, err := assigner.PrepareMaintenance(ctx, input, slices, settings, policy, accounting)
+		outcomes, err := assigner.PrepareMaintenance(topicassignment.WithAccounting(ctx, accounting), input, slices, settings, policy)
 		if err != nil {
 			return result, err
 		}

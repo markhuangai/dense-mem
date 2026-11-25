@@ -18,16 +18,51 @@ import (
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
-type directoryIdentityRepository struct {
+type DirectoryIdentityRepository interface {
+	CreateDirectoryConnector(ctx context.Context, connector *domain.DirectoryConnector) error
+	GetDirectoryConnector(ctx context.Context, id uuid.UUID) (*domain.DirectoryConnector, error)
+	GetDirectoryConnectorByProviderID(ctx context.Context, providerID uuid.UUID) (*domain.DirectoryConnector, error)
+	GetDirectoryConnectorByOAuthClientID(ctx context.Context, clientID string) (*domain.DirectoryConnector, error)
+	ListDirectoryConnectors(ctx context.Context) ([]*domain.DirectoryConnector, error)
+	UpdateDirectoryConnector(ctx context.Context, connector *domain.DirectoryConnector) error
+	SetDirectoryConnectorStatus(ctx context.Context, id uuid.UUID, status domain.DirectoryConnectorStatus, activatedAt *time.Time) error
+	SetDirectoryCredentials(ctx context.Context, id uuid.UUID, credentialVersion int, bearerHash, oauthClientID, oauthSecretHash string) error
+
+	CreateDirectoryOAuthToken(ctx context.Context, connectorID uuid.UUID, tokenHash string, expiresAt time.Time) error
+	GetDirectoryOAuthToken(ctx context.Context, connectorID uuid.UUID, tokenHash string) (bool, error)
+	DeleteExpiredDirectoryOAuthTokens(ctx context.Context, now time.Time) error
+
+	CreateDirectoryUser(ctx context.Context, user domain.DirectoryUser) (*domain.DirectoryUser, error)
+	UpsertDirectoryUser(ctx context.Context, user domain.DirectoryUser) (*domain.DirectoryUser, error)
+	GetDirectoryUser(ctx context.Context, connectorID, userID uuid.UUID) (*domain.DirectoryUser, error)
+	ListDirectoryUsers(ctx context.Context, connectorID uuid.UUID) ([]*domain.DirectoryUser, error)
+	ListDirectoryUsersPage(ctx context.Context, connectorID uuid.UUID, request domain.DirectoryPageRequest) ([]*domain.DirectoryUser, int, error)
+	UpsertDirectoryGroup(ctx context.Context, group domain.DirectoryGroup) (*domain.DirectoryGroup, error)
+	CreateDirectoryGroupWithMembers(ctx context.Context, group domain.DirectoryGroup, memberIDs []uuid.UUID) (*domain.DirectoryGroup, error)
+	UpsertDirectoryGroupWithMembers(ctx context.Context, group domain.DirectoryGroup, memberIDs []uuid.UUID) (*domain.DirectoryGroup, error)
+	GetDirectoryGroup(ctx context.Context, connectorID, groupID uuid.UUID) (*domain.DirectoryGroup, error)
+	ListDirectoryGroups(ctx context.Context, connectorID uuid.UUID) ([]*domain.DirectoryGroup, error)
+	ListDirectoryGroupsPage(ctx context.Context, connectorID uuid.UUID, request domain.DirectoryPageRequest) ([]*domain.DirectoryGroup, int, error)
+	ReplaceDirectoryGroupMembers(ctx context.Context, connectorID, groupID uuid.UUID, memberIDs []uuid.UUID) error
+
+	DirectoryConnectorSnapshot(ctx context.Context, connectorID uuid.UUID) (*domain.DirectoryConnectorSnapshot, error)
+	ApplyDirectoryReconcilePlan(ctx context.Context, plan domain.DirectoryReconcilePlan) error
+	ActivateDirectoryConnector(ctx context.Context, plan domain.DirectoryReconcilePlan) error
+	AdoptDirectoryTeam(ctx context.Context, connectorID, groupID, teamID uuid.UUID) error
+}
+
+type DirectoryIdentityRepositoryImpl struct {
 	db  *gorm.DB
 	rls storagepostgres.RLSHelper
 }
 
-func NewDirectoryIdentityRepository(db *gorm.DB, rls storagepostgres.RLSHelper) *directoryIdentityRepository {
-	return &directoryIdentityRepository{db: db, rls: rls}
+var _ DirectoryIdentityRepository = (*DirectoryIdentityRepositoryImpl)(nil)
+
+func NewDirectoryIdentityRepository(db *gorm.DB, rls storagepostgres.RLSHelper) *DirectoryIdentityRepositoryImpl {
+	return &DirectoryIdentityRepositoryImpl{db: db, rls: rls}
 }
 
-func (r *directoryIdentityRepository) CreateDirectoryConnector(ctx context.Context, connector *domain.DirectoryConnector) error {
+func (r *DirectoryIdentityRepositoryImpl) CreateDirectoryConnector(ctx context.Context, connector *domain.DirectoryConnector) error {
 	if connector == nil {
 		return fmt.Errorf("directory connector is required")
 	}
@@ -56,23 +91,20 @@ func (r *directoryIdentityRepository) CreateDirectoryConnector(ctx context.Conte
 			connector.OAuthClientID, connector.OAuthClientSecretHash, connector.LastActivationAt, connector.ReconcileVersion, now).Error
 	})
 	if err != nil {
-		if isPostgresUniqueConstraint(err, "sso_directory_connectors_provider_id_key") {
-			return accesscontract.ErrDirectoryResourceConflict
-		}
 		return fmt.Errorf("failed to create directory connector: %w", err)
 	}
 	return nil
 }
 
-func (r *directoryIdentityRepository) GetDirectoryConnector(ctx context.Context, id uuid.UUID) (*domain.DirectoryConnector, error) {
+func (r *DirectoryIdentityRepositoryImpl) GetDirectoryConnector(ctx context.Context, id uuid.UUID) (*domain.DirectoryConnector, error) {
 	return r.getDirectoryConnector(ctx, "WHERE id = $1", id)
 }
 
-func (r *directoryIdentityRepository) GetDirectoryConnectorByProviderID(ctx context.Context, providerID uuid.UUID) (*domain.DirectoryConnector, error) {
+func (r *DirectoryIdentityRepositoryImpl) GetDirectoryConnectorByProviderID(ctx context.Context, providerID uuid.UUID) (*domain.DirectoryConnector, error) {
 	return r.getDirectoryConnector(ctx, "WHERE provider_id = $1", providerID)
 }
 
-func (r *directoryIdentityRepository) GetDirectoryConnectorByOAuthClientID(ctx context.Context, clientID string) (*domain.DirectoryConnector, error) {
+func (r *DirectoryIdentityRepositoryImpl) GetDirectoryConnectorByOAuthClientID(ctx context.Context, clientID string) (*domain.DirectoryConnector, error) {
 	clientID = strings.TrimSpace(clientID)
 	if clientID == "" {
 		return nil, nil
@@ -80,7 +112,7 @@ func (r *directoryIdentityRepository) GetDirectoryConnectorByOAuthClientID(ctx c
 	return r.getDirectoryConnector(ctx, "WHERE oauth_client_id = $1", clientID)
 }
 
-func (r *directoryIdentityRepository) getDirectoryConnector(ctx context.Context, where string, args ...any) (*domain.DirectoryConnector, error) {
+func (r *DirectoryIdentityRepositoryImpl) getDirectoryConnector(ctx context.Context, where string, args ...any) (*domain.DirectoryConnector, error) {
 	var connector *domain.DirectoryConnector
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
@@ -108,7 +140,7 @@ func (r *directoryIdentityRepository) getDirectoryConnector(ctx context.Context,
 	return connector, nil
 }
 
-func (r *directoryIdentityRepository) ListDirectoryConnectors(ctx context.Context) ([]*domain.DirectoryConnector, error) {
+func (r *DirectoryIdentityRepositoryImpl) ListDirectoryConnectors(ctx context.Context) ([]*domain.DirectoryConnector, error) {
 	items := make([]*domain.DirectoryConnector, 0)
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
@@ -137,7 +169,7 @@ func (r *directoryIdentityRepository) ListDirectoryConnectors(ctx context.Contex
 	return items, nil
 }
 
-func (r *directoryIdentityRepository) UpdateDirectoryConnector(ctx context.Context, connector *domain.DirectoryConnector) error {
+func (r *DirectoryIdentityRepositoryImpl) UpdateDirectoryConnector(ctx context.Context, connector *domain.DirectoryConnector) error {
 	if connector == nil {
 		return fmt.Errorf("directory connector is required")
 	}
@@ -160,7 +192,7 @@ func (r *directoryIdentityRepository) UpdateDirectoryConnector(ctx context.Conte
 			return res.Error
 		}
 		if res.RowsAffected == 0 {
-			return accesscontract.ErrDirectoryResourceNotFound
+			return gorm.ErrRecordNotFound
 		}
 		return nil
 	})
@@ -172,7 +204,7 @@ func (r *directoryIdentityRepository) UpdateDirectoryConnector(ctx context.Conte
 	return nil
 }
 
-func (r *directoryIdentityRepository) SetDirectoryConnectorStatus(ctx context.Context, id uuid.UUID, status domain.DirectoryConnectorStatus, activatedAt *time.Time) error {
+func (r *DirectoryIdentityRepositoryImpl) SetDirectoryConnectorStatus(ctx context.Context, id uuid.UUID, status domain.DirectoryConnectorStatus, activatedAt *time.Time) error {
 	now := time.Now().UTC()
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		connector, err := getDirectoryConnectorTx(tx, id, true)
@@ -180,7 +212,7 @@ func (r *directoryIdentityRepository) SetDirectoryConnectorStatus(ctx context.Co
 			return err
 		}
 		if connector == nil {
-			return accesscontract.ErrDirectoryResourceNotFound
+			return gorm.ErrRecordNotFound
 		}
 		if status == domain.DirectoryConnectorDisabled {
 			return disableDirectoryProvisioningForProviderTx(tx, connector.ProviderID, now)
@@ -197,7 +229,7 @@ func (r *directoryIdentityRepository) SetDirectoryConnectorStatus(ctx context.Co
 			return res.Error
 		}
 		if res.RowsAffected == 0 {
-			return accesscontract.ErrDirectoryResourceNotFound
+			return gorm.ErrRecordNotFound
 		}
 		return nil
 	})
@@ -207,7 +239,7 @@ func (r *directoryIdentityRepository) SetDirectoryConnectorStatus(ctx context.Co
 	return nil
 }
 
-func (r *directoryIdentityRepository) SetDirectoryCredentials(ctx context.Context, id uuid.UUID, credentialVersion int, bearerHash, oauthClientID, oauthSecretHash string) error {
+func (r *DirectoryIdentityRepositoryImpl) SetDirectoryCredentials(ctx context.Context, id uuid.UUID, credentialVersion int, bearerHash, oauthClientID, oauthSecretHash string) error {
 	now := time.Now().UTC()
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		res := tx.Exec(`
@@ -223,7 +255,7 @@ func (r *directoryIdentityRepository) SetDirectoryCredentials(ctx context.Contex
 			return res.Error
 		}
 		if res.RowsAffected == 0 {
-			return accesscontract.ErrDirectoryResourceNotFound
+			return gorm.ErrRecordNotFound
 		}
 		return tx.Exec(`DELETE FROM sso_directory_oauth_tokens WHERE connector_id = $1`, id).Error
 	})
@@ -233,7 +265,7 @@ func (r *directoryIdentityRepository) SetDirectoryCredentials(ctx context.Contex
 	return nil
 }
 
-func (r *directoryIdentityRepository) CreateDirectoryOAuthToken(ctx context.Context, connectorID uuid.UUID, tokenHash string, expiresAt time.Time) error {
+func (r *DirectoryIdentityRepositoryImpl) CreateDirectoryOAuthToken(ctx context.Context, connectorID uuid.UUID, tokenHash string, expiresAt time.Time) error {
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			INSERT INTO sso_directory_oauth_tokens (token_hash, connector_id, expires_at)
@@ -246,7 +278,7 @@ func (r *directoryIdentityRepository) CreateDirectoryOAuthToken(ctx context.Cont
 	return nil
 }
 
-func (r *directoryIdentityRepository) GetDirectoryOAuthToken(ctx context.Context, connectorID uuid.UUID, tokenHash string) (bool, error) {
+func (r *DirectoryIdentityRepositoryImpl) GetDirectoryOAuthToken(ctx context.Context, connectorID uuid.UUID, tokenHash string) (bool, error) {
 	var found bool
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		return tx.Raw(`
@@ -262,7 +294,7 @@ func (r *directoryIdentityRepository) GetDirectoryOAuthToken(ctx context.Context
 	return found, nil
 }
 
-func (r *directoryIdentityRepository) DeleteExpiredDirectoryOAuthTokens(ctx context.Context, now time.Time) error {
+func (r *DirectoryIdentityRepositoryImpl) DeleteExpiredDirectoryOAuthTokens(ctx context.Context, now time.Time) error {
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		return tx.Exec(`DELETE FROM sso_directory_oauth_tokens WHERE expires_at <= $1`, now).Error
 	})
@@ -312,15 +344,15 @@ func scanDirectoryConnector(rows *sql.Rows) (*domain.DirectoryConnector, error) 
 	return &item, nil
 }
 
-func (r *directoryIdentityRepository) CreateDirectoryUser(ctx context.Context, user domain.DirectoryUser) (*domain.DirectoryUser, error) {
+func (r *DirectoryIdentityRepositoryImpl) CreateDirectoryUser(ctx context.Context, user domain.DirectoryUser) (*domain.DirectoryUser, error) {
 	return r.writeDirectoryUser(ctx, user, true)
 }
 
-func (r *directoryIdentityRepository) UpsertDirectoryUser(ctx context.Context, user domain.DirectoryUser) (*domain.DirectoryUser, error) {
+func (r *DirectoryIdentityRepositoryImpl) UpsertDirectoryUser(ctx context.Context, user domain.DirectoryUser) (*domain.DirectoryUser, error) {
 	return r.writeDirectoryUser(ctx, user, false)
 }
 
-func (r *directoryIdentityRepository) writeDirectoryUser(ctx context.Context, user domain.DirectoryUser, createOnly bool) (*domain.DirectoryUser, error) {
+func (r *DirectoryIdentityRepositoryImpl) writeDirectoryUser(ctx context.Context, user domain.DirectoryUser, createOnly bool) (*domain.DirectoryUser, error) {
 	user.ExternalID = strings.TrimSpace(user.ExternalID)
 	user.UserName = strings.TrimSpace(user.UserName)
 	user.Email = strings.TrimSpace(user.Email)
@@ -412,7 +444,7 @@ func (r *directoryIdentityRepository) writeDirectoryUser(ctx context.Context, us
 	return stored, nil
 }
 
-func (r *directoryIdentityRepository) GetDirectoryUser(ctx context.Context, connectorID, userID uuid.UUID) (*domain.DirectoryUser, error) {
+func (r *DirectoryIdentityRepositoryImpl) GetDirectoryUser(ctx context.Context, connectorID, userID uuid.UUID) (*domain.DirectoryUser, error) {
 	var item *domain.DirectoryUser
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
@@ -440,7 +472,7 @@ func (r *directoryIdentityRepository) GetDirectoryUser(ctx context.Context, conn
 	return item, nil
 }
 
-func (r *directoryIdentityRepository) ListDirectoryUsers(ctx context.Context, connectorID uuid.UUID) ([]*domain.DirectoryUser, error) {
+func (r *DirectoryIdentityRepositoryImpl) ListDirectoryUsers(ctx context.Context, connectorID uuid.UUID) ([]*domain.DirectoryUser, error) {
 	items := make([]*domain.DirectoryUser, 0)
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
@@ -468,7 +500,7 @@ func (r *directoryIdentityRepository) ListDirectoryUsers(ctx context.Context, co
 	return items, nil
 }
 
-func (r *directoryIdentityRepository) ListDirectoryUsersPage(ctx context.Context, connectorID uuid.UUID, request domain.DirectoryPageRequest) ([]*domain.DirectoryUser, int, error) {
+func (r *DirectoryIdentityRepositoryImpl) ListDirectoryUsersPage(ctx context.Context, connectorID uuid.UUID, request domain.DirectoryPageRequest) ([]*domain.DirectoryUser, int, error) {
 	request, err := accesscontract.NormalizeDirectoryUserPageRequest(request)
 	if err != nil {
 		return nil, 0, err
@@ -519,7 +551,7 @@ func (r *directoryIdentityRepository) ListDirectoryUsersPage(ctx context.Context
 	return items, total, nil
 }
 
-func (r *directoryIdentityRepository) UpsertDirectoryGroup(ctx context.Context, group domain.DirectoryGroup) (*domain.DirectoryGroup, error) {
+func (r *DirectoryIdentityRepositoryImpl) UpsertDirectoryGroup(ctx context.Context, group domain.DirectoryGroup) (*domain.DirectoryGroup, error) {
 	group.ExternalID = strings.TrimSpace(group.ExternalID)
 	group.DisplayName = strings.TrimSpace(group.DisplayName)
 	if group.ConnectorID == uuid.Nil || group.DisplayName == "" {
@@ -543,15 +575,15 @@ func (r *directoryIdentityRepository) UpsertDirectoryGroup(ctx context.Context, 
 	return stored, nil
 }
 
-func (r *directoryIdentityRepository) CreateDirectoryGroupWithMembers(ctx context.Context, group domain.DirectoryGroup, memberIDs []uuid.UUID) (*domain.DirectoryGroup, error) {
+func (r *DirectoryIdentityRepositoryImpl) CreateDirectoryGroupWithMembers(ctx context.Context, group domain.DirectoryGroup, memberIDs []uuid.UUID) (*domain.DirectoryGroup, error) {
 	return r.writeDirectoryGroupWithMembers(ctx, group, memberIDs, true)
 }
 
-func (r *directoryIdentityRepository) UpsertDirectoryGroupWithMembers(ctx context.Context, group domain.DirectoryGroup, memberIDs []uuid.UUID) (*domain.DirectoryGroup, error) {
+func (r *DirectoryIdentityRepositoryImpl) UpsertDirectoryGroupWithMembers(ctx context.Context, group domain.DirectoryGroup, memberIDs []uuid.UUID) (*domain.DirectoryGroup, error) {
 	return r.writeDirectoryGroupWithMembers(ctx, group, memberIDs, false)
 }
 
-func (r *directoryIdentityRepository) writeDirectoryGroupWithMembers(ctx context.Context, group domain.DirectoryGroup, memberIDs []uuid.UUID, createOnly bool) (*domain.DirectoryGroup, error) {
+func (r *DirectoryIdentityRepositoryImpl) writeDirectoryGroupWithMembers(ctx context.Context, group domain.DirectoryGroup, memberIDs []uuid.UUID, createOnly bool) (*domain.DirectoryGroup, error) {
 	group.ExternalID = strings.TrimSpace(group.ExternalID)
 	group.DisplayName = strings.TrimSpace(group.DisplayName)
 	if group.ConnectorID == uuid.Nil || group.DisplayName == "" {
@@ -635,7 +667,7 @@ func upsertDirectoryGroupTx(tx *gorm.DB, group domain.DirectoryGroup, createOnly
 	return item, nil
 }
 
-func (r *directoryIdentityRepository) GetDirectoryGroup(ctx context.Context, connectorID, groupID uuid.UUID) (*domain.DirectoryGroup, error) {
+func (r *DirectoryIdentityRepositoryImpl) GetDirectoryGroup(ctx context.Context, connectorID, groupID uuid.UUID) (*domain.DirectoryGroup, error) {
 	var item *domain.DirectoryGroup
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		group, err := getDirectoryGroupTx(tx, connectorID, groupID)
@@ -651,7 +683,7 @@ func (r *directoryIdentityRepository) GetDirectoryGroup(ctx context.Context, con
 	return item, nil
 }
 
-func (r *directoryIdentityRepository) ListDirectoryGroups(ctx context.Context, connectorID uuid.UUID) ([]*domain.DirectoryGroup, error) {
+func (r *DirectoryIdentityRepositoryImpl) ListDirectoryGroups(ctx context.Context, connectorID uuid.UUID) ([]*domain.DirectoryGroup, error) {
 	items := make([]*domain.DirectoryGroup, 0)
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		groups, err := listDirectoryGroupsTx(tx, connectorID)
@@ -670,7 +702,7 @@ func (r *directoryIdentityRepository) ListDirectoryGroups(ctx context.Context, c
 	return items, nil
 }
 
-func (r *directoryIdentityRepository) ListDirectoryGroupsPage(ctx context.Context, connectorID uuid.UUID, request domain.DirectoryPageRequest) ([]*domain.DirectoryGroup, int, error) {
+func (r *DirectoryIdentityRepositoryImpl) ListDirectoryGroupsPage(ctx context.Context, connectorID uuid.UUID, request domain.DirectoryPageRequest) ([]*domain.DirectoryGroup, int, error) {
 	request, err := accesscontract.NormalizeDirectoryGroupPageRequest(request)
 	if err != nil {
 		return nil, 0, err
@@ -736,7 +768,7 @@ func (r *directoryIdentityRepository) ListDirectoryGroupsPage(ctx context.Contex
 	return items, total, nil
 }
 
-func (r *directoryIdentityRepository) ReplaceDirectoryGroupMembers(ctx context.Context, connectorID, groupID uuid.UUID, memberIDs []uuid.UUID) error {
+func (r *DirectoryIdentityRepositoryImpl) ReplaceDirectoryGroupMembers(ctx context.Context, connectorID, groupID uuid.UUID, memberIDs []uuid.UUID) error {
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		return replaceDirectoryGroupMembersTx(tx, connectorID, groupID, memberIDs)
 	})
@@ -901,7 +933,7 @@ func listDirectoryGroupMembersTx(tx *gorm.DB, connectorID, groupID uuid.UUID) ([
 	return items, rows.Err()
 }
 
-func (r *directoryIdentityRepository) DirectoryConnectorSnapshot(ctx context.Context, connectorID uuid.UUID) (*domain.DirectoryConnectorSnapshot, error) {
+func (r *DirectoryIdentityRepositoryImpl) DirectoryConnectorSnapshot(ctx context.Context, connectorID uuid.UUID) (*domain.DirectoryConnectorSnapshot, error) {
 	var snapshot *domain.DirectoryConnectorSnapshot
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		connector, err := getDirectoryConnectorTx(tx, connectorID)

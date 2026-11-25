@@ -20,12 +20,6 @@ type ManagementEdit struct {
 	Members         []SourceHandle `json:"members,omitempty"`
 }
 
-type SaveEditsInput struct {
-	OperationKey string           `json:"operation_key" validate:"required,max=128"`
-	Reason       string           `json:"reason" validate:"required,max=512"`
-	Edits        []ManagementEdit `json:"edits" validate:"required,min=1,max=64"`
-}
-
 type SaveDraftInput struct {
 	OperationKey     string           `json:"operation_key"`
 	ExpectedVersion  int64            `json:"expected_version"`
@@ -132,9 +126,6 @@ type ManagementAudit func(ManagementAuditEvent) (audit.Entry, error)
 type ManagementPrepare func(ManagementContext) (Publication, error)
 
 type ManagementRepository interface {
-	SaveManagementEdits(context.Context, string, SaveEditsInput, ManagementAudit) (PublicationResult, error)
-	ReplayManagementDraft(context.Context, string, string, string, string, any) (ManagementDraft, error)
-	ReplayManagementRollback(context.Context, string, string, DraftCommand) (PublicationResult, error)
 	GetRecord(context.Context, string, string, int64) (RecordView, error)
 	ListRecords(context.Context, string, Kind, string, int) (Page, error)
 	ListManagementSources(context.Context, string, SourceKind, string, string, int) (ManagementSourcePage, error)

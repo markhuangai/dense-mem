@@ -49,6 +49,16 @@ var stagingEvidenceTables = []string{
 	"evidence_conflict_events",
 }
 
+type stagingRehearsalLogger struct {
+	t *testing.T
+}
+
+func (l stagingRehearsalLogger) Info(message string, args ...any) {
+	l.t.Log(message, args)
+}
+
+func (l stagingRehearsalLogger) Error(message string, args ...any) { l.t.Log(message, args) }
+
 func TestStagingMigrationRehearsal(t *testing.T) {
 	db, dsn := openStagingDatabase(t)
 

@@ -13,7 +13,7 @@ import (
 	searchapp "github.com/markhuangai/dense-mem/internal/search"
 )
 
-func (h *controlDiagnosticsHandler) getSearchConvergence(c *echo.Context) error {
+func (h *controlPortalHandler) getSearchConvergence(c *echo.Context) error {
 	if h.convergence == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "search convergence unavailable")
 	}

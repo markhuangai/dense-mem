@@ -235,7 +235,7 @@ func (h *userPortalHandler) getOwnerPrivateMemoryErasure(c *echo.Context) error 
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toPrivateMemoryOperation(operation, false)})
 }
 
-func (h *controlConfigHandler) getPrivateMemoryConfig(c *echo.Context) error {
+func (h *controlPortalHandler) getPrivateMemoryConfig(c *echo.Context) error {
 	if h.appConfig == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "app config service unavailable")
 	}
@@ -246,7 +246,7 @@ func (h *controlConfigHandler) getPrivateMemoryConfig(c *echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlPrivateMemoryConfig(settings)})
 }
 
-func (h *controlConfigHandler) updatePrivateMemoryConfig(c *echo.Context) error {
+func (h *controlPortalHandler) updatePrivateMemoryConfig(c *echo.Context) error {
 	if h.appConfig == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "app config service unavailable")
 	}
@@ -268,7 +268,7 @@ func (h *controlConfigHandler) updatePrivateMemoryConfig(c *echo.Context) error 
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlPrivateMemoryConfig(settings)})
 }
 
-func (h *controlAccessHandler) listPrivateMemorySpaces(c *echo.Context) error {
+func (h *controlPortalHandler) listPrivateMemorySpaces(c *echo.Context) error {
 	limit, offset := controlPagination(c)
 	spaces, err := h.privateMemory.ListSpaces(c.Request().Context(), limit, offset)
 	if err != nil {
@@ -281,7 +281,7 @@ func (h *controlAccessHandler) listPrivateMemorySpaces(c *echo.Context) error {
 	return c.JSON(nethttp.StatusOK, newPrivateMemoryPage(items, limit, offset))
 }
 
-func (h *controlAccessHandler) placePrivateMemoryLegalHold(c *echo.Context) error {
+func (h *controlPortalHandler) placePrivateMemoryLegalHold(c *echo.Context) error {
 	spaceID, err := privateMemoryUUIDParam(c, "spaceId", "space ID")
 	if err != nil {
 		return err
@@ -298,7 +298,7 @@ func (h *controlAccessHandler) placePrivateMemoryLegalHold(c *echo.Context) erro
 	return c.JSON(status, map[string]any{"data": toPrivateMemoryLegalHold(hold)})
 }
 
-func (h *controlAccessHandler) releasePrivateMemoryLegalHold(c *echo.Context) error {
+func (h *controlPortalHandler) releasePrivateMemoryLegalHold(c *echo.Context) error {
 	spaceID, err := privateMemoryUUIDParam(c, "spaceId", "space ID")
 	if err != nil {
 		return err
@@ -315,7 +315,7 @@ func (h *controlAccessHandler) releasePrivateMemoryLegalHold(c *echo.Context) er
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": map[string]any{"released": released, "hold": response}})
 }
 
-func (h *controlAccessHandler) requestControlPrivateMemoryErasure(c *echo.Context) error {
+func (h *controlPortalHandler) requestControlPrivateMemoryErasure(c *echo.Context) error {
 	spaceID, err := privateMemoryUUIDParam(c, "spaceId", "space ID")
 	if err != nil {
 		return err
@@ -327,7 +327,7 @@ func (h *controlAccessHandler) requestControlPrivateMemoryErasure(c *echo.Contex
 	return c.JSON(nethttp.StatusAccepted, map[string]any{"data": toPrivateMemoryOperation(operation, true)})
 }
 
-func (h *controlAccessHandler) listPrivateMemoryErasures(c *echo.Context) error {
+func (h *controlPortalHandler) listPrivateMemoryErasures(c *echo.Context) error {
 	limit, offset := controlPagination(c)
 	operations, err := h.privateMemory.ListOperations(c.Request().Context(), limit, offset)
 	if err != nil {
@@ -340,7 +340,7 @@ func (h *controlAccessHandler) listPrivateMemoryErasures(c *echo.Context) error 
 	return c.JSON(nethttp.StatusOK, newPrivateMemoryPage(items, limit, offset))
 }
 
-func (h *controlAccessHandler) getPrivateMemoryErasure(c *echo.Context) error {
+func (h *controlPortalHandler) getPrivateMemoryErasure(c *echo.Context) error {
 	operationID, err := privateMemoryUUIDParam(c, "operationId", "operation ID")
 	if err != nil {
 		return err
@@ -355,7 +355,7 @@ func (h *controlAccessHandler) getPrivateMemoryErasure(c *echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toPrivateMemoryOperation(operation, true)})
 }
 
-func (h *controlAccessHandler) runPrivateMemoryRetention(c *echo.Context) error {
+func (h *controlPortalHandler) runPrivateMemoryRetention(c *echo.Context) error {
 	run, err := h.privateMemory.RunRetention(c.Request().Context(), privateMemoryCommand(c), domain.PrivateMemoryActorControl)
 	if err != nil {
 		return privateMemoryHTTPError(err)
@@ -363,7 +363,7 @@ func (h *controlAccessHandler) runPrivateMemoryRetention(c *echo.Context) error 
 	return c.JSON(nethttp.StatusAccepted, map[string]any{"data": toPrivateMemoryRetentionRun(run)})
 }
 
-func (h *controlAccessHandler) listPrivateMemoryRetentionRuns(c *echo.Context) error {
+func (h *controlPortalHandler) listPrivateMemoryRetentionRuns(c *echo.Context) error {
 	limit, offset := controlPagination(c)
 	runs, err := h.privateMemory.ListRetentionRuns(c.Request().Context(), limit, offset)
 	if err != nil {

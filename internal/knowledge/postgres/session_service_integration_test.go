@@ -25,7 +25,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/provider/structured"
-	processor "github.com/markhuangai/dense-mem/internal/remember/service"
+	processor "github.com/markhuangai/dense-mem/internal/remember/service/processor"
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
 	"github.com/markhuangai/dense-mem/internal/session/extraction"
@@ -52,7 +52,7 @@ func TestEvidenceOnlyPostgresMigratedSessionResumesUnchangedRequest(t *testing.T
 	other := createLedgerProfile(t, admin, rls, team, "other")
 	ctx, original := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
 	otherCtx, _ := sessionIntakeFixture(t, admin, app, rls, team, other, domain.MemorySpacePrivate)
-	store := newSessionFixtureStore(app, rls)
+	store := NewStore(app, rls)
 	type retainedSession struct {
 		intake session.Intake
 		id     string
@@ -315,7 +315,7 @@ func TestSessionServiceDurableFailureRecoveryNoFactsAndReplay(t *testing.T) {
 	owner := createLedgerProfile(t, admin, rls, team, "owner")
 	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
 	intake.Request.Events[0].Text = "Thanks. Let's continue."
-	store := newSessionFixtureStore(app, rls)
+	store := NewStore(app, rls)
 	outbound := &sessionOutbound{fail: true}
 	preparer := processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store})
 	deps := service.Dependencies{Enabled: true, Repository: store, Preparer: preparer, Tokenizer: "o200k_base", Extractor: extraction.NewProvider(outbound, "fixture", assessor.DefaultSemanticAssessmentLimits())}
@@ -369,7 +369,7 @@ func TestSessionServiceCancellationAndTimeoutRetainIntakeWithoutKnowledge(t *tes
 	team := createLedgerTeam(t, admin, rls, "session-cancel")
 	owner := createLedgerProfile(t, admin, rls, team, "owner")
 	base, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
-	store := newSessionFixtureStore(app, rls)
+	store := NewStore(app, rls)
 	for _, mode := range []string{"cancel", "timeout"} {
 		t.Run(mode, func(t *testing.T) {
 			req := intake.Request
@@ -429,7 +429,7 @@ func TestSessionServiceBudgetRejectionHasNoIntake(t *testing.T) {
 	team := createLedgerTeam(t, admin, rls, "session-budget")
 	owner := createLedgerProfile(t, admin, rls, team, "owner")
 	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
-	store := newSessionFixtureStore(app, rls)
+	store := NewStore(app, rls)
 	outbound := &sessionOutbound{}
 	api := service.NewService(service.Dependencies{Enabled: true, Repository: store, Preparer: processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store}), Tokenizer: "o200k_base", Extractor: extraction.NewProvider(outbound, "fixture", assessor.DefaultSemanticAssessmentLimits())})
 	intake.Request.Events[0].Text = strings.Repeat("🧭", 100000)
@@ -453,7 +453,7 @@ func TestSessionServiceResumesValidatedExtractionCheckpoint(t *testing.T) {
 	require.Greater(t, len(intake.Windows), 1)
 	intake.RequestHash, err = service.RequestHash(intake.Request)
 	require.NoError(t, err)
-	store := newSessionFixtureStore(app, rls)
+	store := NewStore(app, rls)
 	staged, err := store.StageSession(ctx, intake)
 	require.NoError(t, err)
 	window := staged.Intake.Windows[0]
@@ -478,7 +478,7 @@ func TestSessionHTTPProviderFailureReceiptsPreserveActualClassifications(t *test
 	team := createLedgerTeam(t, admin, rls, "session-http-failures")
 	owner := createLedgerProfile(t, admin, rls, team, "owner")
 	base, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
-	store := newSessionFixtureStore(app, rls)
+	store := NewStore(app, rls)
 	for _, mode := range []string{"rate-limit", "provider-timeout", "caller-timeout", "caller-cancel"} {
 		t.Run(mode, func(t *testing.T) {
 			entered := make(chan struct{}, 1)
@@ -576,7 +576,7 @@ func TestEvidenceOnlyPostgresSessionExcerptsDiagnosticsAndCheckpointRecovery(t *
 	}))
 	defer server.Close()
 	transport := structured.NewOpenAI(&config.Config{AIVerifierAPIURL: server.URL, AIVerifierAPIKey: "fixture-provider-key", AIVerifierModel: "fixture", AIVerifierMaxConcurrency: 4}, server.Client())
-	store := newSessionFixtureStore(app, rls)
+	store := NewStore(app, rls)
 	embedder := &sessionFactsEmbedder{}
 	protector := observability.NewCredentialProtector("fixture-provider-key")
 	preparer := processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store, Assessor: transport, EmbeddingExecutor: semanticwrite.NewProviderExecutor(embedder), Limits: assessor.DefaultSemanticAssessmentLimits(), DiagnosticProtector: protector})

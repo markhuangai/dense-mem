@@ -162,3 +162,15 @@ type TelemetryPricingReader interface {
 type AuthorityReader interface {
 	GetLatestMarker(context.Context) (*domain.CompatibilityMarker, error)
 }
+
+// AuthorityStore reads and, during bootstrap only, records the compatibility marker.
+type AuthorityStore interface {
+	AuthorityReader
+	CommitFreshAuthority(context.Context, CommitFreshAuthorityInput) (*domain.CompatibilityMarker, error)
+}
+
+type CommitFreshAuthorityInput struct {
+	MarkerVersion string
+	Metadata      map[string]any
+	Now           time.Time
+}

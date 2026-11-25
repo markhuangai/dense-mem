@@ -75,17 +75,6 @@ type RecallFeedbackBatchFailure struct {
 	Remediation    string
 }
 
-// MarkFeedbackSnapshotUnavailable adds the optional feedback outcome after retrieval outcomes.
-func MarkFeedbackSnapshotUnavailable(result *RecallResult) {
-	result.Degradations = append(result.Degradations, RecallDegradationResult{
-		Frontier: "feedback",
-		Optional: true,
-		Code:     "recall_feedback_snapshot_unavailable",
-		Message:  "Recall succeeded, but session feedback is unavailable for this result.",
-	})
-	result.Degradation = &result.Degradations[0]
-}
-
 // SubmitRecallFeedbackBatch applies feedback in request order and records a
 // metric only after each persistence operation succeeds.
 func SubmitRecallFeedbackBatch(

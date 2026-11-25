@@ -23,7 +23,7 @@ type controlEvidenceConflictResolutionRequest struct {
 	PreferredPositionID *string `json:"preferred_position_id"`
 }
 
-func (h *controlAccessHandler) listEvidenceConflicts(c *echo.Context) error {
+func (h *controlPortalHandler) listEvidenceConflicts(c *echo.Context) error {
 	c.Response().Header().Set("Cache-Control", "no-store")
 	if h.evidenceConflicts == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "evidence conflicts unavailable")
@@ -48,7 +48,7 @@ func (h *controlAccessHandler) listEvidenceConflicts(c *echo.Context) error {
 	return response.SuccessOK(c, page)
 }
 
-func (h *controlAccessHandler) getEvidenceConflict(c *echo.Context) error {
+func (h *controlPortalHandler) getEvidenceConflict(c *echo.Context) error {
 	c.Response().Header().Set("Cache-Control", "no-store")
 	if h.evidenceConflicts == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "evidence conflicts unavailable")
@@ -75,7 +75,7 @@ func (h *controlAccessHandler) getEvidenceConflict(c *echo.Context) error {
 	return response.SuccessOK(c, detail)
 }
 
-func (h *controlAccessHandler) resolveEvidenceConflict(c *echo.Context) error {
+func (h *controlPortalHandler) resolveEvidenceConflict(c *echo.Context) error {
 	c.Response().Header().Set("Cache-Control", "no-store")
 	if h.evidenceConflicts == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "evidence conflicts unavailable")

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
@@ -24,9 +25,21 @@ func (s *AppConfigServiceImpl) UpdateRecallFeedbackSettings(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	updated, _, err := updateConfigSection(ctx, s,
-		configSectionUpdate{"recall_feedback", normalized, actorRole, clientIP, correlationID}, recallFeedbackRuntimeConfigFromEntries, recallFeedbackSettingsPayload)
-	return updated, err
+	before, _ := s.GetRecallFeedbackSettings(ctx)
+	now := s.now().UTC()
+	changed, err := s.repo.UpdateValues(ctx, normalized, now.Format(time.RFC3339Nano), now)
+	if err != nil {
+		return nil, err
+	}
+	s.invalidate()
+	updated, err := s.GetRecallFeedbackSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if changed {
+		s.appendAudit("APP_CONFIG_UPDATE", "app_config", "recall_feedback", actorRole, clientIP, correlationID, recallFeedbackSettingsPayload(before), recallFeedbackSettingsPayload(updated), map[string]any{"section": "recall_feedback"})
+	}
+	return updated, nil
 }
 
 func (s *AppConfigServiceImpl) RecallFeedbackRuntimeConfig(ctx context.Context) (domain.RecallFeedbackRuntimeConfig, error) {

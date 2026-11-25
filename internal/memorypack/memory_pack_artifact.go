@@ -77,26 +77,22 @@ func normalizeMemoryPackArtifact(artifact MemoryPackArtifact) MemoryPackArtifact
 	artifact.Description = strings.TrimSpace(artifact.Description)
 	artifact.Evidence = append([]MemoryPackEvidence{}, artifact.Evidence...)
 	for index := range artifact.Evidence {
-		artifact.Evidence[index] = normalizeMemoryPackItem(artifact.Evidence[index])
+		item := &artifact.Evidence[index]
+		item.Occurrences = append([]tracecontract.TraceEvidenceFragment{}, item.Occurrences...)
+		item.SourceRevisions = append([]tracecontract.TraceSourceRevision{}, item.SourceRevisions...)
+		item.Decisions = append([]tracecontract.TraceEvidenceDecision{}, item.Decisions...)
+		item.Lifecycle = append([]tracecontract.TraceEvidenceLifecycleEvent{}, item.Lifecycle...)
+		item.Omissions = append([]string{}, item.Omissions...)
+		sort.Slice(item.Occurrences, func(i, j int) bool { return item.Occurrences[i].OccurrenceID < item.Occurrences[j].OccurrenceID })
+		sort.Slice(item.SourceRevisions, func(i, j int) bool {
+			return item.SourceRevisions[i].SourceRevisionID < item.SourceRevisions[j].SourceRevisionID
+		})
+		sort.Slice(item.Decisions, func(i, j int) bool { return item.Decisions[i].DecisionID < item.Decisions[j].DecisionID })
+		sort.Slice(item.Lifecycle, func(i, j int) bool { return item.Lifecycle[i].LifecycleEventID < item.Lifecycle[j].LifecycleEventID })
+		sort.Strings(item.Omissions)
 	}
 	sort.Slice(artifact.Evidence, func(i, j int) bool { return artifact.Evidence[i].FragmentID < artifact.Evidence[j].FragmentID })
 	artifact.Omissions = append([]string{}, artifact.Omissions...)
 	sort.Strings(artifact.Omissions)
 	return artifact
-}
-
-func normalizeMemoryPackItem(item MemoryPackEvidence) MemoryPackEvidence {
-	item.Occurrences = append([]tracecontract.TraceEvidenceFragment{}, item.Occurrences...)
-	item.SourceRevisions = append([]tracecontract.TraceSourceRevision{}, item.SourceRevisions...)
-	item.Decisions = append([]tracecontract.TraceEvidenceDecision{}, item.Decisions...)
-	item.Lifecycle = append([]tracecontract.TraceEvidenceLifecycleEvent{}, item.Lifecycle...)
-	item.Omissions = append([]string{}, item.Omissions...)
-	sort.Slice(item.Occurrences, func(i, j int) bool { return item.Occurrences[i].OccurrenceID < item.Occurrences[j].OccurrenceID })
-	sort.Slice(item.SourceRevisions, func(i, j int) bool {
-		return item.SourceRevisions[i].SourceRevisionID < item.SourceRevisions[j].SourceRevisionID
-	})
-	sort.Slice(item.Decisions, func(i, j int) bool { return item.Decisions[i].DecisionID < item.Decisions[j].DecisionID })
-	sort.Slice(item.Lifecycle, func(i, j int) bool { return item.Lifecycle[i].LifecycleEventID < item.Lifecycle[j].LifecycleEventID })
-	sort.Strings(item.Omissions)
-	return item
 }

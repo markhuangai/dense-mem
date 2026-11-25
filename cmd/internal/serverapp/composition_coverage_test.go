@@ -159,8 +159,11 @@ func TestCompositionHelpersCoverTelemetryAndMaintenanceBranches(t *testing.T) {
 	if err == nil || searchStore != nil || !strings.Contains(err.Error(), "database") {
 		t.Fatalf("invalid search database result = %v, store=%v", err, searchStore)
 	}
-	if got := closeOptionalListener(nil); got != nil {
+	if got := controlListenerClose(nil); got != nil {
 		t.Fatalf("nil control listener close = %v", got)
+	}
+	if got := telemetryListenerClose(nil); got != nil {
+		t.Fatalf("nil telemetry listener close = %v", got)
 	}
 	if !isExpectedServerClose(nil) || !isExpectedServerClose(http.ErrServerClosed) || isExpectedServerClose(errors.New("unexpected")) {
 		t.Fatal("server close classification was incorrect")
@@ -394,7 +397,7 @@ func TestTelemetryCompositionUsesConfiguredQueryAdapter(t *testing.T) {
 			var requests atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests.Add(1)
-				query := r.FormValue("query")
+				query := r.URL.Query().Get("query")
 				if !strings.Contains(query, `job="composition-job"`) {
 					t.Errorf("configured job missing from %q", query)
 				}
@@ -402,11 +405,7 @@ func TestTelemetryCompositionUsesConfiguredQueryAdapter(t *testing.T) {
 					w.WriteHeader(http.StatusServiceUnavailable)
 					return
 				}
-				if r.URL.Path == "/api/v1/query_range" {
-					_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"matrix","result":[{"values":[[1770000000,"7"]]}]}}`))
-					return
-				}
-				_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"value":[1770000000,"7"]}]}}`))
+				_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"value":[1770000000,"7"],"values":[[1770000000,"7"]]}]}}`))
 			}))
 			defer server.Close()
 			composed, err := buildTelemetryApplication(context.Background(), config.Config{TelemetryEnabled: true, TelemetryPrometheusURL: " " + server.URL + "/ ", TelemetryPrometheusJob: "composition-job", TelemetryQueryTimeoutSeconds: 1}, telemetryPricingStub{}, nil, observability.New(0), observability.NewCredentialProtector())

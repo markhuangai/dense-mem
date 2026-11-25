@@ -98,7 +98,7 @@ func DiagnosticCaptureFromContext(ctx context.Context) *DiagnosticCapture {
 }
 
 // ResultKind identifies a terminal result for internal transport composition.
-type ResultKind = repository.ResultKind
+type ResultKind string
 
 const (
 	ResultKindTerminal ResultKind = "terminal"
@@ -158,8 +158,36 @@ type RememberProcessRequest struct {
 	OriginalRequest []byte
 }
 
-type TerminalRememberResult = repository.RememberReceipt
-type TerminalEvidenceResult = repository.SubmissionEvidenceStatus
+type TerminalRememberResult struct {
+	SpaceKind       domain.MemorySpaceKind   `json:"space_kind,omitempty"`
+	ContractVersion string                   `json:"contract_version"`
+	SubmissionID    string                   `json:"submission_id"`
+	SubmissionKind  string                   `json:"submission_kind"`
+	ProcessingState string                   `json:"processing_state"`
+	SearchState     string                   `json:"search_state"`
+	CorrelationID   string                   `json:"correlation_id"`
+	Evidence        []TerminalEvidenceResult `json:"evidence"`
+	Errors          []SubmissionStatusError  `json:"errors"`
+	Warnings        []string                 `json:"warnings,omitempty"`
+	Kind            ResultKind               `json:"-"`
+}
+
+type TerminalEvidenceResult struct {
+	PartitionIndex        *int     `json:"partition_index,omitempty"`
+	SourceItemID          string   `json:"source_item_id,omitempty"`
+	SpanStart             *int     `json:"span_start,omitempty"`
+	SpanEnd               *int     `json:"span_end,omitempty"`
+	OccurrenceID          string   `json:"occurrence_id,omitempty"`
+	Disposition           string   `json:"disposition"`
+	EvidenceID            string   `json:"evidence_id,omitempty"`
+	ContentHash           string   `json:"content_hash,omitempty"`
+	EvidenceIndex         int      `json:"evidence_index"`
+	SupersededEvidenceIDs []string `json:"superseded_evidence_ids"`
+	SearchState           string   `json:"search_state"`
+	Reason                string   `json:"reason,omitempty"`
+	Message               string   `json:"message,omitempty"`
+	Remediation           string   `json:"remediation,omitempty"`
+}
 
 type TerminalProcessingState string
 

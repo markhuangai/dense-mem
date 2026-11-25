@@ -48,9 +48,11 @@ type ProtectedDeps struct {
 }
 
 // RegisterProtectedRoutesWithHandlers registers protected API routes with the
-// middleware chain required for authentication, team resolution, rate
+// middleware chain required for authentication, team authorization, rate
 // limiting, route-specific validation, and handler execution.
 func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handlers ProtectedHandlers) {
+	// Create team authorization service from audit service.
+	teamAuthzSvc := middleware.NewTeamAuthorizationService(deps.AuditService)
 	credentialAuthMW := middleware.AuthMiddlewareWithOptions(deps.CredentialRepo, deps.AuditService, deps.SecurityService, middleware.AuthOptions{
 		CredentialVerifier:       deps.CredentialVerifier,
 		CredentialLookupPrefixes: deps.CredentialLookupPrefixes,
@@ -66,6 +68,7 @@ func RegisterProtectedRoutesWithHandlers(e *echo.Echo, deps ProtectedDeps, handl
 		group.Use(challengeMW)
 		group.Use(credentialAuthMW)
 		group.Use(middleware.TeamResolutionMiddleware(deps.TeamSvc))
+		group.Use(middleware.AuthorizeTeam(teamAuthzSvc))
 		group.Use(deps.PostAuthMiddleware...)
 		group.Use(usageMW)
 		group.Use(rateLimitMW)

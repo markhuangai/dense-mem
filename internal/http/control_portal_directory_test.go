@@ -27,7 +27,7 @@ func TestControlDirectoryConnectorHandlersDriveLifecycle(t *testing.T) {
 		oauthTokens: make(map[string]directorySCIMOAuthToken),
 	}
 	directory := accessservice.NewDirectoryIdentityService(repo, accessservice.DirectoryIdentityConfig{})
-	handler := &controlIdentityHandler{directory: directory}
+	handler := &controlPortalHandler{directory: directory}
 	providerID := uuid.New()
 	connectorBody := `{"group_pattern":"^(?P<team>.+?)(?P<role>Readonly|Member|Manager)$","role_entitlements":{"Readonly":{"role":"member","scopes":["read"]},"Member":{"role":"member","scopes":["read","write"]},"Manager":{"role":"manager","scopes":["read","write","feedback:read"]}},"max_auto_teams":5}`
 
@@ -121,7 +121,7 @@ func TestControlDirectoryConnectorHandlersDriveLifecycle(t *testing.T) {
 func TestControlDirectoryErrorsAndResponseMapping(t *testing.T) {
 	t.Parallel()
 
-	handler := &controlIdentityHandler{}
+	handler := &controlPortalHandler{}
 	c, _ := controlDirectoryContext(nethttp.MethodGet, "", nil)
 	err := handler.listDirectoryConnectors(c)
 	require.Error(t, err)
@@ -145,9 +145,9 @@ func TestControlDirectoryErrorsAndResponseMapping(t *testing.T) {
 		code httperr.ErrorCode
 	}{
 		{accessservice.ErrDirectoryConnectorDisabled, httperr.CONFLICT},
-		{accessservice.ErrDirectoryResourceNotFound, httperr.NOT_FOUND},
+		{assertError("directory connector not found"), httperr.NOT_FOUND},
 		{accessservice.ErrDirectoryPreviewStale, httperr.CONFLICT},
-		{accessservice.ErrDirectoryInvalidValue, httperr.VALIDATION_ERROR},
+		{assertError("directory role entitlement is invalid"), httperr.VALIDATION_ERROR},
 		{assertError("storage unavailable"), httperr.INTERNAL_ERROR},
 	} {
 		mapped := controlDirectoryServiceError(testCase.err)
@@ -176,7 +176,7 @@ func TestControlDirectoryHandlersValidateIdentifiersBodiesAndServiceFailures(t *
 	t.Parallel()
 
 	ctx := context.Background()
-	unavailable := &controlIdentityHandler{directory: accessservice.NewDirectoryIdentityService(nil, accessservice.DirectoryIdentityConfig{})}
+	unavailable := &controlPortalHandler{directory: accessservice.NewDirectoryIdentityService(nil, accessservice.DirectoryIdentityConfig{})}
 	validID := uuid.NewString()
 
 	c, _ := controlDirectoryContext(nethttp.MethodGet, "", nil)
@@ -229,7 +229,7 @@ func TestControlDirectoryHandlersValidateIdentifiersBodiesAndServiceFailures(t *
 		MaxAutoTeams:     1,
 	})
 	require.NoError(t, err)
-	handler := &controlIdentityHandler{directory: directory}
+	handler := &controlPortalHandler{directory: directory}
 	c, _ = controlDirectoryContext(nethttp.MethodPatch, "{", map[string]string{"connectorId": connector.ID.String()})
 	require.Error(t, handler.updateDirectoryConnector(c))
 	c, _ = controlDirectoryContext(nethttp.MethodPatch, "{}", map[string]string{"connectorId": connector.ID.String()})

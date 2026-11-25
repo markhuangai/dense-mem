@@ -41,10 +41,6 @@ func (r *Store) withRememberIdempotencyLock(
 	return r.withRememberLock(ctx, teamID, ownerProfileID, idempotencyKey, fn, true)
 }
 
-func (r *Store) WithSubmissionLock(ctx context.Context, teamID, ownerID, key string, fn func() error) error {
-	return r.withRememberLock(ctx, teamID, ownerID, key, func(bool) error { return fn() }, false)
-}
-
 func (r *Store) withRememberLock(ctx context.Context, teamID, ownerProfileID, idempotencyKey string, fn func(bool) error, coalesce bool) error {
 	if r == nil || r.db == nil {
 		return errors.New("remember idempotency lock: database is required")

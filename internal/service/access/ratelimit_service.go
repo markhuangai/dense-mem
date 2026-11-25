@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"time"
-
-	storage "github.com/markhuangai/dense-mem/internal/storage/redis"
 )
 
 // RateLimitServiceInterface is the companion interface for RateLimitService.
@@ -49,10 +47,8 @@ func (s *RateLimitService) Check(ctx context.Context, subjectID, routePath strin
 	windowStart := time.Unix(windowStartUnix, 0).UTC()
 	resetAt = windowStart.Add(60 * time.Second)
 
-	key, err := storage.NewKeyBuilder().RateLimit(subjectID, fmt.Sprintf("%s:%d", routePath, windowStartUnix))
-	if err != nil {
-		return false, 0, resetAt, err
-	}
+	// Build the rate limit key directly
+	key := fmt.Sprintf("profile:%s:ratelimit:%s:%d", subjectID, routePath, windowStartUnix)
 
 	// Increment and set expire atomically (70s expiry for 60s window to handle clock skew)
 	count, err := s.store.IncrWithExpire(ctx, key, 70)

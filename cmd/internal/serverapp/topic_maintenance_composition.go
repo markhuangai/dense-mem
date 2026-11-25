@@ -1,7 +1,6 @@
 package serverapp
 
 import (
-	"context"
 	"log/slog"
 	"time"
 
@@ -22,9 +21,7 @@ func buildTopicMaintenance(store topicMaintenanceStore, config topics.Maintenanc
 		Diagnostics: diagnostics, Organizer: func(model string, contextWindowTokens int64, accounting assessment.AttemptAccounting) *topics.Service {
 			configured := limits
 			configured.ProviderModel = model
-			return topics.NewService(store, assessment.NewProviderWithAccounting(transport, model, configured, accounting, int(contextWindowTokens)).WithLogger(logger)).WithDiagnostics(diagnostics.Observe, func(ctx context.Context) bool {
-				return logger != nil && logger.Enabled(ctx, slog.LevelDebug)
-			})
+			return topics.NewService(store, assessment.NewProviderWithAccounting(transport, model, configured, accounting, int(contextWindowTokens)).WithLogger(logger)).WithDiagnostics(diagnostics.Observe)
 		},
 	})
 }

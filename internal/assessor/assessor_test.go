@@ -2,11 +2,10 @@ package assessor
 
 import (
 	"encoding/json"
-	"strings"
-	"testing"
-
 	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	"strings"
+	"testing"
 
 	"github.com/stretchr/testify/require"
 )
@@ -152,6 +151,21 @@ func semanticAssessmentPreparedTestRequest(t *testing.T) (SemanticAssessmentRequ
 
 func semanticAssessmentTestResponse() SemanticAssessmentResponse {
 	return SemanticAssessmentResponse{RequestID: "assess-1", EvidenceSecurityResults: []SemanticAssessmentEvidenceSecurityResult{{EvidenceID: "ev-1", Decision: "pass", Signals: []SemanticAssessmentSecuritySignal{}}}, EvidenceEquivalenceResults: []SemanticAssessmentEvidenceEquivalenceResult{}, EvidenceConflictResults: []SemanticAssessmentEvidenceConflictResult{}}
+}
+
+func semanticAssessmentTestRange(evidence SemanticReviewEvidence, start, end int) SemanticAssessmentGroundedRange {
+	startRef, startOK := SemanticAssessmentBoundaryRef(evidence, start)
+	endRef, endOK := SemanticAssessmentBoundaryRef(evidence, end)
+	if !startOK || !endOK {
+		panic("semantic assessment test boundary is missing")
+	}
+	return SemanticAssessmentGroundedRange{
+		EvidenceID: evidence.EvidenceID,
+		StartRef:   startRef,
+		EndRef:     endRef,
+		Start:      start,
+		End:        end,
+	}
 }
 
 func stringPointer(value string) *string {

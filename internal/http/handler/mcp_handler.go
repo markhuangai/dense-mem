@@ -1,10 +1,11 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
+	"io"
 	"net/http"
 	"strings"
 
@@ -22,7 +23,7 @@ import (
 type MCPHandler struct {
 	operationObserver    mcp.OperationObserver
 	reg                  registry.Registry
-	logger               *slog.Logger
+	logger               mcp.Logger
 	lifecycle            sse.StreamLifecycle
 	recallFeedbackConfig registry.RecallFeedbackConfigProvider
 }
@@ -32,17 +33,17 @@ func (h *MCPHandler) SetOperationObserver(observer mcp.OperationObserver) {
 }
 
 // NewMCPHandler constructs a Streamable HTTP MCP handler.
-func NewMCPHandler(reg registry.Registry, logger *slog.Logger) *MCPHandler {
+func NewMCPHandler(reg registry.Registry, logger mcp.Logger) *MCPHandler {
 	return &MCPHandler{reg: reg, logger: logger}
 }
 
-func NewMCPHandlerWithLifecycle(reg registry.Registry, logger *slog.Logger, lifecycle sse.StreamLifecycle) *MCPHandler {
+func NewMCPHandlerWithLifecycle(reg registry.Registry, logger mcp.Logger, lifecycle sse.StreamLifecycle) *MCPHandler {
 	return &MCPHandler{reg: reg, logger: logger, lifecycle: lifecycle}
 }
 
 // NewMCPHandlerWithLifecycleAndRuntimeConfig constructs a Streamable HTTP MCP
 // handler with runtime feature visibility.
-func NewMCPHandlerWithLifecycleAndRuntimeConfig(reg registry.Registry, logger *slog.Logger, lifecycle sse.StreamLifecycle, recallFeedbackConfig registry.RecallFeedbackConfigProvider) *MCPHandler {
+func NewMCPHandlerWithLifecycleAndRuntimeConfig(reg registry.Registry, logger mcp.Logger, lifecycle sse.StreamLifecycle, recallFeedbackConfig registry.RecallFeedbackConfigProvider) *MCPHandler {
 	return &MCPHandler{reg: reg, logger: logger, lifecycle: lifecycle, recallFeedbackConfig: recallFeedbackConfig}
 }
 
@@ -78,14 +79,18 @@ func (h *MCPHandler) handleSDKPost(c *echo.Context, teamID uuid.UUID, principal 
 	// caller requested a single response mode. Preserve the caller's mode for
 	// JSONResponse above while normalizing only the transport header.
 	request.Header.Set("Accept", "application/json, text/event-stream")
-	if err := mcp.PrepareSDKRequest(request); err != nil {
-		if errors.Is(err, mcp.ErrSDKRequestTooLarge) {
-			return writeSDKProtocolError(c, http.StatusRequestEntityTooLarge, nil, err.Error())
+	if request.Body != nil {
+		payload, err := io.ReadAll(io.LimitReader(request.Body, 4<<20+1))
+		if err != nil {
+			return httperr.New(httperr.VALIDATION_ERROR, "failed to read request body")
 		}
-		return httperr.New(httperr.VALIDATION_ERROR, "failed to read request body")
-	}
-	if id, version, ok := mcp.SDKInitializeVersion(request); ok && !sdkSupportedProtocolVersion(version) {
-		return writeSDKProtocolError(c, http.StatusBadRequest, id, "unsupported protocolVersion")
+		if len(payload) > 4<<20 {
+			return writeSDKProtocolError(c, http.StatusRequestEntityTooLarge, nil, "request body exceeds limit")
+		}
+		request.Body = io.NopCloser(bytes.NewReader(payload))
+		if id, version, ok := sdkInitializePayload(payload); ok && !sdkSupportedProtocolVersion(version) {
+			return writeSDKProtocolError(c, http.StatusBadRequest, id, "unsupported protocolVersion")
+		}
 	}
 
 	team := mcp.TeamContext{}
@@ -134,6 +139,21 @@ func validateSDKProtocolHeader(value string) error {
 		return nil
 	}
 	return errors.New("unsupported MCP protocol version")
+}
+
+func sdkInitializePayload(payload []byte) (json.RawMessage, string, bool) {
+	var envelope struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Method  string          `json:"method"`
+		Params  struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		} `json:"params"`
+	}
+	if json.Unmarshal(payload, &envelope) != nil || envelope.JSONRPC != "2.0" || envelope.Method != "initialize" {
+		return nil, "", false
+	}
+	return envelope.ID, envelope.Params.ProtocolVersion, strings.TrimSpace(envelope.Params.ProtocolVersion) != ""
 }
 
 type discardSSEWriter struct{}

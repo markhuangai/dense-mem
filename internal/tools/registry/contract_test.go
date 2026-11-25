@@ -463,3 +463,11 @@ func cloneMap(in map[string]any) map[string]any {
 	}
 	return out
 }
+
+func mergeMap(left map[string]any, right map[string]any) map[string]any {
+	out := cloneMap(left)
+	for key, value := range right {
+		out[key] = value
+	}
+	return out
+}

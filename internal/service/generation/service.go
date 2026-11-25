@@ -28,7 +28,6 @@ type Task[T any] struct {
 	ID, Capability, Tokenizer, Correction string
 	Request                               modelprovider.StructuredRequest
 	InitialInputLimit                     int
-	RepairTokenReserve                    int
 	ResponsesConsumed                     int
 	Validate                              func(context.Context, []byte) (T, error)
 	BeforeRepair                          func(context.Context, Attempt) error
@@ -135,7 +134,7 @@ func (s Service[T]) Run(ctx context.Context, task Task[T]) (final Result[T], ter
 		if err := decoder.Decode(&request.Schema); err != nil {
 			return final, invalidEnvelope(task.Capability, err)
 		}
-		inputLimit := request.MaxInputTokens - (modelprovider.StructuredResponseLimit-turn)*task.RepairTokenReserve
+		inputLimit := request.MaxInputTokens
 		if turn == task.ResponsesConsumed+1 && task.InitialInputLimit > 0 {
 			inputLimit = min(inputLimit, task.InitialInputLimit)
 		}
@@ -251,12 +250,8 @@ func (s Service[T]) Run(ctx context.Context, task Task[T]) (final Result[T], ter
 		if err != nil {
 			return final, invalidEnvelope(task.Capability, err)
 		}
-		previous := reply.Content
-		if attempt.OutputTokens > request.MaxOutputTokens || len(previous) > modelprovider.MaxProviderDiagnosticBodyBytes {
-			previous = omittedAssistant
-		}
 		request.Messages = append(request.Messages,
-			modelprovider.Message{Role: "assistant", Content: previous},
+			modelprovider.Message{Role: "assistant", Content: reply.Content},
 			modelprovider.Message{Role: "user", Content: string(feedback)},
 		)
 	}

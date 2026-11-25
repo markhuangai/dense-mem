@@ -272,6 +272,19 @@ func validateSourceRevisionFields(index int, fields map[string]any) error {
 	return nil
 }
 
+func validateRequiredFields(args map[string]any, fields ...string) error {
+	for _, field := range fields {
+		value, ok := args[field]
+		if !ok {
+			return fmt.Errorf("%s is required for action %s", field, args["action"])
+		}
+		if text, ok := value.(string); ok && strings.TrimSpace(text) == "" {
+			return fmt.Errorf("%s is required for action %s", field, args["action"])
+		}
+	}
+	return nil
+}
+
 func validateUniqueStringArray(args map[string]any, field string) error {
 	raw, ok := args[field]
 	if !ok {

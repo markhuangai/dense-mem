@@ -26,6 +26,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/provider/structured"
 	"github.com/markhuangai/dense-mem/internal/settings"
+	"github.com/markhuangai/dense-mem/internal/topicassignment"
 	organization "github.com/markhuangai/dense-mem/internal/topics"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
 	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
@@ -130,8 +131,8 @@ func TestOntologyMaintenanceOperatorHTTPAndScheduler(t *testing.T) {
 	appConfig := maintenanceSettings(t, f)
 	service, calls := maintenanceServiceFixture(t, f, appConfig, nil, auditapp.New(auditpostgres.NewStore(f.app, f.rls)))
 	const token = "synthetic-maintenance-control"
-	portal, err := densehttp.NewControlPortalServerWithServices(&config.Config{ControlPortalToken: token}, nil, nil, nil,
-		densehttp.ControlPortalServices{TopicMaintenance: service, Config: appConfig}, densehttp.HealthConfig{}, nil)
+	portal, err := densehttp.NewControlPortalServerWithCapabilityBindings(&config.Config{ControlPortalToken: token}, nil, nil, nil,
+		densehttp.ControlPortalBindings{Telemetry: densehttp.ControlPortalTelemetry{TopicMaintenance: service, Config: appConfig}}, densehttp.HealthConfig{}, nil)
 	require.NoError(t, err)
 	request := func(method, path, body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, "/control/api"+path, strings.NewReader(body))
@@ -646,9 +647,9 @@ func testActiveAssignmentWindowPolicy(t *testing.T) {
 	limits := assessor.DefaultSemanticAssessmentLimits()
 	upstream, _ := cohortTopicTransport(t, window.Policy.Model)
 	transport := &observedAssignmentTransport{StructuredTransport: upstream}
-	assigner := organization.NewAssignmentService(f.store, settings, transport, nil, limits, window.Policy.Model, nil)
+	assigner := topicassignment.NewService(f.store, settings, transport, nil, limits, window.Policy.Model, nil)
 	service, _ := maintenanceServiceFixture(t, f, settings, nil)
-	service.WithTopicProcessing(assigner, f.store, f.store, organization.CommunityAssessor{Transport: transport, Limits: limits}, nil)
+	service.WithTopicProcessing(assigner, f.store, f.store, organization.CommunityAssessor{Transport: transport, Limits: limits})
 	drainMaintenance(t, service)
 	require.NotEmpty(t, transport.assignments)
 	for _, request := range transport.assignments {
@@ -680,8 +681,8 @@ func testSequentialAssignmentLease(t *testing.T) {
 			return organizer
 		},
 	})
-	assigner := organization.NewAssignmentService(f.store, settings, transport, nil, limits, window.Policy.Model, nil)
-	service.WithTopicProcessing(assigner, f.store, f.store, organization.CommunityAssessor{Transport: transport, Limits: limits}, nil)
+	assigner := topicassignment.NewService(f.store, settings, transport, nil, limits, window.Policy.Model, nil)
+	service.WithTopicProcessing(assigner, f.store, f.store, organization.CommunityAssessor{Transport: transport, Limits: limits})
 
 	progress, err := service.RunTurn(ctx)
 	require.NoError(t, err)

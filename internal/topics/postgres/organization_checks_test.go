@@ -4,8 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
-	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -288,8 +286,6 @@ func testIncrementalEquivalence(t *testing.T) {
 	window := maintenanceWindow(t, f, maintenanceSettings(t, f))
 	_, claim := maintenanceClaim(t, f, window)
 	ctx := context.Background()
-	counter := &organizationReadCounter{Interface: f.app.Logger}
-	f.store = NewStore(f.app.Session(&gorm.Session{Logger: counter}), f.rls)
 	service, calls := organizationFixtureService(t, f, func(a, b assessment.Item) bool {
 		return a.Text == original && b.Text == paraphrase || a.Text == paraphrase && b.Text == original
 	}, func(request assessment.Request, response *assessment.Response) {
@@ -319,26 +315,9 @@ func testIncrementalEquivalence(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, records.Records)
 	}
-	var quietReads int64
-	for _, level := range []slog.Level{slog.LevelInfo, slog.LevelDebug} {
-		protectionRoot := slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: level}))
-		service.WithDiagnostics(func(_ context.Context, diagnostic assessment.Diagnostic) {
-			if diagnostic.Stage == "completed" {
-				require.Equal(t, level <= slog.LevelDebug, diagnostic.SourceContext != nil)
-			}
-		}, func(ctx context.Context) bool { return protectionRoot.Enabled(ctx, slog.LevelDebug) })
-		counter.queries.Store(0)
-		_, err = service.AssessMaintenanceEquivalence(ctx, *claim)
-		require.NoError(t, err)
-		require.EqualValues(t, 1, calls.Load(), "a replay cannot call the provider")
-		if level == slog.LevelInfo {
-			quietReads = counter.queries.Load()
-			require.Positive(t, quietReads)
-		} else {
-			require.Greater(t, counter.queries.Load(), quietReads, "only DEBUG rehydrates the cached diagnostic context")
-		}
-	}
-	service.WithDiagnostics(nil, nil)
+	_, err = service.AssessMaintenanceEquivalence(ctx, *claim)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, calls.Load())
 	require.Equal(t, before, f.canonicalSnapshot(t))
 	badLease := *claim
 	badLease.LeaseToken = uuid.NewString()

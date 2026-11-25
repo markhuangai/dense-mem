@@ -13,7 +13,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"strings"
 	"time"
 
@@ -53,7 +52,7 @@ type Server struct {
 	teamID            string
 	scopes            []string
 	team              TeamContext
-	logger            *slog.Logger
+	logger            Logger
 	runtimeToolPolicy registry.RuntimeToolPolicy
 	prompts           promptcatalog.Catalog
 }
@@ -70,24 +69,24 @@ type TeamContext struct {
 }
 
 // NewServer constructs a Server bound to a registry and a fixed team ID.
-func NewServer(reg registry.Registry, teamID string, logger *slog.Logger) *Server {
+func NewServer(reg registry.Registry, teamID string, logger Logger) *Server {
 	return NewServerWithScopesAndTeamContext(reg, teamID, nil, TeamContext{}, logger)
 }
 
 // NewServerWithScopes constructs a Server that filters visible/callable tools by scope.
-func NewServerWithScopes(reg registry.Registry, teamID string, scopes []string, logger *slog.Logger) *Server {
+func NewServerWithScopes(reg registry.Registry, teamID string, scopes []string, logger Logger) *Server {
 	return NewServerWithScopesAndTeamContext(reg, teamID, scopes, TeamContext{}, logger)
 }
 
 // NewServerWithScopesAndTeamContext constructs a Server with request-scoped team
 // metadata for MCP discovery surfaces.
-func NewServerWithScopesAndTeamContext(reg registry.Registry, teamID string, scopes []string, team TeamContext, logger *slog.Logger) *Server {
+func NewServerWithScopesAndTeamContext(reg registry.Registry, teamID string, scopes []string, team TeamContext, logger Logger) *Server {
 	return NewServerWithScopesTeamContextAndRuntimeConfig(reg, teamID, scopes, team, logger, nil)
 }
 
 // NewServerWithScopesTeamContextAndRuntimeConfig constructs a Server with
 // request-scoped team metadata and runtime feature visibility.
-func NewServerWithScopesTeamContextAndRuntimeConfig(reg registry.Registry, teamID string, scopes []string, team TeamContext, logger *slog.Logger, recallFeedbackConfig registry.RecallFeedbackConfigProvider) *Server {
+func NewServerWithScopesTeamContextAndRuntimeConfig(reg registry.Registry, teamID string, scopes []string, team TeamContext, logger Logger, recallFeedbackConfig registry.RecallFeedbackConfigProvider) *Server {
 	return &Server{
 		registry: reg,
 		teamID:   teamID,
@@ -149,7 +148,6 @@ func (s *Server) invokeTool(ctx context.Context, name string, args map[string]an
 				Data:    registry.ContractValidationErrorData(ctx, validation),
 			}
 		}
-		ctx = registry.WithValidatedContractInput(ctx, tool)
 	} else {
 		// Strip tenant IDs to prevent callers from overriding the fixed server
 		// team. The HTTP API derives scope from the bearer key; local registries
@@ -194,9 +192,9 @@ func (s *Server) invokeTool(ctx context.Context, name string, args map[string]an
 			safeMessage = tools.SanitizeError(err)
 		}
 		if s.logger != nil {
-			s.logger.LogAttrs(ctx, slog.LevelError, "mcp: tool invocation failed", slog.String("error", safeMessage),
-				slog.String("tool", name),
-				slog.String("team_id", s.teamID),
+			s.logger.Error("mcp: tool invocation failed", errors.New(safeMessage),
+				LogField{Key: "tool", Value: name},
+				LogField{Key: "team_id", Value: s.teamID},
 			)
 		}
 		return nil, &rpcError{Code: errCodeToolFailure, Message: boundedRPCText(safeMessage), Data: actionable}
@@ -205,7 +203,7 @@ func (s *Server) invokeTool(ctx context.Context, name string, args map[string]an
 	payload, err := json.Marshal(result)
 	if err != nil {
 		if s.logger != nil {
-			s.logger.LogAttrs(ctx, slog.LevelError, "mcp: tool result marshal failed", slog.String("error", "tool result serialization failed"), slog.String("tool", name))
+			s.logger.Error("mcp: tool result marshal failed", errors.New("tool result serialization failed"), LogField{Key: "tool", Value: name})
 		}
 		data := registry.ActionableSerializationFailureData(ctx, tool.Name)
 		return nil, &rpcError{Code: errCodeToolFailure, Message: "Dense-Mem could not serialize the result for this operation.", Data: data}
@@ -221,17 +219,17 @@ func (s *Server) logToolInputRejected(ctx context.Context, toolName, reasonCode 
 	if s.logger == nil {
 		return
 	}
-	attrs := []slog.Attr{
-		slog.String("tool", toolName),
-		slog.String("team_id", s.teamID),
-		slog.String("reference_type", "mcp_tool"),
-		slog.String("reference_id", toolName),
-		slog.String("reason_code", reasonCode),
+	attrs := []LogField{
+		{Key: "tool", Value: toolName},
+		{Key: "team_id", Value: s.teamID},
+		{Key: "reference_type", Value: "mcp_tool"},
+		{Key: "reference_id", Value: toolName},
+		{Key: "reason_code", Value: reasonCode},
 	}
 	if actor, ok := requestctx.ActorFromContext(ctx); ok && actor.OwnerID != uuid.Nil {
-		attrs = append(attrs, slog.String("profile_id", actor.OwnerID.String()))
+		attrs = append(attrs, LogField{Key: "profile_id", Value: actor.OwnerID.String()})
 	}
-	s.logger.LogAttrs(ctx, slog.LevelWarn, "mcp_tool_input_rejected", attrs...)
+	s.logger.WarnContext(ctx, "mcp_tool_input_rejected", attrs...)
 }
 
 func (s *Server) canUseTool(tool registry.Tool) bool {
@@ -339,15 +337,15 @@ func slugifyMCPName(value string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-func defaultPromptCatalog(logger *slog.Logger) promptcatalog.Catalog {
+func defaultPromptCatalog(logger Logger) promptcatalog.Catalog {
 	return promptCatalogOrEmpty(logger, promptcatalog.Default)
 }
 
-func promptCatalogOrEmpty(logger *slog.Logger, load func() (promptcatalog.Catalog, error)) promptcatalog.Catalog {
+func promptCatalogOrEmpty(logger Logger, load func() (promptcatalog.Catalog, error)) promptcatalog.Catalog {
 	catalog, err := load()
 	if err != nil {
 		if logger != nil {
-			logger.Warn("mcp: prompt catalog unavailable", slog.String("error", tools.SanitizeError(err)))
+			logger.Warn("mcp: prompt catalog unavailable", LogField{Key: "error", Value: tools.SanitizeError(err)})
 		}
 		return promptcatalog.Catalog{}
 	}

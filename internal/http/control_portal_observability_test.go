@@ -84,10 +84,10 @@ func TestControlPortalObservabilityRoutes(t *testing.T) {
 		SnapshotState: domain.RecallFeedbackSnapshotCaptured,
 	}}
 	profiles := &controlProfileSvc{profiles: []*domain.Team{{ID: teamID, Name: "Default"}}}
-	server, err := NewControlPortalServerWithServices(&config.Config{
+	server, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
-	}, profiles, &controlKeySvc{}, nil, ControlPortalServices{
+	}, profiles, &controlKeySvc{}, nil, ControlPortalTelemetry{
 		Logs:           logs,
 		RecallFeedback: feedback,
 	}, HealthConfig{}, nil)
@@ -254,7 +254,7 @@ func TestControlPortalObservabilityUnavailableAndNotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rec := httptest.NewRecorder()
 	c := e.NewContext(req, rec)
-	h := &controlDiagnosticsHandler{}
+	h := &controlPortalHandler{}
 
 	require.ErrorContains(t, h.listOperationLogs(c), "operation logs unavailable")
 	require.ErrorContains(t, h.listRecallFeedbackEvents(c), "recall feedback events unavailable")

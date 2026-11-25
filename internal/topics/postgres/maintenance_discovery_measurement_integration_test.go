@@ -12,12 +12,42 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	assignment "github.com/markhuangai/dense-mem/internal/topics/assignment"
+	assignment "github.com/markhuangai/dense-mem/internal/topicassignment/contract"
 	"gorm.io/gorm"
 
 	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
+
+type discoveryWorkload struct {
+	Name     string   `json:"name"`
+	Groups   []int    `json:"receipt_source_counts"`
+	Outcomes []string `json:"receipt_outcomes"`
+}
+
+func discoveryWorkloads() []discoveryWorkload {
+	unique := discoveryWorkload{Name: "unique"}
+	overlap := discoveryWorkload{Name: "overlap-64"}
+	shared := discoveryWorkload{Name: "shared-5"}
+	add := func(w *discoveryWorkload, count, times int, status string) {
+		for range times {
+			w.Groups, w.Outcomes = append(w.Groups, count), append(w.Outcomes, status)
+		}
+	}
+	add(&unique, 1, 100, "organized")
+	for _, size := range []int{9, 8, 5} {
+		add(&overlap, size, 1, "organized")
+	}
+	add(&overlap, 3, 6, "organized")
+	add(&overlap, 1, 35, "organized")
+	add(&overlap, 3, 1, "ambiguous")
+	add(&overlap, 2, 1, "ambiguous")
+	add(&overlap, 1, 5, "ambiguous")
+	add(&overlap, 3, 1, "failed")
+	add(&overlap, 1, 12, "failed")
+	add(&shared, 20, 5, "organized")
+	return []discoveryWorkload{unique, overlap, shared}
+}
 
 func discoveryLog(t *testing.T, kind string, value any) {
 	t.Helper()

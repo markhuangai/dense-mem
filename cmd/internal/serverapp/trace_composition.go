@@ -11,6 +11,6 @@ import (
 func buildContextApplication(store trace.SemanticTraceStore, logger observability.LogProvider) trace.Service {
 	return trace.NewSemantic(store, logger)
 }
-func buildTraceStore(db *gorm.DB, rls storagepostgres.RLSHelper) *tracepostgres.Store {
+func buildTraceStore(db *gorm.DB, rls storagepostgres.RLSHelper) trace.SemanticTraceStore {
 	return tracepostgres.New(db, rls)
 }

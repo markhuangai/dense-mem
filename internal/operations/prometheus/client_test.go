@@ -2,10 +2,10 @@ package prometheus
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,11 +14,41 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestDecodePrometheusSamples(t *testing.T) {
+	points, err := decodePrometheusPoints([][]json.RawMessage{
+		{json.RawMessage(`1770000000.5`), json.RawMessage(`"2.5"`)},
+		{json.RawMessage(`1770000001`)},
+		{json.RawMessage(`1770000002`), json.RawMessage(`"-1"`)},
+		{json.RawMessage(`1770000003`), json.RawMessage(`"NaN"`)},
+	})
+	require.NoError(t, err)
+	require.Len(t, points, 2)
+	require.Equal(t, 2.5, points[0].Value)
+	require.Equal(t, 0.0, points[1].Value)
+
+	value, err := decodePrometheusValue(nil)
+	require.NoError(t, err)
+	require.False(t, value.Available)
+	require.Equal(t, 0.0, value.Value)
+
+	_, _, err = decodePrometheusPair([]json.RawMessage{json.RawMessage(`"bad"`), json.RawMessage(`"1"`)})
+	require.Error(t, err)
+	_, _, err = decodePrometheusPair([]json.RawMessage{json.RawMessage(`1`), json.RawMessage(`1`)})
+	require.Error(t, err)
+	_, value, err = decodePrometheusPair([]json.RawMessage{json.RawMessage(`1`), json.RawMessage(`"NaN"`)})
+	require.NoError(t, err)
+	require.False(t, value.Available)
+	require.Equal(t, 0.0, value.Value)
+}
+
 func TestClientNormalizesConfiguration(t *testing.T) {
 	for _, base := range []string{"", "  ", " / ", "///"} {
 		require.Nil(t, NewClient(base, 0))
 	}
-	require.NotNil(t, NewClient(" https://prom.example.test/proxy/ ", 0).(*Client).query)
+	client := NewClient(" https://prom.example.test/proxy/ ", 0).(*Client)
+	require.Equal(t, "https://prom.example.test/proxy", client.baseURL)
+	require.Equal(t, 5*time.Second, client.client.Timeout)
+	require.Equal(t, 7*time.Second, NewClient("https://prom.example.test", 7*time.Second).(*Client).client.Timeout)
 }
 
 func TestClientEncodesQueriesAndSelectsFirstSeries(t *testing.T) {
@@ -26,18 +56,17 @@ func TestClientEncodesQueriesAndSelectsFirstSeries(t *testing.T) {
 	from := time.Unix(1770000000, 900).UTC()
 	to := from.Add(time.Minute)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, http.MethodPost, r.Method)
-		require.NoError(t, r.ParseForm())
-		require.Equal(t, query, r.Form.Get("query"))
+		require.Equal(t, http.MethodGet, r.Method)
+		require.Equal(t, query, r.URL.Query().Get("query"))
 		if r.URL.Path == "/proxy/api/v1/query_range" {
-			require.Equal(t, "1770000000", r.Form.Get("start"))
-			require.Equal(t, "1770000060", r.Form.Get("end"))
-			require.Equal(t, "15", r.Form.Get("step"))
-			_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"matrix","result":[{"values":[[1770000000.5,"2.5"],[1770000060,"-2"]]},{"values":[[1770000000,"99"]]}]}}`))
+			require.Equal(t, "1770000000", r.URL.Query().Get("start"))
+			require.Equal(t, "1770000060", r.URL.Query().Get("end"))
+			require.Equal(t, "15", r.URL.Query().Get("step"))
+			_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"values":[[1770000000.5,"2.5"],[1770000060,"-2"]]},{"values":[[1770000000,"99"]]}]}}`))
 			return
 		}
 		require.Equal(t, "/proxy/api/v1/query", r.URL.Path)
-		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[{"metric":{"reason":"missing_price","owner":"first"},"value":[1770000000,"2.5"]},{"metric":{"owner":"second"},"value":[1770000000,"99"]}]}}`))
+		_, _ = w.Write([]byte(`{"status":"success","data":{"result":[{"metric":{"reason":"missing_price","owner":"first"},"value":[1770000000,"2.5"]},{"metric":{"owner":"second"},"value":[1770000000,"99"]}]}}`))
 	}))
 	defer server.Close()
 	client := NewClient(" "+server.URL+"/proxy/ ", time.Second)
@@ -50,18 +79,18 @@ func TestClientEncodesQueriesAndSelectsFirstSeries(t *testing.T) {
 }
 
 func TestClientPreservesEmptyAndInvalidNumericResults(t *testing.T) {
-	for _, value := range []string{"empty", "NaN", "+Inf", "-Inf", "-3"} {
+	for _, value := range []string{"empty", "short", "NaN", "+Inf", "-Inf", "invalid", "-3"} {
 		t.Run(value, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				sample := `[1770000000,"` + value + `"]`
-				kind, series := "vector", `[{"metric":{"owner":"first"},"value":`+sample+`}]`
-				if strings.HasSuffix(r.URL.Path, "/query_range") {
-					kind, series = "matrix", `[{"metric":{},"values":[`+sample+`]}]`
+				if value == "short" {
+					sample = `[1770000000]`
 				}
+				result := `[{"metric":{"owner":"first"},"value":` + sample + `,"values":[` + sample + `]}]`
 				if value == "empty" {
-					series = "[]"
+					result = `[]`
 				}
-				_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"` + kind + `","result":` + series + `}}`))
+				_, _ = w.Write([]byte(`{"status":"success","data":{"result":` + result + `}}`))
 			}))
 			defer server.Close()
 			client := NewClient(server.URL, time.Second)
@@ -95,8 +124,8 @@ func TestClientBoundsFailureMessagesAndReasons(t *testing.T) {
 		{"http_status", 503, "private provider body", "http_status"},
 		{"api_error", 200, `{"status":"error","error":"private provider body"}`, "prometheus_api_error"},
 		{"invalid_json", 200, `not json`, "response_decode_failed"},
-		{"truncated_json", 200, `{`, "response_decode_failed"},
-		{"empty_body", 200, ``, "response_decode_failed"},
+		{"truncated_json", 200, `{`, "transport_failed"},
+		{"empty_body", 200, ``, "transport_failed"},
 		{"wrong_envelope_type", 200, `{"status":123}`, "response_decode_failed"},
 		{"wrong_timestamp", 200, `{"status":"success","data":{"result":[{"value":["bad","1"],"values":[["bad","1"]]}]}}`, "response_decode_failed"},
 		{"wrong_value_type", 200, `{"status":"success","data":{"result":[{"value":[1,1],"values":[[1,1]]}]}}`, "response_decode_failed"},
@@ -145,21 +174,12 @@ func TestClientPreservesCancellationAndRequestTimeout(t *testing.T) {
 			var requests atomic.Int32
 			entered := make(chan struct{}, 1)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if err := r.ParseForm(); err != nil {
-					t.Errorf("read Prometheus request: %v", err)
-					w.WriteHeader(http.StatusBadRequest)
-					return
-				}
 				requests.Add(1)
 				select {
 				case entered <- struct{}{}:
 				default:
 				}
-				select {
-				case <-r.Context().Done():
-				case <-time.After(2 * time.Second):
-					t.Error("Prometheus request context did not cancel")
-				}
+				<-r.Context().Done()
 			}))
 			defer server.Close()
 			call := func(ctx context.Context, timeout time.Duration) error {

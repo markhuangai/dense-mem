@@ -12,7 +12,6 @@ import (
 )
 
 type ManagementEdit = contract.ManagementEdit
-type SaveEditsInput = contract.SaveEditsInput
 type SaveDraftInput = contract.SaveDraftInput
 type DraftCommand = contract.DraftCommand
 type Kind = contract.Kind
@@ -22,13 +21,12 @@ const MaxPageSize = contract.MaxPageSize
 const EvidenceSource = contract.EvidenceSource
 
 var (
-	ErrLegacyMutation = contract.ErrLegacyMutation
-	ErrInvalid        = contract.ErrInvalid
-	ErrUnauthorized   = contract.ErrUnauthorized
-	ErrNotFound       = contract.ErrNotFound
-	ErrConflict       = contract.ErrConflict
-	ErrSourceStale    = contract.ErrSourceStale
-	ErrOverride       = contract.ErrOverride
+	ErrInvalid      = contract.ErrInvalid
+	ErrUnauthorized = contract.ErrUnauthorized
+	ErrNotFound     = contract.ErrNotFound
+	ErrConflict     = contract.ErrConflict
+	ErrSourceStale  = contract.ErrSourceStale
+	ErrOverride     = contract.ErrOverride
 )
 
 type ManagementService struct {
@@ -259,45 +257,4 @@ func (s *ManagementService) Rollback(ctx context.Context, id string, input contr
 		return contract.PublicationResult{}, err
 	}
 	return s.repository.RollbackManagementPublication(ctx, actor.TeamID.String(), id, input, s.prepareAudit(ctx, actor))
-}
-
-func (s *ManagementService) SaveEdits(ctx context.Context, input contract.SaveEditsInput) (result contract.PublicationResult, err error) {
-	actor, err := s.actor(ctx, true)
-	if err != nil {
-		return result, err
-	}
-	ctx, diagnostic, finish := contract.ObservePublication(ctx, s.publicationObserver, actor.TeamID.String(), "save_edits", input)
-	if diagnostic != nil {
-		diagnostic.Management = true
-	}
-	defer func() {
-		if diagnostic != nil && err == nil {
-			diagnostic.Result = &result
-		}
-		finish(err)
-	}()
-	return s.repository.SaveManagementEdits(ctx, actor.TeamID.String(), input, s.prepareAudit(ctx, actor))
-}
-
-func (s *ManagementService) ReplayDraft(ctx context.Context, id, action, key string, input any) (contract.ManagementDraft, error) {
-	actor, err := s.actor(ctx, true)
-	if err != nil {
-		return contract.ManagementDraft{}, err
-	}
-	return s.repository.ReplayManagementDraft(ctx, actor.TeamID.String(), id, action, key, input)
-}
-
-func (s *ManagementService) ReplayRollback(ctx context.Context, id string, input contract.DraftCommand) (contract.PublicationResult, error) {
-	actor, err := s.actor(ctx, true)
-	if err != nil {
-		return contract.PublicationResult{}, err
-	}
-	return s.repository.ReplayManagementRollback(ctx, actor.TeamID.String(), id, input)
-}
-
-func (s *ManagementService) RetiredPreview(ctx context.Context) error {
-	if _, err := s.actor(ctx, false); err != nil {
-		return err
-	}
-	return contract.ErrLegacyMutation
 }

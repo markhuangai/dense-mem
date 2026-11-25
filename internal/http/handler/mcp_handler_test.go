@@ -1,10 +1,8 @@
 package handler
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -279,12 +277,7 @@ func TestMCPHandlerSDKHeaderHelpers(t *testing.T) {
 }
 
 func TestMCPHandlerSDKInitializePayloadAndProtocolError(t *testing.T) {
-	prepareInitialize := func(payload []byte) (json.RawMessage, string, bool) {
-		request := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(payload))
-		require.NoError(t, mcp.PrepareSDKRequest(request))
-		return mcp.SDKInitializeVersion(request)
-	}
-	id, version, ok := prepareInitialize([]byte(`{"jsonrpc":"2.0","id":7,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`))
+	id, version, ok := sdkInitializePayload([]byte(`{"jsonrpc":"2.0","id":7,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`))
 	require.True(t, ok)
 	require.Equal(t, "7", string(id))
 	require.Equal(t, "2025-11-25", version)
@@ -293,7 +286,7 @@ func TestMCPHandlerSDKInitializePayloadAndProtocolError(t *testing.T) {
 		`{"jsonrpc":"2.0","method":"tools/list","params":{}}`,
 		`{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":""}}`,
 	} {
-		_, _, ok = prepareInitialize([]byte(payload))
+		_, _, ok = sdkInitializePayload([]byte(payload))
 		require.False(t, ok)
 	}
 
@@ -429,6 +422,6 @@ func mcpTestContext(ctx context.Context, profileID uuid.UUID, scopes []string) c
 	return middleware.SetPrincipalForTest(ctx, &middleware.Principal{TeamID: profileID, OwnerID: profileID, Grants: scopes})
 }
 
-func testMCPLogger() *slog.Logger {
-	return slog.New(slog.DiscardHandler)
+func testMCPLogger() mcp.Logger {
+	return NewMCPLogger(mcpTestLogger{})
 }

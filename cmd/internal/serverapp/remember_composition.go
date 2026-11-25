@@ -10,12 +10,13 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	remembercontract "github.com/markhuangai/dense-mem/internal/remember/contract"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
+	rememberprocessor "github.com/markhuangai/dense-mem/internal/remember/service/processor"
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
-	"github.com/markhuangai/dense-mem/internal/topics"
+	"github.com/markhuangai/dense-mem/internal/topicassignment"
 )
 
 type rememberApplicationDependencies struct {
-	TopicAssignment     *topics.AssignmentService
+	TopicAssignment     *topicassignment.Service
 	PublicSeedAdmission *rememberapp.PublicSeedAdmission
 	Persistence         remembercontract.Persistence
 	Assessor            assessor.Provider
@@ -30,7 +31,7 @@ type rememberApplicationDependencies struct {
 }
 
 func buildRememberApplication(deps rememberApplicationDependencies) rememberapp.Service {
-	processor := rememberapp.NewSynchronousProcessor(rememberapp.ProcessorDependencies{
+	processor := rememberprocessor.NewSynchronousProcessor(rememberprocessor.ProcessorDependencies{
 		TopicAssignment: deps.TopicAssignment, Ledger: deps.Persistence, Assessor: deps.Assessor,
 		Decisions: deps.Decisions, DecisionSettings: deps.DecisionSettings,
 		EmbeddingExecutor: deps.EmbeddingExecutor, Limits: deps.Limits, Metrics: deps.Metrics,

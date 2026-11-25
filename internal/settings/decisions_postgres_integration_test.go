@@ -129,7 +129,7 @@ func TestDecisionSettingsControlAuthorizationAndStrictPatch(t *testing.T) {
 	restore := preserveDecisionConfig(t, db, rls)
 	defer restore()
 	service := decisionServiceForPostgres(db, rls, "openai")
-	e, err := densehttp.NewControlPortalServerWithServices(&config.Config{ControlPortalToken: "decision-settings-control"}, nil, nil, nil, densehttp.ControlPortalServices{Config: service, Decisions: service}, densehttp.HealthConfig{}, nil, nil)
+	e, err := densehttp.NewControlPortalServerWithCapabilityBindings(&config.Config{ControlPortalToken: "decision-settings-control"}, nil, nil, nil, densehttp.ControlPortalBindings{Telemetry: densehttp.ControlPortalTelemetry{Config: service, Decisions: service}}, densehttp.HealthConfig{}, nil, nil)
 	require.NoError(t, err)
 	for _, method := range []string{http.MethodGet, http.MethodPatch} {
 		denied := controlRequest(e, method, "/control/api/config/decisions", "wrong-token", `{"items":[{"key":"DECISION_SECURITY_REVIEW_ENABLED","value":"false"}]}`)

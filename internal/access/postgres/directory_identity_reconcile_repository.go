@@ -3,7 +3,6 @@ package postgres
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -12,19 +11,18 @@ import (
 	"github.com/lib/pq"
 	"gorm.io/gorm"
 
-	accesscontract "github.com/markhuangai/dense-mem/internal/access/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-func (r *directoryIdentityRepository) ApplyDirectoryReconcilePlan(ctx context.Context, plan domain.DirectoryReconcilePlan) error {
+func (r *DirectoryIdentityRepositoryImpl) ApplyDirectoryReconcilePlan(ctx context.Context, plan domain.DirectoryReconcilePlan) error {
 	return r.applyDirectoryReconcilePlan(ctx, plan, false)
 }
 
-func (r *directoryIdentityRepository) ActivateDirectoryConnector(ctx context.Context, plan domain.DirectoryReconcilePlan) error {
+func (r *DirectoryIdentityRepositoryImpl) ActivateDirectoryConnector(ctx context.Context, plan domain.DirectoryReconcilePlan) error {
 	return r.applyDirectoryReconcilePlan(ctx, plan, true)
 }
 
-func (r *directoryIdentityRepository) applyDirectoryReconcilePlan(ctx context.Context, plan domain.DirectoryReconcilePlan, activate bool) error {
+func (r *DirectoryIdentityRepositoryImpl) applyDirectoryReconcilePlan(ctx context.Context, plan domain.DirectoryReconcilePlan, activate bool) error {
 	if plan.ConnectorID == uuid.Nil || plan.ProviderID == uuid.Nil {
 		return fmt.Errorf("directory reconcile plan requires connector and provider IDs")
 	}
@@ -34,14 +32,14 @@ func (r *directoryIdentityRepository) applyDirectoryReconcilePlan(ctx context.Co
 			return err
 		}
 		if connector == nil || connector.ProviderID != plan.ProviderID {
-			return accesscontract.ErrDirectoryResourceNotFound
+			return gorm.ErrRecordNotFound
 		}
 		if plan.ReconcileVersion > 0 && connector.ReconcileVersion != plan.ReconcileVersion {
 			return ErrDirectoryReconcileStale
 		}
 		if activate {
 			if connector.Status != domain.DirectoryConnectorObserve {
-				return fmt.Errorf("%w: directory connector must be observing before activation", ErrDirectoryResourceConflict)
+				return fmt.Errorf("directory connector must be observing before activation")
 			}
 			now := time.Now().UTC()
 			if err := tx.Exec(`
@@ -79,7 +77,7 @@ func (r *directoryIdentityRepository) applyDirectoryReconcilePlan(ctx context.Co
 			connector.ReconcileVersion++
 		}
 		if connector.Status != domain.DirectoryConnectorActive {
-			return fmt.Errorf("%w: directory connector is not active", ErrDirectoryResourceConflict)
+			return fmt.Errorf("directory connector is not active")
 		}
 		now := time.Now().UTC()
 		if len(plan.RestoreDirectoryTeamIDs) > 0 {
@@ -181,14 +179,14 @@ func (r *directoryIdentityRepository) applyDirectoryReconcilePlan(ctx context.Co
 	return nil
 }
 
-func (r *directoryIdentityRepository) AdoptDirectoryTeam(ctx context.Context, connectorID, groupID, teamID uuid.UUID) error {
+func (r *DirectoryIdentityRepositoryImpl) AdoptDirectoryTeam(ctx context.Context, connectorID, groupID, teamID uuid.UUID) error {
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		connector, err := getDirectoryConnectorTx(tx, connectorID, true)
 		if err != nil {
 			return err
 		}
 		if connector == nil {
-			return accesscontract.ErrDirectoryResourceNotFound
+			return gorm.ErrRecordNotFound
 		}
 		var boundTeamID uuid.UUID
 		if err := tx.Raw(`
@@ -197,13 +195,10 @@ func (r *directoryIdentityRepository) AdoptDirectoryTeam(ctx context.Context, co
 			WHERE connector_id = $1 AND group_id = $2
 			FOR UPDATE
 		`, connectorID, groupID).Row().Scan(&boundTeamID); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return accesscontract.ErrDirectoryResourceNotFound
-			}
 			return err
 		}
 		if boundTeamID != teamID {
-			return fmt.Errorf("%w: directory group is not bound to the requested team", ErrDirectoryResourceConflict)
+			return fmt.Errorf("directory group is not bound to the requested team")
 		}
 		now := time.Now().UTC()
 		res := tx.Exec(`
@@ -221,7 +216,7 @@ func (r *directoryIdentityRepository) AdoptDirectoryTeam(ctx context.Context, co
 			return res.Error
 		}
 		if res.RowsAffected == 0 {
-			return fmt.Errorf("%w: directory team cannot be adopted", ErrDirectoryResourceConflict)
+			return fmt.Errorf("directory team cannot be adopted")
 		}
 		if err := tx.Exec(`
 			UPDATE sso_directory_group_bindings

@@ -312,6 +312,16 @@
       "phase": "precheck"
     },
     {
+      "id": "repository/TestAuthorityRepositoryBlocksFreshAuthorityWhenApplicationDataExists",
+      "run": "^TestAuthorityRepositoryBlocksFreshAuthorityWhenApplicationDataExists$",
+      "phase": "precheck"
+    },
+    {
+      "id": "repository/TestAuthorityRepositoryCommitsFreshAuthorityOnlyWhenApplicationDataEmpty",
+      "run": "^TestAuthorityRepositoryCommitsFreshAuthorityOnlyWhenApplicationDataEmpty$",
+      "phase": "precheck"
+    },
+    {
       "id": "repository/TestAuthorityRepositoryOperationLogRetentionSurvivesRepositoryRestart",
       "run": "^TestAuthorityRepositoryOperationLogRetentionSurvivesRepositoryRestart$",
       "phase": "precheck"

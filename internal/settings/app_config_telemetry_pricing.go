@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
@@ -33,9 +34,21 @@ func (s *AppConfigServiceImpl) UpdateTelemetryPricingSettings(ctx context.Contex
 	if err != nil {
 		return nil, err
 	}
-	updated, _, err := updateConfigSection(ctx, s,
-		configSectionUpdate{"telemetry_pricing", normalized, actorRole, clientIP, correlationID}, telemetryPricingRuntimeConfigFromEntries, telemetryPricingSettingsPayload)
-	return updated, err
+	before, _ := s.GetTelemetryPricingSettings(ctx)
+	now := s.now().UTC()
+	changed, err := s.repo.UpdateValues(ctx, normalized, now.Format(time.RFC3339Nano), now)
+	if err != nil {
+		return nil, err
+	}
+	s.invalidate()
+	updated, err := s.GetTelemetryPricingSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if changed {
+		s.appendAudit("APP_CONFIG_UPDATE", "app_config", "telemetry_pricing", actorRole, clientIP, correlationID, telemetryPricingSettingsPayload(before), telemetryPricingSettingsPayload(updated), map[string]any{"section": "telemetry_pricing"})
+	}
+	return updated, nil
 }
 
 func (s *AppConfigServiceImpl) TelemetryPricingRuntimeConfig(ctx context.Context) (domain.TelemetryPricingRuntimeConfig, error) {

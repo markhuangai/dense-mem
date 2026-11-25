@@ -5,7 +5,6 @@ package postgres
 import (
 	"context"
 	"encoding/json"
-	sessionpostgres "github.com/markhuangai/dense-mem/internal/session/postgres"
 	tracecontract "github.com/markhuangai/dense-mem/internal/trace/contract"
 	"testing"
 
@@ -41,7 +40,7 @@ func TestEvidenceOnlyPostgresTraceSessionProvenanceRequiresAuthenticatedPrivateO
 			windows, err := sessionservice.BuildWindows(request, "o200k_base")
 			require.NoError(t, err)
 			semantic := knowledge.NewStore(app, rls)
-			staged, err := sessionpostgres.New(app, rls, semantic.CommitEvidenceTx, semantic.WithSubmissionLock).StageSession(ctx, session.Intake{Scope: session.Scope{TeamID: team, OwnerProfileID: owner, SpaceID: space.ID.String(), SpaceGeneration: generation}, Request: request, RequestHash: hash, Windows: windows, ExtractionVersion: session.ExtractionVersion})
+			staged, err := semantic.StageSession(ctx, session.Intake{Scope: session.Scope{TeamID: team, OwnerProfileID: owner, SpaceID: space.ID.String(), SpaceGeneration: generation}, Request: request, RequestHash: hash, Windows: windows, ExtractionVersion: session.ExtractionVersion})
 			require.NoError(t, err)
 			provenance := map[string]any{"framework": request.Framework, "app_name": request.AppName, "user_id": request.UserID, "session_id": request.SessionID, "event_id": "one", "event_index": 0, "span_start": 0, "span_end": len([]rune(request.Events[0].Text))}
 			store := newTraceStoreForTest(app, rls)
@@ -61,8 +60,7 @@ func TestEvidenceOnlyPostgresTraceSessionProvenanceRequiresAuthenticatedPrivateO
 						if occurrence {
 							rows, err = loadTraceEvidenceOccurrences(ctx, tx, input, []string{occurrenceID})
 						} else {
-							roots, loadErr := loadTraceEvidenceRoots(ctx, tx, TraceEvidenceInput{TeamID: team, MaxFragmentContentRunes: 2000}, []string{ingest.Evidence[0].FragmentID})
-							root := roots[ingest.Evidence[0].FragmentID]
+							root, loadErr := loadTraceEvidenceRoot(ctx, tx, TraceEvidenceInput{TeamID: team, EvidenceID: ingest.Evidence[0].FragmentID, MaxFragmentContentRunes: 2000})
 							err = loadErr
 							if root != nil {
 								rows = []TraceEvidenceFragment{*root}

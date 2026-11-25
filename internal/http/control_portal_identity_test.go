@@ -21,8 +21,7 @@ import (
 	"github.com/labstack/echo/v5"
 	"github.com/stretchr/testify/require"
 
-	accesscontract "github.com/markhuangai/dense-mem/internal/access/contract"
-
+	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 )
@@ -103,7 +102,7 @@ func TestControlIdentityHTTPHandlersAndAdminGroupLifecycle(t *testing.T) {
 		}},
 		Now: func() time.Time { return now },
 	})
-	handler := &controlIdentityHandler{controlIdentity: identity}
+	handler := &controlPortalHandler{controlIdentity: identity}
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	registerControlIdentityRoutes(e, handler)
@@ -211,8 +210,8 @@ func TestControlIdentityHTTPHelpersMapSafeResponses(t *testing.T) {
 		{accessservice.ErrControlAccessDenied, httperr.AUTH_INVALID},
 		{accessservice.ErrControlSessionInvalid, httperr.AUTH_INVALID},
 		{accessservice.ErrControlSSOUnavailable, httperr.SERVICE_UNAVAILABLE},
-		{accesscontract.ErrControlIdentityNotFound, httperr.NOT_FOUND},
-		{accesscontract.ErrControlIdentityInvalid, httperr.VALIDATION_ERROR},
+		{assertError("control admin group not found"), httperr.NOT_FOUND},
+		{assertError("sso provider ID is required"), httperr.VALIDATION_ERROR},
 		{assertError("storage unavailable"), httperr.INTERNAL_ERROR},
 	} {
 		mapped := controlIdentityHTTPError(testCase.err)
@@ -230,13 +229,13 @@ func TestControlIdentityHTTPHandlersValidateInputAndFailSafely(t *testing.T) {
 	runtimeFailure := accessservice.NewControlIdentityService(newControlIdentityHTTPRepository(), &controlIdentityHTTPSSORepository{providers: map[uuid.UUID]*domain.SSOProvider{}}, accessservice.ControlIdentityConfig{
 		RuntimeConfig: controlIdentityHTTPRuntime{err: errors.New("runtime unavailable")},
 	})
-	handler := &controlIdentityHandler{controlIdentity: runtimeFailure}
+	handler := &controlPortalHandler{controlIdentity: runtimeFailure}
 	c, _ := controlDirectoryContext(nethttp.MethodGet, "", nil)
 	require.Error(t, handler.controlIdentityProviders(c))
 
 	registerControlIdentityRoutes(nil, handler)
 	registerControlIdentityRoutes(echo.New(), nil)
-	registerControlIdentityRoutes(echo.New(), &controlIdentityHandler{})
+	registerControlIdentityRoutes(echo.New(), &controlPortalHandler{})
 
 	readyUnavailable := accessservice.NewControlIdentityService(nil, nil, accessservice.ControlIdentityConfig{
 		RuntimeConfig: controlIdentityHTTPRuntime{config: accessservice.SSORuntimeConfig{ControlPublicBaseURL: "https://control.example.test"}},
@@ -315,7 +314,7 @@ type controlIdentityHTTPRuntime struct {
 }
 
 type controlIdentityLogoutFailureRepository struct {
-	accessservice.ControlIdentityStore
+	accesspostgres.ControlIdentityRepository
 }
 
 func (controlIdentityLogoutFailureRepository) DeleteControlSession(context.Context, string) error {
@@ -330,7 +329,7 @@ func (r controlIdentityHTTPRuntime) SSORuntimeConfig(context.Context) (accessser
 }
 
 type controlIdentityHTTPRepository struct {
-	accessservice.ControlIdentityStore
+	accesspostgres.ControlIdentityRepository
 	groups         []*domain.ControlAdminGroup
 	states         map[string]*domain.ControlOAuthState
 	sessions       map[string]*domain.ControlSession
@@ -443,7 +442,7 @@ func (r *controlIdentityHTTPRepository) DeleteExpiredControlSessions(_ context.C
 }
 
 type controlIdentityHTTPSSORepository struct {
-	accessservice.SSOStore
+	accesspostgres.SSORepository
 	providers  map[uuid.UUID]*domain.SSOProvider
 	identities map[uuid.UUID]*domain.SSOIdentity
 }

@@ -12,7 +12,7 @@ import (
 	settingspkg "github.com/markhuangai/dense-mem/internal/settings"
 )
 
-func (h *controlConfigHandler) getGeneralConfig(c *echo.Context) error {
+func (h *controlPortalHandler) getGeneralConfig(c *echo.Context) error {
 	if h.appConfig == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "app config service unavailable")
 	}
@@ -23,7 +23,7 @@ func (h *controlConfigHandler) getGeneralConfig(c *echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlGeneralConfig(settings)})
 }
 
-func (h *controlConfigHandler) updateGeneralConfig(c *echo.Context) error {
+func (h *controlPortalHandler) updateGeneralConfig(c *echo.Context) error {
 	if h.appConfig == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "app config service unavailable")
 	}
@@ -45,7 +45,7 @@ func (h *controlConfigHandler) updateGeneralConfig(c *echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlGeneralConfig(settings)})
 }
 
-func (h *controlConfigHandler) getSSOConfig(c *echo.Context) error {
+func (h *controlPortalHandler) getSSOConfig(c *echo.Context) error {
 	if h.appConfig == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "app config service unavailable")
 	}
@@ -56,7 +56,7 @@ func (h *controlConfigHandler) getSSOConfig(c *echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlSSOConfig(settings)})
 }
 
-func (h *controlConfigHandler) updateSSOConfig(c *echo.Context) error {
+func (h *controlPortalHandler) updateSSOConfig(c *echo.Context) error {
 	if h.appConfig == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "app config service unavailable")
 	}
@@ -78,7 +78,7 @@ func (h *controlConfigHandler) updateSSOConfig(c *echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlSSOConfig(settings)})
 }
 
-func (h *controlConfigHandler) getOperationLogConfig(c *echo.Context) error {
+func (h *controlPortalHandler) getOperationLogConfig(c *echo.Context) error {
 	if h.appConfig == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "app config service unavailable")
 	}
@@ -89,7 +89,7 @@ func (h *controlConfigHandler) getOperationLogConfig(c *echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlOperationLogConfig(settings)})
 }
 
-func (h *controlConfigHandler) updateOperationLogConfig(c *echo.Context) error {
+func (h *controlPortalHandler) updateOperationLogConfig(c *echo.Context) error {
 	if h.appConfig == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "app config service unavailable")
 	}
@@ -111,7 +111,7 @@ func (h *controlConfigHandler) updateOperationLogConfig(c *echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlOperationLogConfig(settings)})
 }
 
-func (h *controlConfigHandler) getRecallFeedbackConfig(c *echo.Context) error {
+func (h *controlPortalHandler) getRecallFeedbackConfig(c *echo.Context) error {
 	if h.appConfig == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "app config service unavailable")
 	}
@@ -122,7 +122,7 @@ func (h *controlConfigHandler) getRecallFeedbackConfig(c *echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlRecallFeedbackConfig(settings)})
 }
 
-func (h *controlConfigHandler) updateRecallFeedbackConfig(c *echo.Context) error {
+func (h *controlPortalHandler) updateRecallFeedbackConfig(c *echo.Context) error {
 	if h.appConfig == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "app config service unavailable")
 	}
@@ -144,7 +144,7 @@ func (h *controlConfigHandler) updateRecallFeedbackConfig(c *echo.Context) error
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlRecallFeedbackConfig(settings)})
 }
 
-func (h *controlConfigHandler) getTelemetryPricingConfig(c *echo.Context) error {
+func (h *controlPortalHandler) getTelemetryPricingConfig(c *echo.Context) error {
 	if h.appConfig == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "app config service unavailable")
 	}
@@ -155,7 +155,7 @@ func (h *controlConfigHandler) getTelemetryPricingConfig(c *echo.Context) error 
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlTelemetryPricingConfig(settings, h.verifierModel, h.embeddingModel)})
 }
 
-func (h *controlConfigHandler) updateTelemetryPricingConfig(c *echo.Context) error {
+func (h *controlPortalHandler) updateTelemetryPricingConfig(c *echo.Context) error {
 	if h.appConfig == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "app config service unavailable")
 	}

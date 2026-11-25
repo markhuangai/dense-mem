@@ -27,9 +27,9 @@ const directoryReconcileMaxAttempts = 3
 var (
 	ErrDirectoryConnectorDisabled = errors.New("directory connector is disabled")
 	ErrDirectoryCredentialInvalid = errors.New("directory credential is invalid")
-	ErrDirectoryResourceNotFound  = accesscontract.ErrDirectoryResourceNotFound
-	ErrDirectoryResourceConflict  = accesscontract.ErrDirectoryResourceConflict
-	ErrDirectoryInvalidValue      = accesscontract.ErrDirectoryInvalidValue
+	ErrDirectoryResourceNotFound  = errors.New("directory resource not found")
+	ErrDirectoryResourceConflict  = errors.New("directory resource conflict")
+	ErrDirectoryInvalidValue      = errors.New("directory resource is invalid")
 )
 
 type DirectoryIdentityConfig struct {
@@ -96,7 +96,7 @@ func (s *DirectoryIdentityService) GetConnector(ctx context.Context, connectorID
 	}
 	connector, err := s.repo.GetDirectoryConnector(ctx, connectorID)
 	if err != nil {
-		return nil, err
+		return nil, directoryIdentityServiceError(err)
 	}
 	if connector == nil {
 		return nil, ErrDirectoryResourceNotFound
@@ -109,11 +109,11 @@ func (s *DirectoryIdentityService) GetConnectorForProvider(ctx context.Context, 
 		return nil, fmt.Errorf("directory identity service is unavailable")
 	}
 	if providerID == uuid.Nil {
-		return nil, fmt.Errorf("%w: sso provider ID is required", ErrDirectoryInvalidValue)
+		return nil, fmt.Errorf("sso provider ID is required")
 	}
 	connector, err := s.repo.GetDirectoryConnectorByProviderID(ctx, providerID)
 	if err != nil {
-		return nil, err
+		return nil, directoryIdentityServiceError(err)
 	}
 	if connector == nil {
 		return nil, ErrDirectoryResourceNotFound
@@ -134,7 +134,7 @@ func (s *DirectoryIdentityService) UpdateConnector(ctx context.Context, connecto
 		return nil, err
 	}
 	if current.Status == domain.DirectoryConnectorActive && directoryConnectorPolicyChanged(*current, connector) {
-		return nil, fmt.Errorf("%w: disable the directory connector before changing its group policy", ErrDirectoryResourceConflict)
+		return nil, fmt.Errorf("disable the directory connector before changing its group policy")
 	}
 	connector.ProviderID = current.ProviderID
 	connector.Status = current.Status
@@ -298,7 +298,7 @@ func (s *DirectoryIdentityService) writeUser(ctx context.Context, connectorID uu
 		stored, err = s.repo.UpsertDirectoryUser(ctx, user)
 	}
 	if err != nil {
-		return nil, err
+		return nil, directoryIdentityServiceError(err)
 	}
 	if connector.Status == domain.DirectoryConnectorActive {
 		if err := s.reconcile(ctx, connectorID); err != nil {
@@ -314,7 +314,7 @@ func (s *DirectoryIdentityService) GetUser(ctx context.Context, connectorID, use
 	}
 	user, err := s.repo.GetDirectoryUser(ctx, connectorID, userID)
 	if err != nil {
-		return nil, err
+		return nil, directoryIdentityServiceError(err)
 	}
 	if user == nil {
 		return nil, ErrDirectoryResourceNotFound
@@ -335,11 +335,11 @@ func (s *DirectoryIdentityService) ListUsersPage(ctx context.Context, connectorI
 	}
 	request, err := accesscontract.NormalizeDirectoryUserPageRequest(request)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, directoryIdentityServiceError(err)
 	}
 	users, total, err := s.repo.ListDirectoryUsersPage(ctx, connectorID, request)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, directoryIdentityServiceError(err)
 	}
 	return users, total, nil
 }
@@ -363,7 +363,7 @@ func (s *DirectoryIdentityService) UpsertGroup(ctx context.Context, connectorID 
 	normalizeDirectoryGroup(&group)
 	stored, err := s.repo.UpsertDirectoryGroup(ctx, group)
 	if err != nil {
-		return nil, err
+		return nil, directoryIdentityServiceError(err)
 	}
 	if connector.Status == domain.DirectoryConnectorActive {
 		if err := s.reconcile(ctx, connectorID); err != nil {
@@ -395,7 +395,7 @@ func (s *DirectoryIdentityService) writeGroupWithMembers(ctx context.Context, co
 		stored, err = s.repo.UpsertDirectoryGroupWithMembers(ctx, group, memberIDs)
 	}
 	if err != nil {
-		return nil, err
+		return nil, directoryIdentityServiceError(err)
 	}
 	if connector.Status == domain.DirectoryConnectorActive {
 		if err := s.reconcile(ctx, connectorID); err != nil {
@@ -411,7 +411,7 @@ func (s *DirectoryIdentityService) GetGroup(ctx context.Context, connectorID, gr
 	}
 	group, err := s.repo.GetDirectoryGroup(ctx, connectorID, groupID)
 	if err != nil {
-		return nil, err
+		return nil, directoryIdentityServiceError(err)
 	}
 	if group == nil {
 		return nil, ErrDirectoryResourceNotFound
@@ -432,11 +432,11 @@ func (s *DirectoryIdentityService) ListGroupsPage(ctx context.Context, connector
 	}
 	request, err := accesscontract.NormalizeDirectoryGroupPageRequest(request)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, directoryIdentityServiceError(err)
 	}
 	groups, total, err := s.repo.ListDirectoryGroupsPage(ctx, connectorID, request)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, directoryIdentityServiceError(err)
 	}
 	return groups, total, nil
 }
@@ -447,7 +447,7 @@ func (s *DirectoryIdentityService) ReplaceGroupMembers(ctx context.Context, conn
 		return err
 	}
 	if err := s.repo.ReplaceDirectoryGroupMembers(ctx, connector.ID, groupID, memberIDs); err != nil {
-		return err
+		return directoryIdentityServiceError(err)
 	}
 	if connector.Status == domain.DirectoryConnectorActive {
 		return s.reconcile(ctx, connectorID)
@@ -496,7 +496,7 @@ func (s *DirectoryIdentityService) connectorSnapshot(ctx context.Context, connec
 	}
 	snapshot, err := s.repo.DirectoryConnectorSnapshot(ctx, connectorID)
 	if err != nil {
-		return nil, err
+		return nil, directoryIdentityServiceError(err)
 	}
 	if snapshot == nil {
 		return nil, ErrDirectoryResourceNotFound
@@ -507,6 +507,16 @@ func (s *DirectoryIdentityService) connectorSnapshot(ctx context.Context, connec
 	}
 	snapshot.Connector = connector
 	return snapshot, nil
+}
+
+func directoryIdentityServiceError(err error) error {
+	switch {
+	case errors.Is(err, accesscontract.ErrDirectoryResourceConflict):
+		return fmt.Errorf("%w: %v", ErrDirectoryResourceConflict, err)
+	case errors.Is(err, accesscontract.ErrDirectoryInvalidValue):
+		return fmt.Errorf("%w: %v", ErrDirectoryInvalidValue, err)
+	}
+	return err
 }
 
 func (s *DirectoryIdentityService) reconcile(ctx context.Context, connectorID uuid.UUID) error {

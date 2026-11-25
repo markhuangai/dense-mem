@@ -752,7 +752,7 @@ func ssoProviderWriteError(err error, issuer string) error {
 	if errors.Is(err, accesscontract.ErrSSOProtectedResourceProfileLimit) {
 		return fmt.Errorf("OAuth protected-resource config requires between 1 and %d profiles", domain.OAuthProtectedResourceMaximumProfiles)
 	}
-	if errors.Is(err, accesscontract.ErrOAuthIssuerConflict) {
+	if uniqueViolationName(err) == "idx_sso_providers_active_oauth_issuer_unique" {
 		return fmt.Errorf("OAuth profile issuer %q is duplicated", issuer)
 	}
 	return err

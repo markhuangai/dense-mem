@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"strings"
 
 	"github.com/google/uuid"
@@ -14,6 +13,39 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledgecontract "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 )
+
+const canonicalSearchEvidenceQuery = `
+			FROM evidence_fragments AS fragment
+			JOIN teams AS team
+			  ON team.id = fragment.team_id
+			 AND team.status = 'active'
+			 AND team.deleted_at IS NULL
+			JOIN knowledge_ingests AS ingest
+			  ON ingest.team_id = fragment.team_id
+			 AND ingest.ingest_id = fragment.ingest_id
+			 AND ingest.owner_profile_id = fragment.owner_profile_id
+			LEFT JOIN evidence_sources AS source
+			  ON source.team_id = fragment.team_id
+			 AND source.source_id = fragment.source_id
+			WHERE fragment.space_generation = dense_mem_active_space_generation(fragment.team_id, fragment.space_id)
+			  AND (fragment.source_id IS NULL OR source.current_revision_id = fragment.source_revision_id)
+			  AND NOT EXISTS (
+			      SELECT 1 FROM evidence_quarantines AS quarantine
+			      WHERE quarantine.team_id = fragment.team_id
+			        AND quarantine.fragment_id = fragment.fragment_id
+			        AND quarantine.status = 'active'
+			  )
+			  AND NOT EXISTS (
+			      SELECT 1 FROM evidence_lifecycle_events AS lifecycle
+			      WHERE lifecycle.team_id = fragment.team_id
+			        AND lifecycle.target_fragment_id = fragment.fragment_id
+			  )
+			  AND NOT EXISTS (
+			      SELECT 1 FROM evidence_exact_aliases AS alias
+			      WHERE alias.team_id = fragment.team_id
+			        AND alias.alias_fragment_id = fragment.fragment_id
+			  )
+			  AND COALESCE(fragment.metadata->>'conflict_resolution_deletion_only', '') <> 'true'`
 
 // canonicalSearchDocument renders the current canonical source for one stored
 // search document. The boolean reports whether the source kind is governed by
@@ -26,7 +58,7 @@ func canonicalSearchDocument(ctx context.Context, tx *gorm.DB, document knowledg
 		var spaceGeneration int64
 		err := tx.WithContext(ctx).Raw(`
 			SELECT fragment.content, fragment.space_id::text, COALESCE(fragment.space_generation, 0)
-			`+storagepostgres.CanonicalSearchEvidenceQuery+`
+			`+canonicalSearchEvidenceQuery+`
 			  AND fragment.team_id = ?::uuid
 			  AND fragment.owner_profile_id = ?::uuid
 			  AND fragment.fragment_id = ?::uuid
@@ -37,11 +69,32 @@ func canonicalSearchDocument(ctx context.Context, tx *gorm.DB, document knowledg
 		if err != nil {
 			return nil, true, err
 		}
-		expected := storagepostgres.CanonicalEvidenceSearchDocument(document, content, spaceID, spaceGeneration)
+		expected := canonicalEvidenceSearchDocument(document, content, spaceID, spaceGeneration)
 		return &expected, true, nil
 	default:
 		return nil, false, nil
 	}
+}
+
+func canonicalEvidenceSearchDocument(document knowledgecontract.SearchDocumentForEmbedding, content, spaceID string, spaceGeneration int64) knowledgecontract.SearchDocumentForEmbedding {
+	document.SourceVersion = 1
+	document.ProjectionFormat = defaultProjectionFormat("evidence")
+	document.ProjectionGenerationID = ""
+	document.DocumentText = strings.TrimSpace(content)
+	document.DocumentHash = searchDocumentHash(document.DocumentText)
+	document.SpaceID = strings.TrimSpace(spaceID)
+	document.SpaceGeneration = spaceGeneration
+	return document
+}
+
+func searchDocumentMatchesCanonical(document, expected knowledgecontract.SearchDocumentForEmbedding) bool {
+	return document.SourceVersion == expected.SourceVersion &&
+		document.ProjectionFormat == expected.ProjectionFormat &&
+		strings.TrimSpace(document.ProjectionGenerationID) == strings.TrimSpace(expected.ProjectionGenerationID) &&
+		document.DocumentText == expected.DocumentText &&
+		document.DocumentHash == expected.DocumentHash &&
+		strings.TrimSpace(document.SpaceID) == strings.TrimSpace(expected.SpaceID) &&
+		document.SpaceGeneration == expected.SpaceGeneration
 }
 
 func selectMissingCanonicalSearchDocuments(
@@ -151,7 +204,7 @@ func selectMissingCanonicalSearchDocuments(
 		item.EmbeddingDimensions = contract.EmbeddingDimensions
 		item.DocumentVersion = 1
 		item.DocumentText = strings.TrimSpace(item.DocumentText)
-		item.DocumentHash = storagepostgres.SearchDocumentHash(item.DocumentText)
+		item.DocumentHash = searchDocumentHash(item.DocumentText)
 		item.StoredDocumentHash = ""
 		*result = append(*result, item)
 	}

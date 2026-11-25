@@ -121,17 +121,17 @@ func validateMaintenanceReceipt(claim topic.MaintenanceClaim, receipt topic.Orga
 }
 
 func lockMaintenanceRecoveryInputs(tx *gorm.DB, claim topic.MaintenanceClaim) (bool, error) {
-	fence := scope{TeamID: claim.TeamID, SpaceID: claim.SpaceID, Generation: claim.Generation}
-	// Receipt revalidation takes the scoped lock before any queue-row locks.
-	locked, err := tryLockOrganizationCatalog(tx, fence)
-	if err != nil || !locked {
+	var locked bool
+	// Receipt revalidation takes the catalog lock before any queue-row locks.
+	if err := tx.Raw(`SELECT EXISTS(SELECT 1 FROM topic_catalog_heads
+	 WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? FOR UPDATE SKIP LOCKED)`, claim.TeamID, claim.SpaceID, claim.Generation).Row().Scan(&locked); err != nil || !locked {
 		return locked, err
 	}
 	keys := make([]string, 0, len(claim.Sources))
 	for _, source := range claim.Sources {
 		keys = append(keys, topic.SourceKey(source))
 	}
-	err = tx.Raw(`WITH wanted AS MATERIALIZED (
+	err := tx.Raw(`WITH wanted AS MATERIALIZED (
 	 SELECT source_kind,source_id FROM topic_maintenance_sources WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND source_kind||':'||source_id=ANY(?::text[])
 	), acquired AS (
 	 SELECT source.source_id FROM topic_maintenance_sources AS source JOIN wanted USING(source_kind,source_id)

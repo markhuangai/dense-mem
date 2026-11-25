@@ -10,7 +10,7 @@ import (
 )
 
 func TestConflictAdapterRejectsInvalidInputsBeforeOpeningDatabase(t *testing.T) {
-	store := NewStore(nil, nil)
+	store := NewStore(nil, nil, nil)
 	ctx := context.Background()
 
 	_, err := store.ListEvidenceConflicts(ctx, EvidenceConflictListInput{TeamID: "not-a-uuid", Limit: 1})
@@ -42,7 +42,7 @@ func TestConflictAdapterRejectsInvalidInputsBeforeOpeningDatabase(t *testing.T) 
 func TestConflictAdapterValidInputsStillRequireInfrastructure(t *testing.T) {
 	teamID := "00000000-0000-0000-0000-000000000001"
 	conflictID := "00000000-0000-0000-0000-000000000002"
-	store := NewStore(&gorm.DB{}, nil)
+	store := NewStore(&gorm.DB{}, nil, nil)
 	ctx := context.Background()
 
 	for _, status := range []string{"open", "resolved", "dismissed"} {

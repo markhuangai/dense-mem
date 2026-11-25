@@ -169,6 +169,70 @@ func loadSearchDocumentsForEmbeddingTx(
 	return result, nil
 }
 
+func loadSearchDocumentsForSourcesTx(
+	ctx context.Context,
+	tx *gorm.DB,
+	input LoadSearchDocumentsForSourcesInput,
+) ([]SearchDocumentForEmbedding, error) {
+	input.TeamID = strings.TrimSpace(input.TeamID)
+	input.OwnerProfileID = strings.TrimSpace(input.OwnerProfileID)
+	input.SourceKind = strings.TrimSpace(input.SourceKind)
+	if _, err := uuid.Parse(input.TeamID); err != nil {
+		return nil, fmt.Errorf("search: team_id is required: %w", err)
+	}
+	if _, err := uuid.Parse(input.OwnerProfileID); err != nil {
+		return nil, fmt.Errorf("search: owner_profile_id is required: %w", err)
+	}
+	if input.SourceKind == "" || len(input.SourceIDs) == 0 {
+		return []SearchDocumentForEmbedding{}, nil
+	}
+	ids := make([]string, 0, len(input.SourceIDs))
+	seen := make(map[string]struct{}, len(input.SourceIDs))
+	for _, raw := range input.SourceIDs {
+		id := strings.TrimSpace(raw)
+		if _, err := uuid.Parse(id); err != nil {
+			return nil, fmt.Errorf("search: source_id is invalid: %w", err)
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		ids = append(ids, id)
+	}
+	rows, err := tx.WithContext(ctx).Raw(`
+		SELECT document.search_document_id::text
+		FROM search_documents AS document
+		WHERE document.team_id = ?::uuid
+		  AND document.owner_profile_id = ?::uuid
+		  AND document.source_kind = ?
+		  AND document.source_id = ANY(?::uuid[])
+		ORDER BY array_position(?::uuid[], document.source_id), document.updated_at DESC, document.search_document_id
+	`, input.TeamID, input.OwnerProfileID, input.SourceKind, pq.Array(ids), pq.Array(ids)).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	documentIDs := make([]string, 0, len(ids))
+	seenDocuments := make(map[string]struct{})
+	for rows.Next() {
+		var documentID string
+		if err := rows.Scan(&documentID); err != nil {
+			return nil, err
+		}
+		if _, ok := seenDocuments[documentID]; ok {
+			continue
+		}
+		seenDocuments[documentID] = struct{}{}
+		documentIDs = append(documentIDs, documentID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return loadSearchDocumentsForEmbeddingTx(ctx, tx, LoadSearchDocumentsForEmbeddingInput{
+		TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, SearchDocumentIDs: documentIDs,
+	})
+}
+
 func (r *Store) LoadSearchDocumentsForSources(
 	ctx context.Context,
 	input LoadSearchDocumentsForSourcesInput,

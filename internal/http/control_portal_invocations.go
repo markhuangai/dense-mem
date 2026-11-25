@@ -16,7 +16,7 @@ import (
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
 )
 
-func registerRememberInvocationDiagnosticsRoutes(api *echo.Group, control *controlDiagnosticsHandler, telemetry ControlPortalServices) {
+func registerRememberInvocationDiagnosticsRoutes(api *echo.Group, control *controlPortalHandler, telemetry ControlPortalTelemetry) {
 	if telemetry.RememberInvocations == nil {
 		return
 	}
@@ -24,7 +24,7 @@ func registerRememberInvocationDiagnosticsRoutes(api *echo.Group, control *contr
 	api.GET("/teams/:teamId/remember-invocations/:invocationId", control.getRememberInvocationDiagnostic)
 }
 
-func (h *controlDiagnosticsHandler) listRememberInvocationDiagnostics(c *echo.Context) error {
+func (h *controlPortalHandler) listRememberInvocationDiagnostics(c *echo.Context) error {
 	if h.rememberInvocations == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "remember invocation diagnostics unavailable")
 	}
@@ -42,7 +42,7 @@ func (h *controlDiagnosticsHandler) listRememberInvocationDiagnostics(c *echo.Co
 	return response.PaginatedOK(c, page.Items, response.Pagination{Limit: filter.Limit, Offset: filter.Offset, Total: page.Total})
 }
 
-func (h *controlDiagnosticsHandler) getRememberInvocationDiagnostic(c *echo.Context) error {
+func (h *controlPortalHandler) getRememberInvocationDiagnostic(c *echo.Context) error {
 	if h.rememberInvocations == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "remember invocation diagnostics unavailable")
 	}
@@ -79,7 +79,7 @@ func (h *controlDiagnosticsHandler) getRememberInvocationDiagnostic(c *echo.Cont
 	return c.JSON(200, map[string]any{"data": detail})
 }
 
-func (h *controlDiagnosticsHandler) enrichRememberInvocationDiagnostic(ctx context.Context, teamID uuid.UUID, detail *rememberapp.RememberInvocationDiagnosticDetail) {
+func (h *controlPortalHandler) enrichRememberInvocationDiagnostic(ctx context.Context, teamID uuid.UUID, detail *rememberapp.RememberInvocationDiagnosticDetail) {
 	if detail == nil {
 		return
 	}

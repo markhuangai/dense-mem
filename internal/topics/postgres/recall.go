@@ -213,10 +213,11 @@ func (s *Store) readRecallGroups(tx *gorm.DB, fence scope, input topic.RecallRea
 	var views []topic.RecordView
 	if len(missing) > 0 {
 		records, err := recallRecords(tx, fence, `head.kind='evidence_group' AND EXISTS (
-        SELECT 1 FROM evidence_equivalences AS peer
-        WHERE (peer.team_id,peer.shared_space_id,peer.space_generation,peer.record_id,peer.version)=
-            (head.team_id,head.shared_space_id,head.space_generation,head.record_id,head.version)
-        AND NOT peer.retired AND peer.members && ?::uuid[])`, []any{pq.Array(missing)}, topic.MaxPageSize)
+		SELECT 1 FROM topic_source_dependencies AS dependency
+		WHERE dependency.team_id=head.team_id AND dependency.shared_space_id=head.shared_space_id
+		AND dependency.space_generation=head.space_generation AND dependency.record_id=head.record_id
+		AND dependency.record_version=head.version AND dependency.source_kind='evidence'
+		AND dependency.source_id=ANY(?::text[]))`, []any{pq.Array(missing)}, topic.MaxPageSize)
 		if err != nil {
 			return result, err
 		}

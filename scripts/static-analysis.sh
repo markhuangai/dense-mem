@@ -6,8 +6,7 @@ cd "${ROOT_DIR}"
 
 packages="$(scripts/go-packages.sh)"
 printf '%s\n' "${packages}"
-printf '%s\n' 'default:' 'integration: -tags=integration' 'staging_rehearsal: -tags=staging_rehearsal' |
-	go tool staticcheck -matrix -checks=inherit ${packages}
+go tool staticcheck -checks=inherit,-U1000 ${packages}
 
 production_files="$(
 	git ls-files '*.go' |

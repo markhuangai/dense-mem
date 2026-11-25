@@ -256,10 +256,6 @@ func newMigrationProviderWithFilesystem(
 			&goose.GoFunc{RunDB: operationLogInvocationIndexMigrationDown, Mode: goose.TransactionDisabled},
 		))
 	}
-	if _, ok := filesystem[relationalTopicDataFile]; ok {
-		excludedNames = append(excludedNames, relationalTopicDataFile)
-		goMigrations = append(goMigrations, relationalTopicDataMigration())
-	}
 	if _, ok := filesystem[topicStorageDataFile]; ok {
 		excludedNames = append(excludedNames, topicStorageDataFile)
 		goMigrations = append(goMigrations, topicStorageDataMigration())
@@ -350,15 +346,15 @@ func (m *Migrator) RunUp(ctx context.Context) error {
 }
 
 func (m *Migrator) RunUpThroughEvidenceOnly(ctx context.Context) error {
-	return m.RunUpTo(ctx, evidenceOnlyMigrationVersion)
+	return m.runUpTo(ctx, evidenceOnlyMigrationVersion)
 }
 
 func (m *Migrator) PrepareFeatureStorageMigration(ctx context.Context) error {
-	return m.RunUpTo(ctx, FeatureStoragePrepareVersion)
+	return m.runUpTo(ctx, FeatureStoragePrepareVersion)
 }
 
 func (m *Migrator) PreparePrivateMemoryMigration(ctx context.Context) error {
-	return m.RunUpTo(ctx, 20261014010001)
+	return m.runUpTo(ctx, 20261014010001)
 }
 
 func (m *Migrator) IncludesEvidenceOnlyMigration() (bool, error) {
@@ -371,11 +367,10 @@ func (m *Migrator) IncludesEvidenceOnlyMigration() (bool, error) {
 }
 
 func (m *Migrator) PrepareEvidenceOnlyMigration(ctx context.Context) error {
-	return m.RunUpTo(ctx, 20261108010000)
+	return m.runUpTo(ctx, 20261108010000)
 }
 
-// RunUpTo applies the existing Goose history through a specific migration version.
-func (m *Migrator) RunUpTo(ctx context.Context, version int64) error {
+func (m *Migrator) runUpTo(ctx context.Context, version int64) error {
 	releasePool := reserveMigrationPool(m.db)
 	defer releasePool()
 	provider, err := newRuntimeMigrationProvider(m.dir, m.db, true)

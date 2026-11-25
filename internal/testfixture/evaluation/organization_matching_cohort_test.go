@@ -16,7 +16,7 @@ func TestOntologyMatchingBaseline(t *testing.T) {
 	require.NoError(t, err)
 	generator, err := os.ReadFile("organization_matching_cohort.go")
 	require.NoError(t, err)
-	data, err := os.ReadFile("testdata/topic_matching_v1.json")
+	data, err := os.ReadFile("testdata/ontology_matching_v1.json")
 	require.NoError(t, err)
 	var lock struct {
 		CohortSHA256    string `json:"cohort_sha256"`

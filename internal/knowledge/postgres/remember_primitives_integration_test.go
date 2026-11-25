@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	privacypostgres "github.com/markhuangai/dense-mem/internal/privacy/postgres"
-	assignment "github.com/markhuangai/dense-mem/internal/topics/assignment"
+	assignment "github.com/markhuangai/dense-mem/internal/topicassignment/contract"
 	assignmentpg "github.com/markhuangai/dense-mem/internal/topics/postgres"
 	"testing"
 	"time"
@@ -130,9 +130,9 @@ func runRememberEvidenceOnlyAtomicScenario(t *testing.T) {
 	replay, err := repo.CommitRememberWithEmbeddings(actorCtx, input, rememberTestEmbeddings(plan, false))
 	require.ErrorIs(t, err, ErrRememberReplay)
 	require.NotNil(t, replay)
-	firstReceipt, err := json.Marshal(result.Receipt)
+	firstReceipt, err := json.Marshal(result.PublicResult)
 	require.NoError(t, err)
-	replayedReceipt, err := json.Marshal(replay.Receipt)
+	replayedReceipt, err := json.Marshal(replay.PublicResult)
 	require.NoError(t, err)
 	require.JSONEq(t, string(firstReceipt), string(replayedReceipt))
 
@@ -196,68 +196,6 @@ func runRememberEvidenceOnlyAtomicScenario(t *testing.T) {
 	rollbackCounts := rememberPrimitiveCounts(t, ctx, adminDB, rls, teamID, rollback.IngestID)
 	for _, count := range rollbackCounts {
 		require.Zero(t, count)
-	}
-	t.Run("independent shared writes overlap while Topic membership is being committed", func(t *testing.T) {
-		first, second := sharedInput("independent-first"), sharedInput("independent-second")
-		first.TopicAssignments = []assignment.Outcome{{Text: first.Evidence[0].Content, InputHash: first.RequestHash, Method: "generation",
-			Proposals: []assignment.Proposal{{Label: "Independent Alpha", Description: "Alpha storage.", Quote: "stores"}}}}
-		second.TopicAssignments = []assignment.Outcome{{Text: second.Evidence[0].Content, InputHash: second.RequestHash, Method: "generation",
-			Proposals: []assignment.Proposal{{Label: "Independent Beta", Description: "Beta storage.", Quote: "stores"}}}}
-		firstPlan, err := repo.PlanRememberEmbeddings(actorCtx, first)
-		require.NoError(t, err)
-		secondPlan, err := repo.PlanRememberEmbeddings(actorCtx, second)
-		require.NoError(t, err)
-		gate := &heldTopicPublication{
-			topicAssignmentWriter: assignments, operationID: first.IngestID,
-			written: make(chan struct{}), release: make(chan struct{}),
-		}
-		repo.WithTopicAssignments(gate)
-		writeCtx, cancel := context.WithTimeout(actorCtx, 10*time.Second)
-		defer cancel()
-		firstDone := make(chan error, 1)
-		go func() {
-			_, err := repo.CommitRememberWithEmbeddings(writeCtx, first, rememberTestEmbeddings(firstPlan, false))
-			firstDone <- err
-		}()
-		select {
-		case <-gate.written:
-		case err := <-firstDone:
-			t.Fatalf("first Remember finished before the concurrent write: %v", err)
-		case <-writeCtx.Done():
-			t.Fatal("first Remember did not reach the Topic membership write")
-		}
-		secondResult, err := repo.CommitRememberWithEmbeddings(writeCtx, second, rememberTestEmbeddings(secondPlan, false))
-		require.NoError(t, err, "the second Remember must commit while the first still holds its Topic locks")
-		require.Equal(t, "completed", secondResult.Outcome)
-		close(gate.release)
-		require.NoError(t, <-firstDone)
-		for _, input := range []SynchronousRememberCommitInput{first, second} {
-			for name, count := range rememberPrimitiveCounts(t, ctx, adminDB, rls, teamID, input.IngestID) {
-				require.EqualValues(t, 1, count, name)
-			}
-		}
-	})
-}
-
-type heldTopicPublication struct {
-	topicAssignmentWriter
-	operationID      string
-	written, release chan struct{}
-}
-
-func (g *heldTopicPublication) PublishAssignmentsTx(ctx context.Context, tx *gorm.DB, scope assignment.Scope, items []assignment.Publication) error {
-	if err := g.topicAssignmentWriter.PublishAssignmentsTx(ctx, tx, scope, items); err != nil {
-		return err
-	}
-	if scope.OperationID != g.operationID {
-		return nil
-	}
-	close(g.written)
-	select {
-	case <-g.release:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
 	}
 }
 

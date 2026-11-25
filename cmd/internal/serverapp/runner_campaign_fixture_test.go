@@ -6,13 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
-
-	assignment "github.com/markhuangai/dense-mem/internal/topics/assignment"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v5"
@@ -32,6 +31,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/recall"
 	recallpg "github.com/markhuangai/dense-mem/internal/recall/postgres"
 	remember "github.com/markhuangai/dense-mem/internal/remember/service"
+	"github.com/markhuangai/dense-mem/internal/remember/service/processor"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	searchapp "github.com/markhuangai/dense-mem/internal/search"
 	searchpg "github.com/markhuangai/dense-mem/internal/search/postgres"
@@ -40,6 +40,7 @@ import (
 	settingspg "github.com/markhuangai/dense-mem/internal/settings/postgres"
 	assessmentfixture "github.com/markhuangai/dense-mem/internal/testfixture/assessment"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
+	"github.com/markhuangai/dense-mem/internal/topicassignment"
 	organization "github.com/markhuangai/dense-mem/internal/topics"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
 	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
@@ -73,7 +74,7 @@ func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
 	store := knowledgepg.NewStore(app, rls)
 	provider := &runnerRememberAssessor{failures: 1}
 	embedder := rememberProcessorIntegrationSearchEmbedder{model: model, dimensions: dimensions}
-	writer := remember.NewService(remember.Dependencies{Synchronous: remember.NewSynchronousProcessor(remember.ProcessorDependencies{Ledger: store, Assessor: provider, EmbeddingExecutor: semanticwrite.NewProviderExecutor(embedder), Limits: assessor.DefaultSemanticAssessmentLimits()})})
+	writer := remember.NewService(remember.Dependencies{Synchronous: processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store, Assessor: provider, EmbeddingExecutor: semanticwrite.NewProviderExecutor(embedder), Limits: assessor.DefaultSemanticAssessmentLimits()})})
 	actorCtx := rememberProcessorActorContext(t, ctx, admin, rls, teamID, ownerID)
 	actor, ok := requestctx.ActorFromContext(actorCtx)
 	require.True(t, ok)
@@ -110,8 +111,8 @@ func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
 	transport := structured.NewOpenAI(&config.Config{AIVerifierAPIURL: upstream.URL, AIVerifierAPIKey: "synthetic", AIVerifierModel: "runner-ontology"}, upstream.Client())
 	limits := assessor.DefaultSemanticAssessmentLimits()
 	maintenance := buildTopicMaintenance(topicStore, configuration, transport, limits, "runner-ontology", 0, 0, audit, nil, organization.MaintenanceDiagnosticCapture{})
-	assignment := organization.NewAssignmentService(topicStore, configuration, transport, nil, limits, "runner-ontology", nil)
-	maintenance.WithTopicProcessing(assignment, topicStore, topicStore, organization.CommunityAssessor{Transport: transport, Limits: limits}, nil)
+	assignment := topicassignment.NewService(topicStore, configuration, transport, nil, limits, "runner-ontology", nil)
+	maintenance.WithTopicProcessing(assignment, topicStore, topicStore, organization.CommunityAssessor{Transport: transport, Limits: limits})
 	_, err = maintenance.Command(ctx, domain.TopicMaintenanceCommand{Action: "pause", OperationKey: uuid.NewString()}, "", "")
 	require.NoError(t, err)
 	recallStore := recallpg.NewStore(app, rls, search, recallpg.LoadRecallEvidenceConflictRecords).
@@ -129,7 +130,7 @@ func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
 		e.ServeHTTP(w, r.WithContext(callCtx))
 	}))
 	t.Cleanup(mcp.Close)
-	control := runnerControlServer(t, maintenance, configuration, searchapp.NewSearchConvergenceService(search, search))
+	control := runnerControlServer(t, maintenance, configuration, searchapp.NewSearchConvergenceService(search, store))
 	pool, err := admin.DB()
 	require.NoError(t, err)
 	client := &evalharness.HTTPClient{BaseURL: mcp.URL, APIKey: "fixture", Client: mcp.Client()}
@@ -142,10 +143,10 @@ func newRunnerServiceFixture(t *testing.T) *runnerServiceFixture {
 
 func runnerControlServer(t *testing.T, maintenance *organization.MaintenanceService, configuration settings.AppConfigService, convergence searchapp.SearchConvergenceReader) *httptest.Server {
 	t.Helper()
-	bindings := densehttp.ControlPortalServices{
+	bindings := densehttp.ControlPortalBindings{Telemetry: densehttp.ControlPortalTelemetry{
 		TopicMaintenance: maintenance, Config: configuration, Convergence: convergence,
-	}
-	portal, err := densehttp.NewControlPortalServerWithServices(&config.Config{ControlPortalToken: "runner-control"}, nil, nil, nil, bindings, densehttp.HealthConfig{}, nil)
+	}}
+	portal, err := densehttp.NewControlPortalServerWithCapabilityBindings(&config.Config{ControlPortalToken: "runner-control"}, nil, nil, nil, bindings, densehttp.HealthConfig{}, nil)
 	require.NoError(t, err)
 	control := httptest.NewServer(portal)
 	t.Cleanup(control.Close)
@@ -194,13 +195,18 @@ func (p *runnerRememberAssessor) Complete(ctx context.Context, wire modelprovide
 	return modelprovider.StructuredResult{}, fmt.Errorf("paraphrase fixture has no supplied canonical candidate")
 }
 
+func pairArgumentString(arguments map[string]any, key string) string {
+	value, _ := arguments[key].(string)
+	return value
+}
+
 func runnerTopicProcessResponse(schema string, content []byte) ([]byte, error) {
 	switch schema {
 	case "topic_assignment_v1":
 		var input struct {
-			RequestID string             `json:"request_id"`
-			Text      string             `json:"evidence"`
-			Topics    []assignment.Topic `json:"topics"`
+			RequestID string                  `json:"request_id"`
+			Text      string                  `json:"evidence"`
+			Topics    []topicassignment.Topic `json:"topics"`
 		}
 		if err := json.Unmarshal(content, &input); err != nil {
 			return nil, err
@@ -267,4 +273,17 @@ func (f *runnerServiceFixture) snapshot(t *testing.T) evalharness.NativeObservat
 	snapshot, err := f.native.Snapshot(context.Background())
 	require.NoError(t, err)
 	return snapshot
+}
+
+func (f *runnerServiceFixture) controlResponse(t *testing.T, path string) (int, []byte) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, f.control.URL+"/control/api"+path, nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer runner-control")
+	response, err := f.control.Client().Do(req)
+	require.NoError(t, err)
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	return response.StatusCode, body
 }

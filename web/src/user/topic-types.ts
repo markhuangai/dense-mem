@@ -5,7 +5,7 @@ export type TopicSource = SourceHandle & { text: string; truncated: boolean; own
 export type TopicDefinition = { key: string; label: string; description: string; aliases?: string[]; parent_id?: string };
 export type TopicRecord = {
   community_parent_id?: string; community_placement?: string;
-  id: string; version: number; edit_version?: number; kind: TopicKind; retired: boolean; current: boolean; stale_reason?: string;
+  id: string; version: number; kind: TopicKind; retired: boolean; current: boolean; stale_reason?: string;
   definition?: TopicDefinition;
   assignment?: { source: SourceHandle; definition_id: string };
   group?: { members: SourceHandle[]; assessment_id?: string };
@@ -24,7 +24,8 @@ export type TopicDraft = {
   id: string; version: number; state: "open" | "published" | "discarded"; base_revision: number;
   reason: string; edits: TopicEdit[]; publication?: TopicPublication; updated_at: string;
 };
-export type SaveTopicEdits = { operation_key: string; reason: string; edits: TopicEdit[] };
+export type SaveTopicDraft = { operation_key: string; expected_version: number; expected_revision: number; reason: string; edits: TopicEdit[] };
+export type TopicDraftCommand = { operation_key: string; expected_version: number; expected_revision: number; reason: string };
 export type TopicPreview = {
   draft_id: string; draft_version: number; revision: number; changed_records: number; affected_records: number;
   affected_sources: number; requires_reassessment: boolean; examples: TopicSource[]; examples_truncated: boolean; complete: boolean;

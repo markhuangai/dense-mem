@@ -211,26 +211,6 @@ const portalCookies = await createPortalSession(apiKey);
 
 const sameTeam = await createCredential(teamID, `${runID}-same-team`);
 const otherTeam = await createTeam(`${runID}-other-team`);
-const newTeamName = `${runID}-renamed-team`;
-const renamed = await controlJSON(`/control/api/teams/${otherTeam.id}`, {
-  method: "PATCH",
-  body: { name: newTeamName },
-});
-if (renamed.data?.name !== newTeamName) throw new Error("team rename did not return the updated name");
-for (const [method, path] of [["POST", "/control/api/teams"], ["PATCH", `/control/api/teams/${teamID}`]]) {
-  const response = await fetch(`${controlURL}${path}`, {
-    method,
-    headers: { Authorization: `Bearer ${controlToken}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ name: newTeamName.toUpperCase() }),
-  });
-  if (response.status !== 409) {
-    throw new Error(`${method} with a duplicate active team name should return 409, got ${response.status}`);
-  }
-  const error = await response.json();
-  if (error.reason_code !== "team_name_conflict") {
-    throw new Error(`${method} team name conflict did not include its stable reason`);
-  }
-}
 const crossTeam = await createCredential(otherTeam.id, `${runID}-cross-team`);
 
 const receipt = await mcpSuccess(apiKey, "remember", rememberInput());
@@ -296,7 +276,6 @@ console.log(JSON.stringify({
   migration_control_retired: true,
   bridge_seed_authentication: true,
   bridge_seed_history: true,
-  duplicate_team_create_and_rename_conflict: true,
   stable_ids: true,
   owner_authentication: true,
   same_team_owner_isolation: true,

@@ -18,7 +18,7 @@ func TestOntologyOrganizationBaseline(t *testing.T) {
 	generator, err := os.ReadFile("organization_cohort.go")
 	require.NoError(t, err)
 	generatorDigest := sha256.Sum256(generator)
-	lockBytes, err := os.ReadFile("testdata/topic_organization_v1.json")
+	lockBytes, err := os.ReadFile("testdata/ontology_organization_v1.json")
 	require.NoError(t, err)
 	var lock struct {
 		GeneratorSHA256 string `json:"generator_sha256"`

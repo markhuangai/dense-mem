@@ -11,21 +11,38 @@ import (
 	"github.com/lib/pq"
 	"gorm.io/gorm"
 
-	accesscontract "github.com/markhuangai/dense-mem/internal/access/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
-type controlIdentityRepository struct {
+type ControlIdentityRepository interface {
+	ListControlAdminGroups(ctx context.Context, providerID uuid.UUID) ([]*domain.ControlAdminGroup, error)
+	CreateControlAdminGroup(ctx context.Context, group *domain.ControlAdminGroup) error
+	UpdateControlAdminGroup(ctx context.Context, group *domain.ControlAdminGroup) error
+	RetireControlAdminGroup(ctx context.Context, providerID, groupID uuid.UUID) error
+
+	CreateControlOAuthState(ctx context.Context, state domain.ControlOAuthState) error
+	ConsumeControlOAuthState(ctx context.Context, stateHash string) (*domain.ControlOAuthState, error)
+	DeleteExpiredControlOAuthStates(ctx context.Context, now time.Time) error
+
+	CreateControlSession(ctx context.Context, session domain.ControlSession) error
+	GetControlSession(ctx context.Context, sessionHash string) (*domain.ControlSession, error)
+	DeleteControlSession(ctx context.Context, sessionHash string) error
+	DeleteExpiredControlSessions(ctx context.Context, now time.Time) error
+}
+
+type ControlIdentityRepositoryImpl struct {
 	db  *gorm.DB
 	rls storagepostgres.RLSHelper
 }
 
-func NewControlIdentityRepository(db *gorm.DB, rls storagepostgres.RLSHelper) *controlIdentityRepository {
-	return &controlIdentityRepository{db: db, rls: rls}
+var _ ControlIdentityRepository = (*ControlIdentityRepositoryImpl)(nil)
+
+func NewControlIdentityRepository(db *gorm.DB, rls storagepostgres.RLSHelper) *ControlIdentityRepositoryImpl {
+	return &ControlIdentityRepositoryImpl{db: db, rls: rls}
 }
 
-func (r *controlIdentityRepository) ListControlAdminGroups(ctx context.Context, providerID uuid.UUID) ([]*domain.ControlAdminGroup, error) {
+func (r *ControlIdentityRepositoryImpl) ListControlAdminGroups(ctx context.Context, providerID uuid.UUID) ([]*domain.ControlAdminGroup, error) {
 	groups := make([]*domain.ControlAdminGroup, 0)
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
@@ -53,7 +70,7 @@ func (r *controlIdentityRepository) ListControlAdminGroups(ctx context.Context, 
 	return groups, nil
 }
 
-func (r *controlIdentityRepository) CreateControlAdminGroup(ctx context.Context, group *domain.ControlAdminGroup) error {
+func (r *ControlIdentityRepositoryImpl) CreateControlAdminGroup(ctx context.Context, group *domain.ControlAdminGroup) error {
 	if group == nil || group.ProviderID == uuid.Nil || strings.TrimSpace(group.GroupID) == "" {
 		return fmt.Errorf("control admin provider ID and group ID are required")
 	}
@@ -74,7 +91,7 @@ func (r *controlIdentityRepository) CreateControlAdminGroup(ctx context.Context,
 	return nil
 }
 
-func (r *controlIdentityRepository) UpdateControlAdminGroup(ctx context.Context, group *domain.ControlAdminGroup) error {
+func (r *ControlIdentityRepositoryImpl) UpdateControlAdminGroup(ctx context.Context, group *domain.ControlAdminGroup) error {
 	if group == nil || group.ID == uuid.Nil || group.ProviderID == uuid.Nil || strings.TrimSpace(group.GroupID) == "" {
 		return fmt.Errorf("control admin group ID, provider ID, and group ID are required")
 	}
@@ -93,7 +110,7 @@ func (r *controlIdentityRepository) UpdateControlAdminGroup(ctx context.Context,
 			return res.Error
 		}
 		if res.RowsAffected == 0 {
-			return accesscontract.ErrControlIdentityNotFound
+			return gorm.ErrRecordNotFound
 		}
 		return nil
 	})
@@ -104,7 +121,7 @@ func (r *controlIdentityRepository) UpdateControlAdminGroup(ctx context.Context,
 	return nil
 }
 
-func (r *controlIdentityRepository) RetireControlAdminGroup(ctx context.Context, providerID, groupID uuid.UUID) error {
+func (r *ControlIdentityRepositoryImpl) RetireControlAdminGroup(ctx context.Context, providerID, groupID uuid.UUID) error {
 	now := time.Now().UTC()
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		res := tx.Exec(`
@@ -116,7 +133,7 @@ func (r *controlIdentityRepository) RetireControlAdminGroup(ctx context.Context,
 			return res.Error
 		}
 		if res.RowsAffected == 0 {
-			return accesscontract.ErrControlIdentityNotFound
+			return gorm.ErrRecordNotFound
 		}
 		return nil
 	})
@@ -126,7 +143,7 @@ func (r *controlIdentityRepository) RetireControlAdminGroup(ctx context.Context,
 	return nil
 }
 
-func (r *controlIdentityRepository) CreateControlOAuthState(ctx context.Context, state domain.ControlOAuthState) error {
+func (r *ControlIdentityRepositoryImpl) CreateControlOAuthState(ctx context.Context, state domain.ControlOAuthState) error {
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			INSERT INTO sso_control_oauth_states (state_hash, provider_id, pkce_verifier, nonce, expires_at, created_at)
@@ -139,7 +156,7 @@ func (r *controlIdentityRepository) CreateControlOAuthState(ctx context.Context,
 	return nil
 }
 
-func (r *controlIdentityRepository) ConsumeControlOAuthState(ctx context.Context, stateHash string) (*domain.ControlOAuthState, error) {
+func (r *ControlIdentityRepositoryImpl) ConsumeControlOAuthState(ctx context.Context, stateHash string) (*domain.ControlOAuthState, error) {
 	var state *domain.ControlOAuthState
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
@@ -167,7 +184,7 @@ func (r *controlIdentityRepository) ConsumeControlOAuthState(ctx context.Context
 	return state, nil
 }
 
-func (r *controlIdentityRepository) DeleteExpiredControlOAuthStates(ctx context.Context, now time.Time) error {
+func (r *ControlIdentityRepositoryImpl) DeleteExpiredControlOAuthStates(ctx context.Context, now time.Time) error {
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		return tx.Exec(`DELETE FROM sso_control_oauth_states WHERE expires_at <= $1`, now).Error
 	})
@@ -177,7 +194,7 @@ func (r *controlIdentityRepository) DeleteExpiredControlOAuthStates(ctx context.
 	return nil
 }
 
-func (r *controlIdentityRepository) CreateControlSession(ctx context.Context, session domain.ControlSession) error {
+func (r *ControlIdentityRepositoryImpl) CreateControlSession(ctx context.Context, session domain.ControlSession) error {
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		return tx.Exec(`
 			INSERT INTO sso_control_sessions (session_hash, identity_id, provider_id, group_ids, csrf_hash, expires_at, created_at, last_seen_at)
@@ -190,7 +207,7 @@ func (r *controlIdentityRepository) CreateControlSession(ctx context.Context, se
 	return nil
 }
 
-func (r *controlIdentityRepository) GetControlSession(ctx context.Context, sessionHash string) (*domain.ControlSession, error) {
+func (r *ControlIdentityRepositoryImpl) GetControlSession(ctx context.Context, sessionHash string) (*domain.ControlSession, error) {
 	var session *domain.ControlSession
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		rows, err := tx.Raw(`
@@ -218,7 +235,7 @@ func (r *controlIdentityRepository) GetControlSession(ctx context.Context, sessi
 	return session, nil
 }
 
-func (r *controlIdentityRepository) DeleteControlSession(ctx context.Context, sessionHash string) error {
+func (r *ControlIdentityRepositoryImpl) DeleteControlSession(ctx context.Context, sessionHash string) error {
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		return tx.Exec(`DELETE FROM sso_control_sessions WHERE session_hash = $1`, sessionHash).Error
 	})
@@ -228,7 +245,7 @@ func (r *controlIdentityRepository) DeleteControlSession(ctx context.Context, se
 	return nil
 }
 
-func (r *controlIdentityRepository) DeleteExpiredControlSessions(ctx context.Context, now time.Time) error {
+func (r *ControlIdentityRepositoryImpl) DeleteExpiredControlSessions(ctx context.Context, now time.Time) error {
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		return tx.Exec(`DELETE FROM sso_control_sessions WHERE expires_at <= $1`, now).Error
 	})

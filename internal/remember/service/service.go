@@ -110,9 +110,55 @@ type RememberEvidenceInput struct {
 	Metadata               map[string]any `json:"metadata,omitempty"`
 }
 
-type RememberResult = knowledge.RememberReceipt
-type SubmissionStatusResult = knowledge.RememberReceipt
-type SubmissionEvidenceStatus = knowledge.SubmissionEvidenceStatus
+type RememberResult struct {
+	SpaceKind       domain.MemorySpaceKind     `json:"space_kind,omitempty"`
+	ContractVersion string                     `json:"contract_version"`
+	IngestID        string                     `json:"-"`
+	SubmissionID    string                     `json:"submission_id"`
+	SubmissionKind  string                     `json:"submission_kind"`
+	ProcessingState string                     `json:"processing_state"`
+	SearchState     string                     `json:"search_state"`
+	CorrelationID   string                     `json:"correlation_id,omitempty"`
+	Evidence        []SubmissionEvidenceStatus `json:"evidence"`
+	Errors          []SubmissionStatusError    `json:"errors"`
+	Warnings        []string                   `json:"warnings,omitempty"`
+	Kind            ResultKind                 `json:"-"`
+	Terminal        *TerminalRememberResult    `json:"-"`
+}
+
+type SubmissionStatusResult struct {
+	SpaceKind           domain.MemorySpaceKind     `json:"space_kind,omitempty"`
+	ContractVersion     string                     `json:"contract_version"`
+	SubmissionID        string                     `json:"submission_id"`
+	SubmissionKind      string                     `json:"submission_kind"`
+	ProcessingState     string                     `json:"processing_state"`
+	SearchState         string                     `json:"search_state"`
+	CorrelationID       string                     `json:"correlation_id,omitempty"`
+	Evidence            []SubmissionEvidenceStatus `json:"evidence"`
+	Errors              []SubmissionStatusError    `json:"errors"`
+	Warnings            []string                   `json:"warnings,omitempty"`
+	QuarantineExpiresAt *time.Time                 `json:"-"`
+	Kind                ResultKind                 `json:"-"`
+	Terminal            *TerminalRememberResult    `json:"-"`
+}
+
+type SubmissionEvidenceStatus struct {
+	PartitionIndex        *int                   `json:"partition_index,omitempty"`
+	SourceItemID          string                 `json:"source_item_id,omitempty"`
+	SpanStart             *int                   `json:"span_start,omitempty"`
+	SpanEnd               *int                   `json:"span_end,omitempty"`
+	OccurrenceID          string                 `json:"occurrence_id,omitempty"`
+	Disposition           string                 `json:"disposition"`
+	EvidenceID            string                 `json:"evidence_id,omitempty"`
+	ContentHash           string                 `json:"content_hash,omitempty"`
+	EvidenceIndex         int                    `json:"evidence_index"`
+	SupersededEvidenceIDs []string               `json:"superseded_evidence_ids"`
+	SearchState           string                 `json:"search_state"`
+	Reason                string                 `json:"reason,omitempty"`
+	Message               string                 `json:"message,omitempty"`
+	Remediation           string                 `json:"remediation,omitempty"`
+	Error                 *SubmissionStatusError `json:"error,omitempty"`
+}
 
 func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberResult, error) {
 	started := time.Now()
@@ -147,8 +193,7 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	if strings.TrimSpace(req.IdempotencyKey) == "" {
 		return nil, errors.New("remember: idempotency_key is required")
 	}
-	reviewContext := s.publicSeedAdmission == nil
-	scan, scanErr := scanRememberEvidence(req.Evidence, reviewContext)
+	scan, scanErr := scanRememberEvidence(req.Evidence)
 	if scanErr != nil {
 		if err := recordSubmissionSecurityRejection(ctx, s.auditor, s.logger, actor, "remember", scan, scanErr); err != nil {
 			observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
@@ -165,7 +210,7 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 		return nil, err
 	}
 	key := strings.TrimSpace(req.IdempotencyKey)
-	skipAIReview := scanErr == nil && !reviewContext
+	skipAIReview := scanErr == nil && s.publicSeedAdmission != nil
 	if skipAIReview && !s.publicSeedAdmission.allows(actor, space, key, requestHash) {
 		return nil, domain.ErrMemoryWriteDenied
 	}

@@ -17,6 +17,37 @@ import (
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
 
+// CredentialRepository is the companion interface for credential credential data access.
+// Consumers and tests depend on this abstraction rather than the concrete struct.
+type CredentialRepository interface {
+	CreateCredential(ctx context.Context, credential *domain.Credential) error
+	ListByTeam(ctx context.Context, teamID uuid.UUID, limit, offset int) ([]*domain.Credential, error)
+	CountByTeam(ctx context.Context, teamID uuid.UUID) (int64, error)
+	// GetByIDForTeam returns an API credential only when it belongs to teamID. Returns nil on mismatch.
+	GetByIDForTeam(ctx context.Context, teamID, id uuid.UUID) (*domain.Credential, error)
+	// ListSSOOwnedCredentials returns active credentials owned by one SSO identity in one team.
+	ListSSOOwnedCredentials(ctx context.Context, teamID, identityID uuid.UUID) ([]*domain.Credential, error)
+	// GetSSOOwnedCredentialByID returns one active credential only when both its team and SSO owner match.
+	GetSSOOwnedCredentialByID(ctx context.Context, teamID, identityID, credentialID uuid.UUID) (*domain.Credential, error)
+	// GetSSOOwnedCredential is retained for compatibility with older callers. It
+	// rejects ambiguous ownership instead of selecting an arbitrary credential.
+	GetSSOOwnedCredential(ctx context.Context, teamID, identityID uuid.UUID) (*domain.Credential, error)
+	GetActiveByPrefix(ctx context.Context, prefix string) (*domain.Credential, error)
+	// RevokeForTeam marks a credential revoked only when it belongs to teamID. Returns number of rows affected.
+	RevokeForTeam(ctx context.Context, teamID, id uuid.UUID) (int64, error)
+	// DeleteForTeam hard-deletes a credential only when it belongs to teamID. Returns number of rows affected.
+	DeleteForTeam(ctx context.Context, teamID, id uuid.UUID) (int64, error)
+	// UpdateNameForTeam renames a credential only when it belongs to teamID.
+	UpdateNameForTeam(ctx context.Context, teamID, id uuid.UUID, name string) (int64, error)
+	// UpdateRoleForTeam changes a credential role and scope set only when it belongs to teamID.
+	UpdateRoleForTeam(ctx context.Context, teamID, id uuid.UUID, role string, scopes []string) (int64, error)
+	// UpdateScopesForTeam changes a credential scope set only when it belongs to teamID.
+	UpdateScopesForTeam(ctx context.Context, teamID, id uuid.UUID, scopes []string) (int64, error)
+	// RotateForTeam replaces credential material for one credential in place.
+	RotateForTeam(ctx context.Context, teamID, id uuid.UUID, keyHash, keyPrefix, keySuffix string, expiresAt *time.Time) (*domain.Credential, error)
+	TouchLastUsed(ctx context.Context, id uuid.UUID) error
+}
+
 // LastUsedUpdate is shared with the Access application through its port.
 type LastUsedUpdate = accesscontract.LastUsedUpdate
 
@@ -26,25 +57,28 @@ type CredentialLastUsedBatchRepository interface {
 	TouchLastUsedBatch(ctx context.Context, updates []LastUsedUpdate) error
 }
 
-// credentialRepository implements the CredentialRepository interface.
+// CredentialRepositoryImpl implements the CredentialRepository interface.
 // Every query runs inside an RLS-aware transaction so Postgres FORCE RLS
 // policies (app.current_profile_id / app.tx_mode) enforce tenant isolation
 // even if a caller ever reaches the repository without the service layer.
-type credentialRepository struct {
+type CredentialRepositoryImpl struct {
 	db       *gorm.DB
 	rls      storagepostgres.RLSHelper
 	deletion accesscontract.CredentialDeletionStore
 }
 
+// Ensure CredentialRepositoryImpl implements CredentialRepository
+var _ CredentialRepository = (*CredentialRepositoryImpl)(nil)
+
 // NewCredentialRepository creates a new API credential repository instance.
 // rls is required; nil causes a panic at first use. Callers should pass
 // postgres.NewRLS() for production and an RLSHelper mock for unit tests.
-func NewCredentialRepository(db *gorm.DB, rls storagepostgres.RLSHelper, deletion accesscontract.CredentialDeletionStore) *credentialRepository {
-	return &credentialRepository{db: db, rls: rls, deletion: deletion}
+func NewCredentialRepository(db *gorm.DB, rls storagepostgres.RLSHelper, deletion accesscontract.CredentialDeletionStore) *CredentialRepositoryImpl {
+	return &CredentialRepositoryImpl{db: db, rls: rls, deletion: deletion}
 }
 
 // CreateCredential creates one API-client identity, membership, credential, and ownership alias.
-func (r *credentialRepository) CreateCredential(ctx context.Context, credential *domain.Credential) error {
+func (r *CredentialRepositoryImpl) CreateCredential(ctx context.Context, credential *domain.Credential) error {
 	if credential.ID == uuid.Nil {
 		credential.ID = uuid.New()
 	}
@@ -122,7 +156,7 @@ func (r *credentialRepository) CreateCredential(ctx context.Context, credential 
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to create standard api credential: %w", credentialWriteError(err))
+		return fmt.Errorf("failed to create standard api credential: %w", err)
 	}
 	created.KeyHash, created.KeyPrefix = credential.KeyHash, credential.KeyPrefix
 	*credential = *created
@@ -144,7 +178,7 @@ func GetKeyPrefixFromHash(hash string) string {
 // Excludes the key_hash field from results.
 //
 // Uses *sql.Rows + pq.Array() — see GetActiveByPrefix for the rationale.
-func (r *credentialRepository) ListByTeam(ctx context.Context, teamID uuid.UUID, limit, offset int) ([]*domain.Credential, error) {
+func (r *CredentialRepositoryImpl) ListByTeam(ctx context.Context, teamID uuid.UUID, limit, offset int) ([]*domain.Credential, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -213,7 +247,7 @@ func (r *credentialRepository) ListByTeam(ctx context.Context, teamID uuid.UUID,
 // (via gorm.io/driver/postgres) does not route text[] values through lib/pq's
 // StringArray scanner when GORM copies columns by reflection; scopes come back
 // empty and authorization fails closed.
-func (r *credentialRepository) GetActiveByPrefix(ctx context.Context, prefix string) (*domain.Credential, error) {
+func (r *CredentialRepositoryImpl) GetActiveByPrefix(ctx context.Context, prefix string) (*domain.Credential, error) {
 	var canonicalKey *domain.Credential
 
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
@@ -228,7 +262,7 @@ func (r *credentialRepository) GetActiveByPrefix(ctx context.Context, prefix str
 	return canonicalKey, nil
 }
 
-func (r *credentialRepository) GetTeamSharedSpaceID(ctx context.Context, teamID uuid.UUID) (uuid.UUID, error) {
+func (r *CredentialRepositoryImpl) GetTeamSharedSpaceID(ctx context.Context, teamID uuid.UUID) (uuid.UUID, error) {
 	var id uuid.UUID
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		return tx.Raw(`SELECT id FROM memory_spaces WHERE team_id = $1 AND kind = 'team_shared' LIMIT 1`, teamID).Row().Scan(&id)
@@ -246,7 +280,7 @@ func (r *credentialRepository) GetTeamSharedSpaceID(ctx context.Context, teamID 
 // API credential team without loading credential material. The stable team ID remains
 // valid across in-place credential rotation, while revocation and team state are
 // checked on every portal-cookie request.
-func (r *credentialRepository) GetActiveByID(ctx context.Context, id uuid.UUID) (*domain.Credential, error) {
+func (r *CredentialRepositoryImpl) GetActiveByID(ctx context.Context, id uuid.UUID) (*domain.Credential, error) {
 	var canonicalKey *domain.Credential
 
 	err := r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
@@ -262,7 +296,7 @@ func (r *credentialRepository) GetActiveByID(ctx context.Context, id uuid.UUID) 
 
 // RevokeForTeam marks an API credential as revoked only when it belongs to teamID.
 // Returns the number of rows affected (0 means the id/team combination did not match).
-func (r *credentialRepository) RevokeForTeam(ctx context.Context, teamID, id uuid.UUID) (int64, error) {
+func (r *CredentialRepositoryImpl) RevokeForTeam(ctx context.Context, teamID, id uuid.UUID) (int64, error) {
 	now := time.Now().UTC()
 	// Team-scoped revoke; UPDATE must satisfy api_keys_self_access.
 	var rowsAffected int64
@@ -306,7 +340,7 @@ func (r *credentialRepository) RevokeForTeam(ctx context.Context, teamID, id uui
 	return rowsAffected, nil
 }
 
-func (r *credentialRepository) deactivateActorIfUnused(ctx context.Context, now time.Time, credentialID uuid.UUID) error {
+func (r *CredentialRepositoryImpl) deactivateActorIfUnused(ctx context.Context, now time.Time, credentialID uuid.UUID) error {
 	// Actor liveness spans teams, so reconcile it in a separate system transaction.
 	return r.rls.WithSystemTx(ctx, r.db, func(tx *gorm.DB) error {
 		return tx.Exec(`
@@ -324,7 +358,7 @@ func (r *credentialRepository) deactivateActorIfUnused(ctx context.Context, now 
 }
 
 // UpdateNameForTeam renames a credential without changing its bearer material.
-func (r *credentialRepository) UpdateNameForTeam(ctx context.Context, teamID, id uuid.UUID, name string) (int64, error) {
+func (r *CredentialRepositoryImpl) UpdateNameForTeam(ctx context.Context, teamID, id uuid.UUID, name string) (int64, error) {
 	now := time.Now().UTC()
 	var rowsAffected int64
 	err := r.rls.WithTeamTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
@@ -351,13 +385,13 @@ func (r *credentialRepository) UpdateNameForTeam(ctx context.Context, teamID, id
 		`, name, now, id).Error
 	})
 	if err != nil {
-		return 0, fmt.Errorf("failed to update credential name: %w", credentialWriteError(err))
+		return 0, fmt.Errorf("failed to update credential name: %w", err)
 	}
 	return rowsAffected, nil
 }
 
 // UpdateRoleForTeam changes a credential role and scopes without changing bearer material.
-func (r *credentialRepository) UpdateRoleForTeam(ctx context.Context, teamID, id uuid.UUID, role string, scopes []string) (int64, error) {
+func (r *CredentialRepositoryImpl) UpdateRoleForTeam(ctx context.Context, teamID, id uuid.UUID, role string, scopes []string) (int64, error) {
 	now := time.Now().UTC()
 	var rowsAffected int64
 	err := r.rls.WithTeamTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
@@ -395,7 +429,7 @@ func (r *credentialRepository) UpdateRoleForTeam(ctx context.Context, teamID, id
 }
 
 // UpdateScopesForTeam changes credential scopes without changing bearer material.
-func (r *credentialRepository) UpdateScopesForTeam(ctx context.Context, teamID, id uuid.UUID, scopes []string) (int64, error) {
+func (r *CredentialRepositoryImpl) UpdateScopesForTeam(ctx context.Context, teamID, id uuid.UUID, scopes []string) (int64, error) {
 	now := time.Now().UTC()
 	var rowsAffected int64
 	err := r.rls.WithTeamTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
@@ -433,7 +467,7 @@ func (r *credentialRepository) UpdateScopesForTeam(ctx context.Context, teamID, 
 }
 
 // RotateForTeam replaces one credential's bearer secret without changing its identity.
-func (r *credentialRepository) RotateForTeam(ctx context.Context, teamID, id uuid.UUID, keyHash, keyPrefix, keySuffix string, expiresAt *time.Time) (*domain.Credential, error) {
+func (r *CredentialRepositoryImpl) RotateForTeam(ctx context.Context, teamID, id uuid.UUID, keyHash, keyPrefix, keySuffix string, expiresAt *time.Time) (*domain.Credential, error) {
 	now := time.Now().UTC()
 	var credential *domain.Credential
 	err := r.rls.WithTeamTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
@@ -610,7 +644,7 @@ func queryHydratedCredential(tx *gorm.DB, query string, args ...any) (*domain.Cr
 	return state.result()
 }
 
-func (r *credentialRepository) getOneHydratedCredential(ctx context.Context, teamID uuid.UUID, query string, args ...any) (*domain.Credential, error) {
+func (r *CredentialRepositoryImpl) getOneHydratedCredential(ctx context.Context, teamID uuid.UUID, query string, args ...any) (*domain.Credential, error) {
 	var credential *domain.Credential
 	err := r.rls.WithTeamTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
 		var err error
@@ -643,7 +677,7 @@ const credentialByIDForTeamQuery = `
 	`
 
 // GetByIDForTeam retrieves an API credential by ID only when it belongs to teamID.
-func (r *credentialRepository) GetByIDForTeam(ctx context.Context, teamID, id uuid.UUID) (*domain.Credential, error) {
+func (r *CredentialRepositoryImpl) GetByIDForTeam(ctx context.Context, teamID, id uuid.UUID) (*domain.Credential, error) {
 	credential, err := r.getOneHydratedCredential(ctx, teamID, credentialByIDForTeamQuery, id, teamID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get api credential for team: %w", err)
@@ -671,7 +705,7 @@ const ssoOwnedCredentialQuery = `
 		  AND t.status = 'active' AND t.deleted_at IS NULL
 `
 
-func (r *credentialRepository) listHydratedCredentials(ctx context.Context, teamID uuid.UUID, query string, args ...any) ([]*domain.Credential, error) {
+func (r *CredentialRepositoryImpl) listHydratedCredentials(ctx context.Context, teamID uuid.UUID, query string, args ...any) ([]*domain.Credential, error) {
 	credentials := make([]*domain.Credential, 0)
 	err := r.rls.WithTeamTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
 		rows, err := tx.Raw(query, args...).Rows()
@@ -701,7 +735,7 @@ func (r *credentialRepository) listHydratedCredentials(ctx context.Context, team
 // ListSSOOwnedCredentials returns the active normal API credentials owned by an
 // SSO identity for one team. Ownership is part of the SQL predicate so another
 // owner's metadata never leaves the adapter.
-func (r *credentialRepository) ListSSOOwnedCredentials(ctx context.Context, teamID, identityID uuid.UUID) ([]*domain.Credential, error) {
+func (r *CredentialRepositoryImpl) ListSSOOwnedCredentials(ctx context.Context, teamID, identityID uuid.UUID) ([]*domain.Credential, error) {
 	credentials, err := r.listHydratedCredentials(ctx, teamID, ssoOwnedCredentialQuery+`
 		ORDER BY c.created_at DESC, c.id ASC
 	`, teamID, identityID)
@@ -714,7 +748,7 @@ func (r *credentialRepository) ListSSOOwnedCredentials(ctx context.Context, team
 // GetSSOOwnedCredentialByID returns one active credential only when both its
 // team and SSO owner match. A wrong owner or team is indistinguishable from a
 // missing credential.
-func (r *credentialRepository) GetSSOOwnedCredentialByID(ctx context.Context, teamID, identityID, credentialID uuid.UUID) (*domain.Credential, error) {
+func (r *CredentialRepositoryImpl) GetSSOOwnedCredentialByID(ctx context.Context, teamID, identityID, credentialID uuid.UUID) (*domain.Credential, error) {
 	credential, err := r.getOneHydratedCredential(ctx, teamID, ssoOwnedCredentialQuery+` AND c.id = $3`, teamID, identityID, credentialID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get sso-owned api credential for team: %w", err)
@@ -725,7 +759,7 @@ func (r *credentialRepository) GetSSOOwnedCredentialByID(ctx context.Context, te
 // GetSSOOwnedCredential returns the active normal API credential owned by an
 // SSO identity for one team. It is retained for compatibility but refuses to
 // choose an arbitrary credential when ownership is no longer singleton.
-func (r *credentialRepository) GetSSOOwnedCredential(ctx context.Context, teamID, identityID uuid.UUID) (*domain.Credential, error) {
+func (r *CredentialRepositoryImpl) GetSSOOwnedCredential(ctx context.Context, teamID, identityID uuid.UUID) (*domain.Credential, error) {
 	credentials, err := r.ListSSOOwnedCredentials(ctx, teamID, identityID)
 	if err != nil {
 		return nil, err
@@ -775,7 +809,7 @@ func parseOptionalUUID(raw string) *uuid.UUID {
 
 // CountByTeam returns the total number of API credentials for a team.
 // Used to populate pagination totals without a second full-result scan.
-func (r *credentialRepository) CountByTeam(ctx context.Context, teamID uuid.UUID) (int64, error) {
+func (r *CredentialRepositoryImpl) CountByTeam(ctx context.Context, teamID uuid.UUID) (int64, error) {
 	var count int64
 	err := r.rls.WithTeamTx(ctx, r.db, teamID.String(), func(tx *gorm.DB) error {
 		return tx.Raw(`
@@ -797,13 +831,13 @@ func (r *credentialRepository) CountByTeam(ctx context.Context, teamID uuid.UUID
 
 // TouchLastUsed updates the last_used_at timestamp for an API credential.
 // This should be called asynchronously to avoid blocking the request.
-func (r *credentialRepository) TouchLastUsed(ctx context.Context, id uuid.UUID) error {
+func (r *CredentialRepositoryImpl) TouchLastUsed(ctx context.Context, id uuid.UUID) error {
 	return r.TouchLastUsedBatch(ctx, []LastUsedUpdate{{ID: id, At: time.Now().UTC()}})
 }
 
 // TouchLastUsedBatch persists the newest activity timestamp per credential in one
 // system transaction. Older queued events cannot move a timestamp backwards.
-func (r *credentialRepository) TouchLastUsedBatch(ctx context.Context, updates []LastUsedUpdate) error {
+func (r *CredentialRepositoryImpl) TouchLastUsedBatch(ctx context.Context, updates []LastUsedUpdate) error {
 	if len(updates) == 0 {
 		return nil
 	}

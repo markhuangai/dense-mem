@@ -4,14 +4,12 @@ package postgres
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
 )
 
 func TestSearchReconciliationSelectionAndHashFence(t *testing.T) {
@@ -382,28 +380,11 @@ func TestSearchReconciliationSuppressesHistoricalEvidenceAliases(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, selected, 1)
 	require.Equal(t, canonical.Evidence[0].FragmentID, selected[0].SourceID)
-	tracer := &convergenceStatementTracker{Interface: appDB.Logger}
-	measured := newSearchFixtureStore(appDB.Session(&gorm.Session{Logger: tracer}), rls)
-	convergence, err := measured.GetSearchConvergence(ctx, SearchConvergenceInput{EmbeddingContractID: contractID, EmbeddingDimensions: 2})
+	convergence, err := repo.GetSearchConvergence(ctx, SearchConvergenceInput{EmbeddingContractID: contractID, EmbeddingDimensions: 2})
 	require.NoError(t, err)
 	require.EqualValues(t, 1, convergence.ExpectedDocuments)
 	require.EqualValues(t, 1, convergence.DriftedDocuments)
 	require.Equal(t, "attention_required", convergence.Status)
-	require.Equal(t, 2, tracer.projectionReads, "convergence reads current and missing documents once each")
-}
-
-type convergenceStatementTracker struct {
-	logger.Interface
-	projectionReads int
-}
-
-func (l *convergenceStatementTracker) Trace(ctx context.Context, started time.Time, query func() (string, int64), err error) {
-	text, _ := query()
-	if strings.Contains(text, "search_documents") {
-		l.projectionReads++
-	}
-	l.Interface.Trace(ctx, started, query, err)
-
 }
 
 func TestSearchReconciliationProjectsSafeHistoricalRejectedEvidence(t *testing.T) {

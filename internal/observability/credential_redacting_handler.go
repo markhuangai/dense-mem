@@ -148,70 +148,53 @@ func (h credentialRedactingHandler) Enabled(ctx context.Context, level slog.Leve
 	return h.delegate.Enabled(ctx, level)
 }
 
-type protectedLogContextKey struct{}
-
-type protectedLogContext struct {
-	trusted     map[string]string
-	unavailable CredentialProtectionUnavailableReason
-}
-
 func (h credentialRedactingHandler) Handle(ctx context.Context, record slog.Record) error {
-	snapshotter := h.protector.snapshotter(AuthenticationSecretsFromContext(ctx))
-	protectedContext := protectedLogContext{trusted: trustedContextAttrs(ctx, snapshotter)}
+	secrets := AuthenticationSecretsFromContext(ctx)
+	trusted := trustedContextAttrs(ctx, h.protector)
 	legacy := h.legacyCompatibility && legacyLogging(ctx)
-	message := record.Message
+	sanitized := slog.NewRecord(record.Time, record.Level, record.Message, record.PC)
+	message := sanitized.Message
 	if legacy {
 		message = legacyRedactSensitiveText(message)
 	}
-	protectedMessage := snapshotter.snapshot(message, MaxOperationMetadataBytes)
-	message = "[diagnostic unavailable]"
-	if protectedMessage.UnavailableReason == CredentialProtectionAvailable {
-		message, _ = protectedMessage.Value.(string)
+	if protected := h.protector.Snapshot(message, MaxOperationMetadataBytes, secrets...); protected.UnavailableReason == CredentialProtectionAvailable {
+		if message, ok := protected.Value.(string); ok {
+			sanitized = slog.NewRecord(record.Time, record.Level, message, record.PC)
+		}
 	} else {
-		protectedContext.unavailable = protectedMessage.UnavailableReason
-	}
-	sanitized := slog.NewRecord(record.Time, record.Level, message, record.PC)
-	add := func(attr slog.Attr) bool {
-		if _, fixed := protectedContext.trusted[attr.Key]; fixed {
-			return true
-		}
-		if legacy {
-			attr, _ = legacySanitizeSlogAttr(attr)
-		} else {
-			attr, _ = sanitizeSlogAttr(attr)
-		}
-		if attr.Key == "" {
-			return true
-		}
-		protected := snapshotter.snapshot(slogValueAny(attr.Value.Resolve()), MaxOperationMetadataBytes)
-		if protected.UnavailableReason != CredentialProtectionAvailable {
-			if protectedContext.unavailable == CredentialProtectionAvailable {
-				protectedContext.unavailable = protected.UnavailableReason
-			}
-			sanitized.AddAttrs(slog.String(attr.Key, CredentialProtectionRedacted))
-		} else {
-			sanitized.AddAttrs(slog.Any(attr.Key, protected.Value))
-		}
-		return true
+		sanitized = slog.NewRecord(record.Time, record.Level, "[diagnostic unavailable]", record.PC)
 	}
 	for _, attr := range h.attrs {
-		add(attr)
+		if _, ok := trusted[attr.Key]; ok {
+			continue
+		}
+		if safe, ok := sanitizeSlogAttrWithProtector(attr, h.protector, secrets, legacy); ok {
+			sanitized.AddAttrs(safe)
+		}
 	}
-	record.Attrs(add)
-	for key, value := range protectedContext.trusted {
+	record.Attrs(func(attr slog.Attr) bool {
+		if _, ok := trusted[attr.Key]; ok {
+			return true
+		}
+		if safe, ok := sanitizeSlogAttrWithProtector(attr, h.protector, secrets, legacy); ok {
+			sanitized.AddAttrs(safe)
+		}
+		return true
+	})
+	for key, value := range trusted {
 		sanitized.AddAttrs(slog.String(key, value))
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return h.delegate.Handle(context.WithValue(ctx, protectedLogContextKey{}, protectedContext), sanitized)
+	return h.delegate.Handle(ctx, sanitized)
 }
 
-func protectTrustedCorrelationID(id string, protector credentialSnapshotter) string {
+func protectTrustedCorrelationID(id string, protector *CredentialProtector, secrets []string) string {
 	if utf8.RuneCountInString(id) > maxTrustedCorrelationIDRunes {
 		return CredentialProtectionRedacted
 	}
-	protected := protector.snapshot(id, MaxOperationMetadataBytes)
+	if protector == nil {
+		return id
+	}
+	protected := protector.Snapshot(id, MaxOperationMetadataBytes, secrets...)
 	if protected.UnavailableReason != CredentialProtectionAvailable {
 		return CredentialProtectionRedacted
 	}
@@ -236,6 +219,21 @@ func (h credentialRedactingHandler) WithGroup(name string) slog.Handler {
 		attrs:               append([]slog.Attr(nil), h.attrs...),
 		legacyCompatibility: h.legacyCompatibility,
 	}
+}
+
+func sanitizeSlogAttrWithProtector(attr slog.Attr, protector *CredentialProtector, secrets []string, legacy bool) (slog.Attr, bool) {
+	safe, ok := sanitizeSlogAttr(attr)
+	if legacy {
+		safe, ok = legacySanitizeSlogAttr(attr)
+	}
+	if !ok || protector == nil {
+		return safe, ok
+	}
+	protected := protector.Snapshot(slogValueAny(safe.Value.Resolve()), MaxOperationMetadataBytes, secrets...)
+	if protected.UnavailableReason != CredentialProtectionAvailable {
+		return slog.String(safe.Key, CredentialProtectionRedacted), true
+	}
+	return slog.Any(safe.Key, protected.Value), true
 }
 
 func sanitizeSlogAttr(attr slog.Attr) (slog.Attr, bool) {

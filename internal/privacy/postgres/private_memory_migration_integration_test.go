@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	sessionpostgres "github.com/markhuangai/dense-mem/internal/session/postgres"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,6 +24,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	privacy "github.com/markhuangai/dense-mem/internal/privacy/contract"
 	remember "github.com/markhuangai/dense-mem/internal/remember/service"
+	processor "github.com/markhuangai/dense-mem/internal/remember/service/processor"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
 	"github.com/markhuangai/dense-mem/internal/session/extraction"
@@ -274,7 +274,7 @@ func TestPrivateMigrationFingerprintResumeHandlesAndCopiedErasure(t *testing.T) 
 	}))
 	keyA := f.ownerA
 	aCtx := requestctx.WithActor(ctx, requestctx.Actor{TeamID: f.team, IdentityID: f.ownerA, MembershipID: f.memberA, OwnerID: f.ownerA, CredentialID: &keyA, Grants: []string{"read", "write"}, AllowedSpaces: []domain.MemorySpaceAccess{{ID: spaceA, Kind: domain.MemorySpacePrivate, Generation: 1}}})
-	api := remember.NewService(remember.Dependencies{Synchronous: remember.NewSynchronousProcessor(remember.ProcessorDependencies{Ledger: knowledgepostgres.NewStore(app, f.rls)})})
+	api := remember.NewService(remember.Dependencies{Synchronous: processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: knowledgepostgres.NewStore(app, f.rls)})})
 	_, err = api.Remember(aCtx, remember.RememberRequest{IdempotencyKey: "legacy:" + f.ingestA.String()})
 	require.ErrorIs(t, err, domain.ErrMemoryTargetRequired, "same-version historical receipts cannot bypass required target validation")
 	require.NoError(t, f.rls.WithSystemTx(ctx, f.db, func(tx *gorm.DB) error {
@@ -606,8 +606,7 @@ func TestPrivateMigrationPreservesSessionIdentityAndRecomputesMixedCheckpoints(t
 	actorCtx := requestctx.WithActor(ctx, actor)
 	scope := session.Scope{TeamID: f.team.String(), OwnerProfileID: f.ownerB.String(), SpaceID: destination.String(), SpaceGeneration: generation}
 	store := knowledgepostgres.NewStore(app, f.rls)
-	sessions := sessionpostgres.New(app, f.rls, store.CommitEvidenceTx, store.WithSubmissionLock)
-	loaded, err := sessions.LookupSession(actorCtx, scope, req.IdempotencyKey)
+	loaded, err := store.LookupSession(actorCtx, scope, req.IdempotencyKey)
 	require.NoError(t, err)
 	require.Equal(t, submissionID.String(), loaded.ID)
 	require.Equal(t, intake.RequestHash, loaded.Intake.RequestHash)
@@ -615,8 +614,8 @@ func TestPrivateMigrationPreservesSessionIdentityAndRecomputesMixedCheckpoints(t
 	require.Equal(t, scope, loaded.Intake.Scope)
 	require.Empty(t, loaded.Extractions)
 	transport := &migrationSessionTransport{}
-	api := sessionservice.NewService(sessionservice.Dependencies{Enabled: true, Repository: sessions, Tokenizer: intake.Tokenizer,
-		Preparer:  remember.NewSynchronousProcessor(remember.ProcessorDependencies{Ledger: store}),
+	api := sessionservice.NewService(sessionservice.Dependencies{Enabled: true, Repository: store, Tokenizer: intake.Tokenizer,
+		Preparer:  processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store}),
 		Extractor: extraction.NewProvider(transport, "migration-fixture", assessor.DefaultSemanticAssessmentLimits()),
 	})
 	result, err := api.Ingest(actorCtx, req)
@@ -626,7 +625,7 @@ func TestPrivateMigrationPreservesSessionIdentityAndRecomputesMixedCheckpoints(t
 	require.Len(t, transport.requests, 1, "even a valid old checkpoint must be regenerated")
 	require.Empty(t, transport.requests[0].Prior)
 	require.Equal(t, intake.Windows[0], transport.requests[0].Window)
-	loaded, err = sessions.LookupSession(actorCtx, scope, req.IdempotencyKey)
+	loaded, err = store.LookupSession(actorCtx, scope, req.IdempotencyKey)
 	require.NoError(t, err)
 	require.NotEmpty(t, loaded.Extractions[0])
 	require.Equal(t, intake.RequestHash, loaded.Intake.RequestHash)

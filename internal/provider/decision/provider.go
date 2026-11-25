@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -381,7 +382,14 @@ func (p *Provider) statusError(ctx context.Context, response *http.Response, fie
 		p.log(ctx, slog.LevelWarn, "decision.provider.rejected", append(fields, attr("status", status), attr("reason_code", reason), attr("action", "fail_task"))...)
 	}
 	if status == 429 {
-		return &modelprovider.RateLimitError{Provider: p.config.Provider, Message: "decision request rate limited", RetryAfter: modelprovider.RetryAfterSeconds(response.Header.Get("Retry-After"), time.Now())}
+		retryAfter, _ := strconv.Atoi(response.Header.Get("Retry-After"))
+		if retryAfter < 0 {
+			retryAfter = 0
+		}
+		if retryAfter > 300 {
+			retryAfter = 300
+		}
+		return &modelprovider.RateLimitError{Provider: p.config.Provider, Message: "decision request rate limited", RetryAfter: retryAfter}
 	}
 	return p.failure("decision provider rejected request: "+reason, class, status, nil)
 }

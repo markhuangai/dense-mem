@@ -21,7 +21,6 @@ import (
 // The SDK treats every stateless POST as a session, so its routine lifecycle belongs at debug level.
 type sdkLifecycleLogHandler struct {
 	delegate slog.Handler
-	group    string
 }
 
 func (h sdkLifecycleLogHandler) Enabled(ctx context.Context, level slog.Level) bool {
@@ -29,6 +28,47 @@ func (h sdkLifecycleLogHandler) Enabled(ctx context.Context, level slog.Level) b
 }
 
 func (h sdkLifecycleLogHandler) Handle(ctx context.Context, record slog.Record) error {
+	if record.Level == slog.LevelInfo {
+		switch record.Message {
+		case "server connecting", "server session connected", "session initialized", "server session disconnected":
+			record.Level = slog.LevelDebug
+		}
+	}
+	if !h.delegate.Enabled(ctx, record.Level) {
+		return nil
+	}
+	return h.delegate.Handle(ctx, record)
+}
+
+func (h sdkLifecycleLogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return sdkLifecycleLogHandler{delegate: h.delegate.WithAttrs(attrs)}
+}
+
+func (h sdkLifecycleLogHandler) WithGroup(name string) slog.Handler {
+	return sdkLifecycleLogHandler{delegate: h.delegate.WithGroup(name)}
+}
+
+func newSDKLogger(delegate *slog.Logger) *slog.Logger {
+	return slog.New(sdkLifecycleLogHandler{delegate: delegate.Handler()})
+}
+
+// sdkRootLogHandler adapts the official SDK's slog surface to the injected
+// transport logger. The SDK accepts a *slog.Logger, but constructing one from
+// slog.Default would bypass request attribution and the process root.
+type sdkRootLogHandler struct {
+	logger Logger
+	attrs  []LogField
+	group  string
+}
+
+func (h sdkRootLogHandler) Enabled(context.Context, slog.Level) bool {
+	return h.logger != nil
+}
+
+func (h sdkRootLogHandler) Handle(ctx context.Context, record slog.Record) error {
+	if h.logger == nil {
+		return nil
+	}
 	level := record.Level
 	if level == slog.LevelInfo {
 		switch record.Message {
@@ -36,47 +76,45 @@ func (h sdkLifecycleLogHandler) Handle(ctx context.Context, record slog.Record) 
 			level = slog.LevelDebug
 		}
 	}
-	if !h.delegate.Enabled(ctx, level) {
-		return nil
-	}
-	clean := slog.NewRecord(record.Time, level, sdkMessageClass(record.Message), record.PC)
+	attrs := append([]LogField(nil), h.attrs...)
+	hasError := false
 	record.Attrs(func(attr slog.Attr) bool {
-		if attr := h.logAttr(attr); attr.Key != "" {
-			clean.AddAttrs(attr)
+		if attr.Key == "error" {
+			hasError = true
+			return true
 		}
+		if attr.Key != "session_id" {
+			return true
+		}
+		key := attr.Key
+		if h.group != "" {
+			key = h.group + "." + key
+		}
+		attrs = append(attrs, LogField{Key: key, Value: slogValueAny(attr.Value)})
 		return true
 	})
-	return h.delegate.Handle(ctx, clean)
+	message := sdkMessageClass(record.Message)
+	if hasError {
+		sdkLogError(ctx, h.logger, level, message, errors.New("mcp SDK operation failed"), attrs...)
+		return nil
+	}
+	sdkLog(ctx, h.logger, level, message, attrs...)
+	return nil
 }
 
-func (h sdkLifecycleLogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	clean := make([]slog.Attr, 0, len(attrs))
+func (h sdkRootLogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	fields := append([]LogField(nil), h.attrs...)
 	for _, attr := range attrs {
-		if attr := h.logAttr(attr); attr.Key != "" {
-			clean = append(clean, attr)
+		if attr.Key != "session_id" {
+			continue
 		}
+		key := attr.Key
+		if h.group != "" {
+			key = h.group + "." + key
+		}
+		fields = append(fields, LogField{Key: key, Value: slogValueAny(attr.Value)})
 	}
-	h.delegate = h.delegate.WithAttrs(clean)
-	return h
-}
-
-func (h sdkLifecycleLogHandler) WithGroup(name string) slog.Handler {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return h
-	}
-	if h.group != "" {
-		h.group += "."
-	}
-	h.group += name
-	return h
-}
-
-func newSDKLogger(delegate *slog.Logger) *slog.Logger {
-	if delegate == nil {
-		return slog.New(slog.DiscardHandler)
-	}
-	return slog.New(sdkLifecycleLogHandler{delegate: delegate.Handler()})
+	return sdkRootLogHandler{logger: h.logger, attrs: fields, group: h.group}
 }
 
 func sdkMessageClass(message string) string {
@@ -89,19 +127,93 @@ func sdkMessageClass(message string) string {
 	}
 }
 
-func (h sdkLifecycleLogHandler) logAttr(attr slog.Attr) slog.Attr {
-	switch attr.Key {
-	case "session_id":
-		if h.group != "" {
-			// Qualify SDK fields without nesting the root logger's trusted request context.
-			attr.Key = h.group + "." + attr.Key
-		}
-		return attr
-	case "error":
-		return slog.String("error", "mcp SDK operation failed")
-	default:
-		return slog.Attr{}
+func (h sdkRootLogHandler) WithGroup(name string) slog.Handler {
+	group := strings.TrimSpace(name)
+	if h.group != "" && group != "" {
+		group = h.group + "." + group
 	}
+	return sdkRootLogHandler{logger: h.logger, attrs: append([]LogField(nil), h.attrs...), group: group}
+}
+
+func newSDKRootLogger(logger Logger) *slog.Logger {
+	return slog.New(sdkRootLogHandler{logger: logger})
+}
+
+func sdkLog(ctx context.Context, logger Logger, level slog.Level, message string, attrs ...LogField) {
+	if logger == nil {
+		return
+	}
+	if contextual, ok := logger.(interface {
+		TraceContext(context.Context, string, ...LogField)
+		DebugContext(context.Context, string, ...LogField)
+		InfoContext(context.Context, string, ...LogField)
+		WarnContext(context.Context, string, ...LogField)
+		ErrorContext(context.Context, string, error, ...LogField)
+		FatalContext(context.Context, string, ...LogField)
+	}); ok {
+		switch {
+		case level <= slog.Level(-8):
+			contextual.TraceContext(ctx, message, attrs...)
+		case level <= slog.LevelDebug:
+			contextual.DebugContext(ctx, message, attrs...)
+		case level <= slog.LevelInfo:
+			contextual.InfoContext(ctx, message, attrs...)
+		case level <= slog.LevelWarn:
+			contextual.WarnContext(ctx, message, attrs...)
+		case level <= slog.LevelError:
+			contextual.ErrorContext(ctx, message, nil, attrs...)
+		default:
+			contextual.FatalContext(ctx, message, attrs...)
+		}
+		return
+	}
+	switch {
+	case level <= slog.LevelDebug:
+		if loggerWithDebug, ok := logger.(interface{ Debug(string, ...LogField) }); ok {
+			loggerWithDebug.Debug(message, attrs...)
+			return
+		}
+	case level <= slog.LevelInfo:
+		if loggerWithInfo, ok := logger.(interface{ Info(string, ...LogField) }); ok {
+			loggerWithInfo.Info(message, attrs...)
+			return
+		}
+	case level <= slog.LevelWarn:
+		logger.Warn(message, attrs...)
+		return
+	case level <= slog.LevelError:
+		logger.Error(message, nil, attrs...)
+		return
+	default:
+		if loggerWithFatal, ok := logger.(interface{ Fatal(string, ...LogField) }); ok {
+			loggerWithFatal.Fatal(message, attrs...)
+			return
+		}
+	}
+	logger.Warn(message, attrs...)
+}
+
+func sdkLogError(ctx context.Context, logger Logger, level slog.Level, message string, err error, attrs ...LogField) {
+	if level < slog.LevelError {
+		sdkLog(ctx, logger, level, message, append(attrs, LogField{Key: "error", Value: err})...)
+		return
+	}
+	if contextual, ok := logger.(interface {
+		ErrorContext(context.Context, string, error, ...LogField)
+	}); ok {
+		if level >= slog.LevelError {
+			contextual.ErrorContext(ctx, message, err, attrs...)
+			return
+		}
+	}
+	logger.Error(message, err, attrs...)
+}
+
+func slogValueAny(value slog.Value) any {
+	if value.Kind() == slog.KindLogValuer {
+		value = value.Resolve()
+	}
+	return value.Any()
 }
 
 func (s *Server) logSDKToolOutcome(ctx context.Context, name string, started time.Time, result *sdkmcp.CallToolResult, err error) {
@@ -109,26 +221,38 @@ func (s *Server) logSDKToolOutcome(ctx context.Context, name string, started tim
 		return
 	}
 	outcome := sdkToolApplicationOutcome(ctx, result, err)
-	attrs := []slog.Attr{
-		slog.String("tool", name),
-		slog.String("application_outcome", outcome),
-		slog.Int64("duration_ms", time.Since(started).Milliseconds()),
+	attrs := []LogField{
+		{Key: "tool", Value: name},
+		{Key: "application_outcome", Value: outcome},
+		{Key: "duration_ms", Value: time.Since(started).Milliseconds()},
 	}
 	if result != nil {
 		attrs = appendSDKApplicationRefs(attrs, result.StructuredContent)
 	}
-	logCtx := context.Background()
+	logCtx := ctx
 	if ctx != nil {
 		logCtx = context.WithoutCancel(ctx)
 	}
 	if outcome == "success" {
-		s.logger.LogAttrs(logCtx, slog.LevelInfo, "mcp_tool_outcome", attrs...)
+		if contextual, ok := s.logger.(interface {
+			InfoContext(context.Context, string, ...LogField)
+		}); ok {
+			contextual.InfoContext(logCtx, "mcp_tool_outcome", attrs...)
+		} else if loggerWithInfo, ok := s.logger.(interface{ Info(string, ...LogField) }); ok {
+			loggerWithInfo.Info("mcp_tool_outcome", attrs...)
+		}
 		return
 	}
-	if err == nil {
-		err = errors.New(outcome)
+	if contextual, ok := s.logger.(interface {
+		ErrorContext(context.Context, string, error, ...LogField)
+	}); ok {
+		if err == nil {
+			err = errors.New(outcome)
+		}
+		contextual.ErrorContext(logCtx, "mcp_tool_outcome", err, attrs...)
+		return
 	}
-	s.logger.LogAttrs(logCtx, slog.LevelError, "mcp_tool_outcome", append(attrs, slog.Any("error", err))...)
+	s.logger.Error("mcp_tool_outcome", err, attrs...)
 }
 
 func sdkToolApplicationOutcome(ctx context.Context, result *sdkmcp.CallToolResult, err error) string {
@@ -194,7 +318,7 @@ func toolErrorFieldsWereCancelled(fields map[string]any) bool {
 	return false
 }
 
-func appendSDKApplicationRefs(attrs []slog.Attr, value any) []slog.Attr {
+func appendSDKApplicationRefs(attrs []LogField, value any) []LogField {
 	var fields map[string]any
 	switch typed := value.(type) {
 	case map[string]any:
@@ -206,7 +330,7 @@ func appendSDKApplicationRefs(attrs []slog.Attr, value any) []slog.Attr {
 	}
 	for _, key := range []string{"submission_id", "attempt_id", "canonical_attempt_id"} {
 		if text, ok := fields[key].(string); ok && strings.TrimSpace(text) != "" {
-			attrs = append(attrs, slog.String(key, text))
+			attrs = append(attrs, LogField{Key: key, Value: text})
 		}
 	}
 	return attrs
@@ -216,16 +340,7 @@ func appendSDKApplicationRefs(attrs []slog.Attr, value any) []slog.Attr {
 // request-scoped registry, authorization, and prompt catalog.
 func (s *Server) NewSDKHTTPHandler(jsonResponse bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if _, prepared := req.Context().Value(sdkEnvelopeContextKey{}).(*sdkEnvelope); !prepared {
-			if err := PrepareSDKRequest(req); err != nil {
-				status := http.StatusBadRequest
-				if errors.Is(err, ErrSDKRequestTooLarge) {
-					status = http.StatusRequestEntityTooLarge
-				}
-				http.Error(w, err.Error(), status)
-				return
-			}
-		}
+		annotateSDKToolDispatch(req)
 		req = req.WithContext(context.WithValue(req.Context(), sdkProgressHTTPContextKey{}, sdkProgressHTTP{
 			controller: http.NewResponseController(w), sse: !jsonResponse,
 			protocol: req.Header.Get("MCP-Protocol-Version"),
@@ -243,7 +358,7 @@ func (s *Server) NewSDKHTTPHandler(jsonResponse bool) http.Handler {
 		}, &sdkmcp.StreamableHTTPOptions{
 			Stateless:                    true,
 			JSONResponse:                 jsonResponse,
-			MaxRequestBodyBytes:          maxSDKRequestBytes,
+			MaxRequestBodyBytes:          4 << 20,
 			PropagateRequestCancellation: true,
 		})
 		transport.ServeHTTP(w, req)
@@ -251,85 +366,42 @@ func (s *Server) NewSDKHTTPHandler(jsonResponse bool) http.Handler {
 }
 
 type sdkToolDispatchContextKey struct{}
-type sdkEnvelopeContextKey struct{}
 
-const maxSDKRequestBytes = 4 << 20
-
-var ErrSDKRequestTooLarge = errors.New("request body exceeds limit")
-
-type sdkEnvelope struct {
-	JSONRPC         string          `json:"jsonrpc"`
-	ID              json.RawMessage `json:"id"`
-	Method          string          `json:"method"`
-	Params          json.RawMessage `json:"params"`
-	name            string
-	protocolVersion string
-	progressToken   json.RawMessage
-}
-
-// PrepareSDKRequest retains one bounded HTTP body for the SDK and shares its
-// envelope with the application protocol checks.
-func PrepareSDKRequest(req *http.Request) error {
+// annotateSDKToolDispatch records whether a syntactically valid tools/call
+// carries a JSON-RPC request id. The SDK invokes handlers for notifications as
+// well, but notifications are not counted as dispatched tool calls.
+func annotateSDKToolDispatch(req *http.Request) {
 	if req == nil || req.Body == nil || req.Method != http.MethodPost {
-		return nil
+		return
 	}
-	payload, err := io.ReadAll(io.LimitReader(req.Body, maxSDKRequestBytes+1))
+	if strings.ToLower(strings.TrimSpace(strings.SplitN(req.Header.Get("Content-Type"), ";", 2)[0])) != "application/json" {
+		return
+	}
+	payload, err := io.ReadAll(io.LimitReader(req.Body, 4<<20+1))
 	if err != nil {
-		return err
-	}
-	if len(payload) > maxSDKRequestBytes {
-		return ErrSDKRequestTooLarge
+		return
 	}
 	req.Body = io.NopCloser(bytes.NewReader(payload))
-	var envelope *sdkEnvelope
-	if json.Unmarshal(payload, &envelope) != nil || envelope == nil || envelope.JSONRPC != "2.0" {
-		envelope = nil
+	if len(payload) > 4<<20 {
+		return
 	}
-	if envelope != nil {
-		switch envelope.Method {
-		case "initialize":
-			var params struct {
-				ProtocolVersion string `json:"protocolVersion"`
-			}
-			if json.Unmarshal(envelope.Params, &params) == nil {
-				envelope.protocolVersion = params.ProtocolVersion
-			}
-		case "tools/call":
-			var params struct {
-				Name string          `json:"name"`
-				Meta json.RawMessage `json:"_meta"`
-			}
-			if json.Unmarshal(envelope.Params, &params) == nil {
-				envelope.name = params.Name
-				var metadata map[string]json.RawMessage
-				if json.Unmarshal(params.Meta, &metadata) == nil {
-					envelope.progressToken = metadata["progressToken"]
-				}
-			}
-		}
+	var envelope struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Method  string          `json:"method"`
+		Params  struct {
+			Meta map[string]json.RawMessage `json:"_meta"`
+		} `json:"params"`
 	}
-	ctx := context.WithValue(req.Context(), sdkEnvelopeContextKey{}, envelope)
-	if envelope != nil && envelope.Method == "tools/call" && isSDKJSONRequest(req) {
-		ctx = context.WithValue(ctx, sdkToolDispatchContextKey{}, len(envelope.ID) > 0 && sdkRPCIDValid(envelope.ID))
-		ctx = context.WithValue(ctx, sdkProgressMetadataContextKey{}, sdkProgressMetadata{
-			token: envelope.progressToken, requestID: envelope.ID,
-		})
+	if json.Unmarshal(payload, &envelope) != nil || envelope.JSONRPC != "2.0" || envelope.Method != "tools/call" {
+		return
 	}
+	isRequest := len(envelope.ID) > 0 && sdkRPCIDValid(envelope.ID)
+	ctx := context.WithValue(req.Context(), sdkToolDispatchContextKey{}, isRequest)
+	ctx = context.WithValue(ctx, sdkProgressMetadataContextKey{}, sdkProgressMetadata{
+		token: envelope.Params.Meta["progressToken"], requestID: envelope.ID,
+	})
 	*req = *req.WithContext(ctx)
-	return nil
-}
-
-func isSDKJSONRequest(req *http.Request) bool {
-	contentType, _, _ := strings.Cut(req.Header.Get("Content-Type"), ";")
-	return strings.EqualFold(strings.TrimSpace(contentType), "application/json")
-}
-
-func SDKInitializeVersion(req *http.Request) (json.RawMessage, string, bool) {
-	envelope, _ := req.Context().Value(sdkEnvelopeContextKey{}).(*sdkEnvelope)
-	if envelope == nil || envelope.Method != "initialize" || strings.TrimSpace(envelope.protocolVersion) == "" {
-		return nil, "", false
-	}
-	return envelope.ID, envelope.protocolVersion, true
 }
 
 func sdkToolDispatchRequested(ctx context.Context) bool {
@@ -343,16 +415,43 @@ func sdkToolDispatchRequested(ctx context.Context) bool {
 }
 
 func (s *Server) writeSDKToolLookupError(w http.ResponseWriter, req *http.Request, jsonResponse bool) bool {
-	if req == nil || req.Body == nil || req.Method != http.MethodPost ||
-		!isSDKJSONRequest(req) || !sdkAcceptsStreamableHTTP(req.Header.Get("Accept")) {
+	if req == nil || req.Body == nil || req.Method != http.MethodPost {
 		return false
 	}
-	envelope, _ := req.Context().Value(sdkEnvelopeContextKey{}).(*sdkEnvelope)
-	if envelope == nil || envelope.Method != "tools/call" || strings.TrimSpace(envelope.name) == "" {
+	if strings.ToLower(strings.TrimSpace(strings.SplitN(req.Header.Get("Content-Type"), ";", 2)[0])) != "application/json" {
 		return false
 	}
-	if !sdkStandardHeadersMatch(req, envelope.Method, envelope.name) {
+	if !sdkAcceptsStreamableHTTP(req.Header.Get("Accept")) {
 		return false
+	}
+	payload, err := io.ReadAll(io.LimitReader(req.Body, 4<<20+1))
+	if err != nil {
+		return false
+	}
+	req.Body = io.NopCloser(bytes.NewReader(payload))
+	if len(payload) > 4<<20 {
+		return false
+	}
+	var envelope struct {
+		JSONRPC string          `json:"jsonrpc"`
+		ID      json.RawMessage `json:"id"`
+		Method  string          `json:"method"`
+		Params  struct {
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments"`
+		} `json:"params"`
+	}
+	if json.Unmarshal(payload, &envelope) != nil || envelope.JSONRPC != "2.0" || envelope.Method != "tools/call" || strings.TrimSpace(envelope.Params.Name) == "" {
+		return false
+	}
+	if !sdkStandardHeadersMatch(req, envelope.Method, envelope.Params.Name) {
+		return false
+	}
+	if len(envelope.Params.Arguments) > 0 {
+		var arguments map[string]any
+		if json.Unmarshal(envelope.Params.Arguments, &arguments) != nil || arguments == nil {
+			return false
+		}
 	}
 	// JSON-RPC notifications never receive a response, including when the
 	// requested tool is hidden or unknown. Leave them to the SDK transport so
@@ -363,18 +462,18 @@ func (s *Server) writeSDKToolLookupError(w http.ResponseWriter, req *http.Reques
 	if !sdkRPCIDValid(envelope.ID) {
 		return false
 	}
-	tool, ok := s.registry.Get(envelope.name)
+	tool, ok := s.registry.Get(envelope.Params.Name)
 	policy := registry.ResolveRuntimeToolPolicy(req.Context(), s.runtimeToolPolicy, tool)
 	visible := ok && registry.ToolVisible(req.Context(), tool, policy)
 	if visible && s.canUseTool(tool) {
 		return false
 	}
-	code, message := errCodeMethodNotFound, "tool not found: "+boundedRPCText(envelope.name)
-	data := registry.ActionableInvalidInputData(req.Context(), envelope.name, "tool_not_available", "The requested tool is not available for this connection.", "Refresh tools/list and call an available tool.")
+	code, message := errCodeMethodNotFound, "tool not found: "+boundedRPCText(envelope.Params.Name)
+	data := registry.ActionableInvalidInputData(req.Context(), envelope.Params.Name, "tool_not_available", "The requested tool is not available for this connection.", "Refresh tools/list and call an available tool.")
 	scopeDenied := visible && !s.canUseTool(tool)
 	if scopeDenied {
 		code, message = errCodeToolFailure, "insufficient scope for tool"
-		data = registry.ActionableAuthorizationData(req.Context(), envelope.name)
+		data = registry.ActionableAuthorizationData(req.Context(), envelope.Params.Name)
 	}
 	domain.RecordMCPToolOutcome(req.Context(), "rpc_error")
 	s.logSDKToolLookupFailure(req.Context(), tool, visible, scopeDenied, code)
@@ -401,20 +500,25 @@ func (s *Server) logSDKToolLookupFailure(ctx context.Context, tool registry.Tool
 	if scopeDenied {
 		reason = "scope_denied"
 	}
-	attrs := []slog.Attr{
-		slog.String("application_outcome", "rpc_error"),
-		slog.Int("error_code", code),
-		slog.String("lookup_reason", reason),
+	attrs := []LogField{
+		{Key: "application_outcome", Value: "rpc_error"},
+		{Key: "error_code", Value: code},
+		{Key: "lookup_reason", Value: reason},
 	}
 	if visible && strings.TrimSpace(tool.Name) != "" {
-		attrs = append(attrs, slog.String("tool", tool.Name))
+		attrs = append(attrs, LogField{Key: "tool", Value: tool.Name})
 	}
-	logCtx := context.Background()
+	logCtx := ctx
 	if ctx != nil {
 		logCtx = context.WithoutCancel(ctx)
 	}
-	s.logger.LogAttrs(logCtx, slog.LevelError, "mcp_tool_outcome",
-		append(attrs, slog.String("error", "mcp tool lookup rejected"))...)
+	if contextual, ok := s.logger.(interface {
+		ErrorContext(context.Context, string, error, ...LogField)
+	}); ok {
+		contextual.ErrorContext(logCtx, "mcp_tool_outcome", errors.New("mcp tool lookup rejected"), attrs...)
+		return
+	}
+	s.logger.Error("mcp_tool_outcome", errors.New("mcp tool lookup rejected"), attrs...)
 }
 
 func sdkRPCIDValid(raw json.RawMessage) bool {
@@ -473,7 +577,7 @@ func (s *Server) newSDKServer(ctx context.Context) *sdkmcp.Server {
 		Instructions: s.instructions(),
 		Capabilities: capabilities,
 		SchemaCache:  sdkmcp.NewSchemaCache(),
-		Logger:       newSDKLogger(s.logger),
+		Logger:       newSDKRootLogger(s.logger),
 	})
 
 	tools := s.registry.List()

@@ -2,7 +2,6 @@ package settings
 
 import (
 	"context"
-	audit "github.com/markhuangai/dense-mem/internal/audit/contract"
 
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
@@ -11,9 +10,9 @@ type appConfigAuditStub struct {
 	entries []accessservice.AuditLogEntry
 }
 
-func (a *appConfigAuditStub) Prepare(_ context.Context, entry accessservice.AuditLogEntry) (audit.Entry, error) {
+func (a *appConfigAuditStub) Append(_ context.Context, entry accessservice.AuditLogEntry) error {
 	a.entries = append(a.entries, entry)
-	return audit.Entry{}, nil
+	return nil
 }
 
 func (a *appConfigAuditStub) List(context.Context, string, int, int) ([]accessservice.AuditLogEntry, int, error) {
@@ -62,9 +61,4 @@ func (a *appConfigAuditStub) SystemQuery(context.Context, string, map[string]int
 
 func (a *appConfigAuditStub) InvariantViolation(context.Context, string, string, string, map[string]interface{}, string, string) error {
 	return nil
-}
-
-func (s *appConfigAuditStub) Append(ctx context.Context, entry accessservice.AuditLogEntry) error {
-	_, err := s.Prepare(ctx, entry)
-	return err
 }

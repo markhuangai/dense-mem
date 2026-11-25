@@ -241,10 +241,10 @@ func TestControlPortalGeneralConfigFlows(t *testing.T) {
 			Effective: domain.GeneralRuntimeConfig{Timezone: "Local"},
 		},
 	}
-	e, err := NewControlPortalServerWithServices(&config.Config{
+	e, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
-	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalServices{
+	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
 		Config: appConfig,
 	}, HealthConfig{}, nil)
 	require.NoError(t, err)
@@ -292,10 +292,10 @@ func TestControlPortalSSOConfigFlows(t *testing.T) {
 			}},
 		},
 	}
-	e, err := NewControlPortalServerWithServices(&config.Config{
+	e, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
-	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalServices{
+	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
 		Config: appConfig,
 	}, HealthConfig{}, nil)
 	require.NoError(t, err)
@@ -344,10 +344,10 @@ func TestControlPortalOperationLogConfigFlows(t *testing.T) {
 			Effective: domain.OperationLogRuntimeConfig{RetentionDays: 30},
 		},
 	}
-	e, err := NewControlPortalServerWithServices(&config.Config{
+	e, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
-	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalServices{
+	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
 		Config: appConfig,
 	}, HealthConfig{}, nil)
 	require.NoError(t, err)
@@ -393,10 +393,10 @@ func TestControlPortalPrivateMemoryConfigFlows(t *testing.T) {
 		},
 		privateMemoryRuntime: domain.PrivateMemoryRuntimeConfig{RetentionDays: 0},
 	}
-	e, err := NewControlPortalServerWithServices(&config.Config{
+	e, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
-	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalServices{
+	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
 		Config: appConfig,
 	}, HealthConfig{}, nil)
 	require.NoError(t, err)
@@ -446,10 +446,10 @@ func TestControlPortalRecallFeedbackConfigFlows(t *testing.T) {
 		},
 		recallRuntime: domain.RecallFeedbackRuntimeConfig{Enabled: false, RetentionDays: 30},
 	}
-	e, err := NewControlPortalServerWithServices(&config.Config{
+	e, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
-	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalServices{
+	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
 		Config: appConfig,
 	}, HealthConfig{}, nil)
 	require.NoError(t, err)
@@ -521,7 +521,7 @@ func TestControlPortalDecisionConfigPatchItemBound(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, rejected.Code, rejected.Body.String())
 }
 
-func TestControlPortalServicesPricingConfigFlows(t *testing.T) {
+func TestControlPortalTelemetryPricingConfigFlows(t *testing.T) {
 	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
 	verifierInput, verifierOutput, embeddingInput := 1.25, 2.5, 0.1
 	appConfig := &controlAppConfigSvc{
@@ -541,12 +541,12 @@ func TestControlPortalServicesPricingConfigFlows(t *testing.T) {
 			},
 		},
 	}
-	e, err := NewControlPortalServerWithServices(&config.Config{
+	e, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
 		AIVerifierModel:    "configured-verifier",
 		AIEmbeddingModel:   "configured-embedding",
-	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalServices{Config: appConfig}, HealthConfig{}, nil)
+	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{Config: appConfig}, HealthConfig{}, nil)
 	require.NoError(t, err)
 
 	do := func(method, path, body string) *httptest.ResponseRecorder {
@@ -613,29 +613,29 @@ func TestControlConfigNilResponses(t *testing.T) {
 func TestControlPortalConfigUnavailableHandlers(t *testing.T) {
 	tests := []struct {
 		name string
-		call func(*controlConfigHandler, *echo.Context) error
+		call func(*controlPortalHandler, *echo.Context) error
 	}{
-		{name: "get general", call: func(h *controlConfigHandler, c *echo.Context) error { return h.getGeneralConfig(c) }},
-		{name: "update general", call: func(h *controlConfigHandler, c *echo.Context) error { return h.updateGeneralConfig(c) }},
-		{name: "get sso", call: func(h *controlConfigHandler, c *echo.Context) error { return h.getSSOConfig(c) }},
-		{name: "update sso", call: func(h *controlConfigHandler, c *echo.Context) error { return h.updateSSOConfig(c) }},
-		{name: "get operation logs", call: func(h *controlConfigHandler, c *echo.Context) error { return h.getOperationLogConfig(c) }},
-		{name: "update operation logs", call: func(h *controlConfigHandler, c *echo.Context) error { return h.updateOperationLogConfig(c) }},
-		{name: "get recall feedback", call: func(h *controlConfigHandler, c *echo.Context) error { return h.getRecallFeedbackConfig(c) }},
-		{name: "update recall feedback", call: func(h *controlConfigHandler, c *echo.Context) error { return h.updateRecallFeedbackConfig(c) }},
-		{name: "get telemetry pricing", call: func(h *controlConfigHandler, c *echo.Context) error { return h.getTelemetryPricingConfig(c) }},
-		{name: "update telemetry pricing", call: func(h *controlConfigHandler, c *echo.Context) error { return h.updateTelemetryPricingConfig(c) }},
+		{name: "get general", call: func(h *controlPortalHandler, c *echo.Context) error { return h.getGeneralConfig(c) }},
+		{name: "update general", call: func(h *controlPortalHandler, c *echo.Context) error { return h.updateGeneralConfig(c) }},
+		{name: "get sso", call: func(h *controlPortalHandler, c *echo.Context) error { return h.getSSOConfig(c) }},
+		{name: "update sso", call: func(h *controlPortalHandler, c *echo.Context) error { return h.updateSSOConfig(c) }},
+		{name: "get operation logs", call: func(h *controlPortalHandler, c *echo.Context) error { return h.getOperationLogConfig(c) }},
+		{name: "update operation logs", call: func(h *controlPortalHandler, c *echo.Context) error { return h.updateOperationLogConfig(c) }},
+		{name: "get recall feedback", call: func(h *controlPortalHandler, c *echo.Context) error { return h.getRecallFeedbackConfig(c) }},
+		{name: "update recall feedback", call: func(h *controlPortalHandler, c *echo.Context) error { return h.updateRecallFeedbackConfig(c) }},
+		{name: "get telemetry pricing", call: func(h *controlPortalHandler, c *echo.Context) error { return h.getTelemetryPricingConfig(c) }},
+		{name: "update telemetry pricing", call: func(h *controlPortalHandler, c *echo.Context) error { return h.updateTelemetryPricingConfig(c) }},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.ErrorContains(t, tt.call(&controlConfigHandler{}, newControlConfigContext(http.MethodPatch, `{}`)), "app config service unavailable")
+			require.ErrorContains(t, tt.call(&controlPortalHandler{}, newControlConfigContext(http.MethodPatch, `{}`)), "app config service unavailable")
 		})
 	}
 }
 
 func TestControlPortalConfigGetErrors(t *testing.T) {
-	h := &controlConfigHandler{appConfig: &controlAppConfigSvc{getErr: errors.New("repo failed")}}
+	h := &controlPortalHandler{appConfig: &controlAppConfigSvc{getErr: errors.New("repo failed")}}
 	tests := []struct {
 		name string
 		call func(*echo.Context) error
@@ -658,42 +658,42 @@ func TestControlPortalConfigUpdateBackendErrors(t *testing.T) {
 	backendErr := errors.New("db failed")
 	tests := []struct {
 		name string
-		call func(*controlConfigHandler, *echo.Context) error
+		call func(*controlPortalHandler, *echo.Context) error
 		body string
 	}{
 		{
 			name: "general",
-			call: func(h *controlConfigHandler, c *echo.Context) error { return h.updateGeneralConfig(c) },
+			call: func(h *controlPortalHandler, c *echo.Context) error { return h.updateGeneralConfig(c) },
 			body: `{"items":[{"key":"APP_TIMEZONE","value":"UTC"}]}`,
 		},
 		{
 			name: "operation logs",
-			call: func(h *controlConfigHandler, c *echo.Context) error { return h.updateOperationLogConfig(c) },
+			call: func(h *controlPortalHandler, c *echo.Context) error { return h.updateOperationLogConfig(c) },
 			body: `{"items":[{"key":"OPERATION_LOG_RETENTION_DAYS","value":"45"}]}`,
 		},
 		{
 			name: "recall feedback",
-			call: func(h *controlConfigHandler, c *echo.Context) error { return h.updateRecallFeedbackConfig(c) },
+			call: func(h *controlPortalHandler, c *echo.Context) error { return h.updateRecallFeedbackConfig(c) },
 			body: `{"items":[{"key":"RECALL_FEEDBACK_ENABLED","value":"true"}]}`,
 		},
 		{
 			name: "telemetry pricing",
-			call: func(h *controlConfigHandler, c *echo.Context) error { return h.updateTelemetryPricingConfig(c) },
+			call: func(h *controlPortalHandler, c *echo.Context) error { return h.updateTelemetryPricingConfig(c) },
 			body: `{"items":[{"key":"TELEMETRY_COST_VERIFIER_INPUT_USD_PER_MILLION_TOKENS","value":"1"}]}`,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := &controlConfigHandler{appConfig: &controlAppConfigSvc{updateErr: backendErr}}
+			h := &controlPortalHandler{appConfig: &controlAppConfigSvc{updateErr: backendErr}}
 			require.ErrorIs(t, tt.call(h, newControlConfigContext(http.MethodPatch, tt.body)), backendErr)
 		})
 	}
 }
 
 func TestControlPortalOperationLogConfigUnavailable(t *testing.T) {
-	require.ErrorContains(t, (&controlConfigHandler{}).getOperationLogConfig(newControlConfigContext(http.MethodGet, "")), "app config service unavailable")
-	require.ErrorContains(t, (&controlConfigHandler{}).updateOperationLogConfig(newControlConfigContext(http.MethodPatch, `{}`)), "app config service unavailable")
+	require.ErrorContains(t, (&controlPortalHandler{}).getOperationLogConfig(newControlConfigContext(http.MethodGet, "")), "app config service unavailable")
+	require.ErrorContains(t, (&controlPortalHandler{}).updateOperationLogConfig(newControlConfigContext(http.MethodPatch, `{}`)), "app config service unavailable")
 }
 
 func TestControlPortalRemovedProfileRoutesReturnNotFound(t *testing.T) {

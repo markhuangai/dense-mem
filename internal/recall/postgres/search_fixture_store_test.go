@@ -77,7 +77,7 @@ func (s *searchFixtureStore) FinishSearchReconciliationRun(ctx context.Context, 
 	return s.projection.FinishSearchReconciliationRun(ctx, input)
 }
 func (s *searchFixtureStore) GetSearchConvergence(ctx context.Context, input searchmaintenance.SearchConvergenceInput) (*searchmaintenance.SearchConvergence, error) {
-	return s.read.GetSearchConvergence(ctx, input)
+	return s.projection.GetSearchConvergence(ctx, input)
 }
 
 var _ searchcontract.SearchRepository = (*searchFixtureStore)(nil)

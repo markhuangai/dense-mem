@@ -101,7 +101,6 @@ type CredentialDeletionAuditInput = privacycontract.CredentialDeletionAuditInput
 type SSOStore interface {
 	GetSSOOwnedCredentialByID(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) (*domain.Credential, error)
 	ListProviders(context.Context) ([]*domain.SSOProvider, error)
-	ListEnabledOAuthIssuer(context.Context, string) ([]*domain.SSOProvider, error)
 	ListEnabledProviders(context.Context) ([]*domain.SSOProvider, error)
 	GetProvider(context.Context, uuid.UUID) (*domain.SSOProvider, error)
 	CreateProvider(context.Context, *domain.SSOProvider) error
@@ -194,4 +193,8 @@ type TeamStatePurger interface {
 
 type CredentialSessionInvalidator interface {
 	InvalidateCredentialSessions(context.Context, string, string) error
+}
+
+type DirectoryCredentialVerifier interface {
+	Verify(string, string) bool
 }

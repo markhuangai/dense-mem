@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -106,62 +105,65 @@ func (validator *OAuthProtectedResourceValidator) Configure(profiles []domain.OA
 	return nil
 }
 
-type parsedOAuthAccessToken struct {
-	signature  *jose.JSONWebSignature
-	claims     map[string]json.RawMessage
-	registered jwt.Claims
-	issuer     string
-}
-
-func parseOAuthAccessToken(raw string) (parsedOAuthAccessToken, error) {
-	var token parsedOAuthAccessToken
-	header, claims, err := strictOAuthJWTParts(raw)
-	if err != nil || jsonstrict.RejectDuplicateFields(header) != nil || jsonstrict.RejectDuplicateFields(claims) != nil {
-		return token, ErrOAuthTokenInvalid
-	}
-	token.signature, err = jose.ParseSignedCompact(raw, []jose.SignatureAlgorithm{jose.RS256, jose.PS256, jose.ES256})
-	if err != nil || len(token.signature.Signatures) != 1 || json.Unmarshal(claims, &token.claims) != nil || token.claims == nil {
-		return token, ErrOAuthTokenInvalid
-	}
-	token.issuer, err = requiredExactOAuthString(token.claims, "iss")
-	if err != nil || json.Unmarshal(claims, &token.registered) != nil {
-		return token, ErrOAuthTokenInvalid
-	}
-	return token, nil
-}
-
 func (validator *OAuthProtectedResourceValidator) Validate(ctx context.Context, raw string) (*domain.OAuthValidatedToken, error) {
-	token, err := parseOAuthAccessToken(raw)
+	headerJSON, claimsJSON, err := strictOAuthJWTParts(raw)
 	if err != nil {
-		return nil, err
+		return nil, ErrOAuthTokenInvalid
 	}
-	return validator.validateParsed(ctx, token)
-}
+	if err := jsonstrict.RejectDuplicateFields(headerJSON); err != nil {
+		return nil, ErrOAuthTokenInvalid
+	}
+	if err := jsonstrict.RejectDuplicateFields(claimsJSON); err != nil {
+		return nil, ErrOAuthTokenInvalid
+	}
 
-func (validator *OAuthProtectedResourceValidator) validateParsed(ctx context.Context, token parsedOAuthAccessToken) (*domain.OAuthValidatedToken, error) {
-	profile, ok := validator.profileForIssuer(token.issuer)
+	var unverified map[string]json.RawMessage
+	if err := json.Unmarshal(claimsJSON, &unverified); err != nil || unverified == nil {
+		return nil, ErrOAuthTokenInvalid
+	}
+	issuer, err := requiredExactOAuthString(unverified, "iss")
+	if err != nil {
+		return nil, ErrOAuthTokenInvalid
+	}
+	profile, ok := validator.profileForIssuer(issuer)
 	if !ok {
 		return nil, ErrOAuthTokenInvalid
 	}
-	header := token.signature.Signatures[0].Header
-	if !slices.Contains(profile.ProtectedResource.Algorithms, header.Algorithm) {
+
+	algorithms := make([]jose.SignatureAlgorithm, 0, len(profile.ProtectedResource.Algorithms))
+	for _, algorithm := range profile.ProtectedResource.Algorithms {
+		algorithms = append(algorithms, jose.SignatureAlgorithm(algorithm))
+	}
+	parsed, err := jwt.ParseSigned(raw, algorithms)
+	if err != nil || len(parsed.Headers) != 1 {
 		return nil, ErrOAuthTokenInvalid
 	}
+	header := parsed.Headers[0]
 	key, fromCache, err := validator.verificationKey(ctx, profile, header.KeyID, header.Algorithm, false)
 	if err != nil {
 		return nil, err
 	}
-	if _, err = token.signature.Verify(key); err != nil && fromCache {
+
+	var verified map[string]json.RawMessage
+	if err = parsed.Claims(key, &verified); err != nil && fromCache {
 		key, _, err = validator.verificationKey(ctx, profile, header.KeyID, header.Algorithm, true)
 		if err != nil {
 			return nil, err
 		}
-		_, err = token.signature.Verify(key)
+		verified = nil
+		err = parsed.Claims(key, &verified)
 	}
-	if err != nil {
+	if err != nil || verified == nil {
 		return nil, ErrOAuthTokenInvalid
 	}
-	verified, registered := token.claims, token.registered
+	var registered jwt.Claims
+	if err := json.Unmarshal(claimsJSON, &registered); err != nil {
+		return nil, ErrOAuthTokenInvalid
+	}
+	verifiedIssuer, err := requiredExactOAuthString(verified, "iss")
+	if err != nil || verifiedIssuer != profile.Issuer {
+		return nil, ErrOAuthTokenInvalid
+	}
 	subject, err := requiredExactOAuthString(verified, "sub")
 	if err != nil || registered.Expiry == nil || len(registered.Audience) == 0 {
 		return nil, ErrOAuthTokenInvalid

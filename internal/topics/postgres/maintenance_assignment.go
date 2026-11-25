@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	assignment "github.com/markhuangai/dense-mem/internal/topics/assignment"
+	assignment "github.com/markhuangai/dense-mem/internal/topicassignment/contract"
 	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 )

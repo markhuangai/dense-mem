@@ -20,6 +20,7 @@ import (
 	"github.com/labstack/echo/v5"
 	"github.com/markhuangai/dense-mem/internal/correlation"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/http/middleware"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	rememberapp "github.com/markhuangai/dense-mem/internal/remember/service"
@@ -359,7 +360,7 @@ func newProgressHTTPServer(t *testing.T, logger *observability.Logger, invoke re
 	lifecycle := sse.NewStreamLifecycle(limiter)
 	h := NewMCPHandlerWithLifecycleAndRuntimeConfig(reg, nil, lifecycle, progressFeedbackConfig{})
 	if logger != nil {
-		h = NewMCPHandlerWithLifecycleAndRuntimeConfig(reg, logger.ContextSlog(), lifecycle, progressFeedbackConfig{})
+		h = NewMCPHandlerWithLifecycleAndRuntimeConfig(reg, NewMCPLogger(progressContextLogger{mcpTestLogger{delegate: logger}}), lifecycle, progressFeedbackConfig{})
 	}
 	e := echo.New()
 	e.POST("/mcp", h.HandlePost)
@@ -379,6 +380,18 @@ func newProgressHTTPServer(t *testing.T, logger *observability.Logger, invoke re
 	server := httptest.NewServer(root)
 	t.Cleanup(server.Close)
 	return &progressHTTPServer{Server: server, limiter: limiter, teamID: teamID}
+}
+
+type progressContextLogger struct{ mcpTestLogger }
+
+func (l progressContextLogger) DebugContext(ctx context.Context, msg string, attrs ...httpcontract.LogAttr) {
+	l.delegate.(observability.ContextLogProvider).DebugContext(ctx, msg, mcpObservabilityAttrs(attrs)...)
+}
+func (l progressContextLogger) InfoContext(ctx context.Context, msg string, attrs ...httpcontract.LogAttr) {
+	l.delegate.(observability.ContextLogProvider).InfoContext(ctx, msg, mcpObservabilityAttrs(attrs)...)
+}
+func (l progressContextLogger) ErrorContext(ctx context.Context, msg string, err error, attrs ...httpcontract.LogAttr) {
+	l.delegate.(observability.ContextLogProvider).ErrorContext(ctx, msg, err, mcpObservabilityAttrs(attrs)...)
 }
 
 func TestMCPHandlerRememberProgressStopsBeforeTerminalResponse(t *testing.T) {
@@ -410,7 +423,7 @@ func TestMCPHandlerRememberProgressUnsupportedWriterKeepsRequiredFailure(t *test
 			}
 			return nil, registry.NewToolResultError(map[string]any{"code": "provider_unavailable"})
 		}}))
-	h := NewMCPHandler(reg, logger.ContextSlog())
+	h := NewMCPHandler(reg, NewMCPLogger(progressContextLogger{mcpTestLogger{delegate: logger}}))
 	request := progressRequest(t, "http://example/mcp", "2025-11-25", "text/event-stream", "0", "remember", "1")
 	teamID := uuid.New()
 	ctx := mcpTestContext(request.Context(), teamID, []string{"read", "write"})

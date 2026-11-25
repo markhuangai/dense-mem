@@ -4,9 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 )
 
@@ -35,14 +35,14 @@ func reauthorizeSubmissionKnownEvidence(
 	input CommitSubmissionAssessmentInput,
 ) error {
 	for _, expected := range input.KnownEvidenceSnapshot {
-		if err := storagepostgres.LockMemorySpaceTx(ctx, tx, expected.TeamID, expected.SpaceID); err != nil {
-			if errors.Is(err, sql.ErrNoRows) || storagepostgres.IsLockNotAvailable(err) {
+		if err := lockKnownEvidenceSpace(ctx, tx, expected.TeamID, expected.SpaceID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) || isPostgresLockNotAvailable(err) {
 				return ErrSubmissionAssessmentKnownEvidenceStale
 			}
 			return err
 		}
 		if err := lockKnownEvidenceSource(ctx, tx, expected.TeamID, expected.SourceID, expected.OwnerProfileID); err != nil {
-			if errors.Is(err, sql.ErrNoRows) || storagepostgres.IsLockNotAvailable(err) {
+			if errors.Is(err, sql.ErrNoRows) || isPostgresLockNotAvailable(err) {
 				return ErrSubmissionAssessmentKnownEvidenceStale
 			}
 			return err
@@ -64,6 +64,26 @@ func reauthorizeSubmissionKnownEvidence(
 	return nil
 }
 
+// lockKnownEvidenceSpace prevents a concurrent private-space seal or generation
+// advance from invalidating the active-generation fence after it is checked.
+// The database helper performs the row lock in system mode because PostgreSQL
+// applies the memory-space update policy to row-locked reads under runtime RLS.
+func lockKnownEvidenceSpace(ctx context.Context, tx *gorm.DB, teamID, spaceID string) error {
+	if strings.TrimSpace(spaceID) == "" {
+		return sql.ErrNoRows
+	}
+	var locked bool
+	if err := tx.WithContext(ctx).Raw(`
+		SELECT dense_mem_lock_memory_space(?::uuid, ?::uuid)
+	`, teamID, spaceID).Row().Scan(&locked); err != nil {
+		return err
+	}
+	if !locked {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // lockKnownEvidenceSource prevents a concurrent source revision update from
 // changing current-source eligibility between the fence check and support
 // insertion. NOWAIT fails closed instead of allowing cross-owner source locks
@@ -81,6 +101,11 @@ func lockKnownEvidenceSource(ctx context.Context, tx *gorm.DB, teamID, sourceID,
 		  AND owner_profile_id = ?::uuid
 		FOR SHARE NOWAIT
 	`, teamID, sourceID, ownerProfileID).Row().Scan(&lockedSourceID)
+}
+
+func isPostgresLockNotAvailable(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "55P03"
 }
 
 func loadSubmissionKnownEvidenceFenceRow(

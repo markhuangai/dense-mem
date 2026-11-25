@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"sync"
 	"testing"
 	"time"
@@ -144,11 +143,12 @@ func TestRememberDuplicateExactReuseCreatesOneCanonicalAndTwoOccurrences(t *test
 	result, err := repo.CommitRememberWithEmbeddings(ctx, second, nil)
 	require.NoError(t, err)
 	require.Equal(t, "completed", result.Outcome)
-	evidenceResult := result.Receipt.Evidence
+	evidenceResult, ok := result.PublicResult["evidence"].([]map[string]any)
+	require.True(t, ok)
 	require.Len(t, evidenceResult, 1)
-	require.Equal(t, "stored", evidenceResult[0].Disposition)
-	require.Equal(t, "current", result.Receipt.SearchState)
-	require.Equal(t, "current", evidenceResult[0].SearchState)
+	require.Equal(t, "stored", evidenceResult[0]["disposition"])
+	require.Equal(t, "current", result.PublicResult["search_state"])
+	require.Equal(t, "current", evidenceResult[0]["search_state"])
 
 	require.EqualValues(t, 1, duplicateCount(t, adminDB, rls, `SELECT count(*) FROM evidence_fragments WHERE team_id = ?::uuid`, teamID))
 	require.EqualValues(t, 2, duplicateCount(t, adminDB, rls, `SELECT count(*) FROM evidence_occurrences WHERE team_id = ?::uuid`, teamID))
@@ -206,9 +206,10 @@ func TestRememberDuplicateIdenticalItemsInOneBatchShareCanonical(t *testing.T) {
 
 	result, err := repo.CommitRememberWithEmbeddings(ctx, input, duplicatePlanEmbeddings(plan))
 	require.NoError(t, err)
-	evidence := result.Receipt.Evidence
+	evidence, ok := result.PublicResult["evidence"].([]map[string]any)
+	require.True(t, ok)
 	require.Len(t, evidence, 2)
-	require.Equal(t, evidence[0].EvidenceID, evidence[1].EvidenceID)
+	require.Equal(t, evidence[0]["evidence_id"], evidence[1]["evidence_id"])
 	require.EqualValues(t, 1, duplicateCount(t, adminDB, rls, `SELECT count(*) FROM evidence_fragments WHERE team_id = ?::uuid`, teamID))
 	require.EqualValues(t, 2, duplicateCount(t, adminDB, rls, `SELECT count(*) FROM evidence_occurrences WHERE team_id = ?::uuid`, teamID))
 }
@@ -854,7 +855,7 @@ func TestRememberDuplicateEmbeddingPlanUsesCanonicalRenderedBytesAndRejectsContr
 	require.NoError(t, err)
 	require.Len(t, plan.Documents, 1)
 	require.Equal(t, "padded rendered evidence", plan.Documents[0].DocumentText)
-	require.Equal(t, storagepostgres.SearchDocumentHash(plan.Documents[0].DocumentText), plan.Documents[0].DocumentHash)
+	require.Equal(t, searchDocumentHash(plan.Documents[0].DocumentText), plan.Documents[0].DocumentHash)
 	resolved, err := repo.ResolveRememberDuplicateCandidates(ctx, duplicateInput, duplicatePlanEmbeddings(plan))
 	require.NoError(t, err)
 	input.DuplicateResolutions = resolved.Exact

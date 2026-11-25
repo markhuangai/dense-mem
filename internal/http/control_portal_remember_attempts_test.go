@@ -32,7 +32,7 @@ func TestControlPortalRememberAttemptRoutes(t *testing.T) {
 		},
 	}
 	logger := &rememberAttemptLogCapture{}
-	server, err := NewControlPortalServerWithServices(&config.Config{ControlHTTPAddr: "127.0.0.1:8090", ControlPortalToken: "secret"}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalServices{RememberAttempts: reader}, HealthConfig{}, logger)
+	server, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{ControlHTTPAddr: "127.0.0.1:8090", ControlPortalToken: "secret"}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{RememberAttempts: reader}, HealthConfig{}, logger)
 	require.NoError(t, err)
 
 	do := func(path string) *httptest.ResponseRecorder {
@@ -84,7 +84,7 @@ func TestControlPortalRememberAttemptValidationAndNotFound(t *testing.T) {
 	_, err := controlRememberAttemptDiagnosticFilter(ctx)
 	require.ErrorContains(t, err, "outcome")
 
-	h := &controlDiagnosticsHandler{rememberAttempts: &controlRememberAttemptDiagnosticsStub{detailErr: rememberapp.ErrRememberAttemptDiagnosticNotFound}}
+	h := &controlPortalHandler{rememberAttempts: &controlRememberAttemptDiagnosticsStub{detailErr: rememberapp.ErrRememberAttemptDiagnosticNotFound}}
 	ctx = withRememberAttemptParams(echo.New().NewContext(httptest.NewRequest(http.MethodGet, "/", nil), rec), uuid.NewString(), uuid.NewString())
 	err = h.getRememberAttemptDiagnostic(ctx)
 	require.ErrorContains(t, err, "remember attempt not found")
@@ -96,7 +96,7 @@ func TestControlPortalRememberAttemptErrorsAndBounds(t *testing.T) {
 		return e.NewContext(httptest.NewRequest(http.MethodGet, path, nil), httptest.NewRecorder())
 	}
 
-	unavailable := &controlDiagnosticsHandler{}
+	unavailable := &controlPortalHandler{}
 	require.ErrorContains(t, unavailable.listRememberAttemptDiagnostics(newContext("/")), "unavailable")
 	require.ErrorContains(t, unavailable.getRememberAttemptDiagnostic(newContext("/")), "unavailable")
 
@@ -109,7 +109,7 @@ func TestControlPortalRememberAttemptErrorsAndBounds(t *testing.T) {
 		listErr:   rememberapp.ErrRememberAttemptDiagnosticsUnavailable,
 		detailErr: rememberapp.ErrRememberAttemptDiagnosticsUnavailable,
 	}
-	h := &controlDiagnosticsHandler{rememberAttempts: reader}
+	h := &controlPortalHandler{rememberAttempts: reader}
 	require.ErrorContains(t, h.listRememberAttemptDiagnostics(newContext("/")), "unavailable")
 	require.ErrorContains(t, h.getRememberAttemptDiagnostic(withRememberAttemptParams(newContext("/"), "bad", uuid.NewString())), "team ID")
 	require.ErrorContains(t, h.getRememberAttemptDiagnostic(withRememberAttemptParams(newContext("/"), uuid.NewString(), "bad")), "attempt ID")

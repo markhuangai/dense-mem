@@ -246,15 +246,13 @@ func TestWithSystemModeInTxRestoresAndRollsBack(t *testing.T) {
 	ctx := requestctx.WithAllowedSpaces(context.Background(), []domain.MemorySpaceAccess{{ID: spaceA}})
 	rls := NewRLS()
 	type scope struct {
-		TxID, Team, Profile, Mode, Spaces, StorageLayout, TopicLayout string
+		TxID, Team, Profile, Mode, Spaces, Layout string
 	}
 	readScope := func(tx *gorm.DB) scope {
 		t.Helper()
 		var current scope
-		err := tx.Raw(`SELECT pg_current_xact_id()::text, current_setting('app.current_team_id'),
-			current_setting('app.current_profile_id'), current_setting('app.tx_mode'), current_setting('app.allowed_space_ids'),
-			COALESCE(current_setting('app.storage_layout',true),''), COALESCE(current_setting('app.topic_layout',true),'')`).
-			Row().Scan(&current.TxID, &current.Team, &current.Profile, &current.Mode, &current.Spaces, &current.StorageLayout, &current.TopicLayout)
+		err := tx.Raw("SELECT pg_current_xact_id()::text, current_setting('app.current_team_id'), current_setting('app.current_profile_id'), current_setting('app.tx_mode'), current_setting('app.allowed_space_ids'), current_setting('app.storage_layout')").
+			Row().Scan(&current.TxID, &current.Team, &current.Profile, &current.Mode, &current.Spaces, &current.Layout)
 		require.NoError(t, err)
 		return current
 	}
@@ -268,10 +266,10 @@ func TestWithSystemModeInTxRestoresAndRollsBack(t *testing.T) {
 	marker := uuid.New()
 	err = rls.WithTeamProfileTx(ctx, db, teamA.String(), profileA.String(), func(tx *gorm.DB) error {
 		before := readScope(tx)
-		require.Equal(t, scope{before.TxID, teamA.String(), profileA.String(), "profile", spaceA.String(), "", ""}, before)
+		require.Equal(t, scope{before.TxID, teamA.String(), profileA.String(), "profile", spaceA.String(), "feature-storage-v1"}, before)
 		assertVisible(tx, profileA, profileB)
 		require.NoError(t, WithSystemModeInTx(ctx, tx, teamA.String(), profileA.String(), func(system *gorm.DB) error {
-			require.Equal(t, scope{before.TxID, "", "", "system", before.Spaces, "", ""}, readScope(system))
+			require.Equal(t, scope{before.TxID, "", "", "system", before.Spaces, before.Layout}, readScope(system))
 			assertVisible(system, profileA, profileB, profileC)
 			return nil
 		}))

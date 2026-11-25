@@ -32,7 +32,6 @@ func TestOntologyManagementHTTPPersistedWorkflow(t *testing.T) {
 	f := newOntologyFixture(t)
 	repository := access.NewCredentialRepository(f.app, f.rls, nil)
 	keys := make([]string, 2)
-	ownerIDs := make([]uuid.UUID, len(keys))
 	for index := range keys {
 		key, err := crypto.GenerateRawKey()
 		require.NoError(t, err)
@@ -41,15 +40,13 @@ func TestOntologyManagementHTTPPersistedWorkflow(t *testing.T) {
 		credential := &domain.Credential{ID: uuid.New(), TeamID: uuid.MustParse(f.team), Name: "http-manager-" + uuid.NewString(), Role: "manager", Scopes: []string{"read", "write"}, KeyHash: hash, KeyPrefix: crypto.GetKeyPrefix(key), KeySuffix: crypto.GetKeySuffix(key)}
 		require.NoError(t, repository.CreateCredential(context.Background(), credential))
 		keys[index] = key
-		ownerIDs[index] = credential.ID
 	}
 	evidence := f.evidence(t, 0, "Atlas uses PostgreSQL.")
 	before := f.canonicalSnapshot(t)
-	service := managementService(f)
 	router := echo.New()
 	router.HTTPErrorHandler = httperr.ErrorHandler
 	densehttp.RegisterUserPortal(router, densehttp.UserPortalDeps{
-		TopicManagement: service, CredentialRepo: repository,
+		TopicManagement: managementService(f), CredentialRepo: repository,
 		CredentialVerifier: crypto.NewArgon2Verifier(0), CredentialLookupPrefixes: crypto.GetLookupPrefixes,
 		RateLimitSvc: accessservice.NewRateLimitService(inmem.NewInMemoryRateLimitStore()),
 		Config:       &config.Config{RateLimitPerMinute: 100},
@@ -84,46 +81,54 @@ func TestOntologyManagementHTTPPersistedWorkflow(t *testing.T) {
 	decode(request(0, http.MethodGet, "/sources?q="+evidence.Evidence[0].FragmentID, nil), &sources)
 	require.Len(t, sources.Sources, 1)
 	require.Equal(t, evidence.Evidence[0].FragmentID, sources.Sources[0].ID)
-	edit := topiccontract.ManagementEdit{Action: "define", Kind: topiccontract.Topic, Definition: &topiccontract.Definition{Key: "http-storage", Label: "Storage", Description: "Durable storage"}}
-	input := topiccontract.SaveEditsInput{OperationKey: uuid.NewString(), Reason: "Create current Topic", Edits: []topiccontract.ManagementEdit{edit}}
-	var publication topiccontract.PublicationResult
-	decode(request(0, http.MethodPost, "/edits", input), &publication)
-	require.Len(t, publication.Records, 1)
-	var replay topiccontract.PublicationResult
-	decode(request(0, http.MethodPost, "/edits", input), &replay)
-	require.Equal(t, publication.ID, replay.ID)
-	require.True(t, replay.Existing)
-	var record topiccontract.RecordView
-	path := "/records/" + publication.Records[0].ID
-	decode(request(1, http.MethodGet, path, nil), &record)
-	require.Equal(t, "http-storage", record.Definition.Key)
-	edit.RecordID, edit.ExpectedVersion = record.ID, record.EditVersion
-	edit.Definition.Description = "Updated storage"
-	update := topiccontract.SaveEditsInput{OperationKey: uuid.NewString(), Reason: "Update current Topic", Edits: []topiccontract.ManagementEdit{edit}}
-	decode(request(0, http.MethodPost, "/edits", update), &publication)
-	update.OperationKey = uuid.NewString()
-	require.Equal(t, http.StatusConflict, request(0, http.MethodPost, "/edits", update).Code)
-	decode(request(0, http.MethodGet, path+"?version=1", nil), &record)
-	require.Equal(t, "Durable storage", record.Definition.Description)
-
-	actor, ok := requestctx.ActorFromContext(f.actor(0, "manager"))
-	require.True(t, ok)
-	actor.OwnerID = ownerIDs[0]
-	legacyCtx := requestctx.WithActor(context.Background(), actor)
-	legacy := managementInput(publication.Revision, topiccontract.ManagementEdit{Action: "define", Kind: topiccontract.Topic, Definition: &topiccontract.Definition{Key: "legacy", Label: "Legacy"}})
-	committed, err := service.SaveDraft(legacyCtx, "", legacy)
-	require.NoError(t, err)
+	input := managementInput(status.Revision, topiccontract.ManagementEdit{Action: "define", Kind: topiccontract.Topic, Definition: &topiccontract.Definition{Key: "http-storage", Label: "Storage", Description: "Durable storage"}})
 	var draft topiccontract.ManagementDraft
-	decode(request(0, http.MethodPost, "/drafts", legacy), &draft)
-	require.Equal(t, committed.ID, draft.ID)
-	decode(request(0, http.MethodGet, "/drafts/"+draft.ID, nil), &draft)
-	require.Equal(t, committed.ID, draft.ID)
+	decode(request(0, http.MethodPost, "/drafts", input), &draft)
+	var drafts topiccontract.DraftPage
+	decode(request(0, http.MethodGet, "/drafts", nil), &drafts)
+	require.Equal(t, []topiccontract.ManagementDraft{draft}, drafts.Drafts)
+	var stored topiccontract.ManagementDraft
+	decode(request(0, http.MethodGet, "/drafts/"+draft.ID, nil), &stored)
+	require.Equal(t, draft, stored)
 	require.Equal(t, http.StatusNotFound, request(1, http.MethodGet, "/drafts/"+draft.ID, nil).Code)
-	legacy.Reason = "Changed legacy content"
-	require.Equal(t, http.StatusConflict, request(0, http.MethodPost, "/drafts", legacy).Code)
-	legacy.OperationKey = uuid.NewString()
-	require.Equal(t, http.StatusGone, request(0, http.MethodPost, "/drafts", legacy).Code)
-	require.Equal(t, http.StatusGone, request(0, http.MethodPost, "/drafts/"+draft.ID+"/publish", managementCommand(draft)).Code)
+	input.ExpectedVersion, input.OperationKey, input.Reason = draft.Version, uuid.NewString(), "Reviewed HTTP correction"
+	decode(request(0, http.MethodPut, "/drafts/"+draft.ID, input), &draft)
+	require.Equal(t, int64(2), draft.Version)
+	input.OperationKey = uuid.NewString()
+	require.Equal(t, http.StatusConflict, request(0, http.MethodPut, "/drafts/"+draft.ID, input).Code)
+	decode(request(0, http.MethodGet, "/drafts/"+draft.ID, nil), &stored)
+	require.Equal(t, draft, stored)
+	var preview topiccontract.ImpactPreview
+	decode(request(0, http.MethodPost, "/drafts/"+draft.ID+"/preview", map[string]any{"expected_version": draft.Version}), &preview)
+	require.True(t, preview.Complete)
+	require.Equal(t, 1, preview.ChangedRecords)
+	decode(request(0, http.MethodPost, "/drafts/"+draft.ID+"/publish", managementCommand(draft)), &draft)
+	require.Equal(t, "published", draft.State)
+	require.NotNil(t, draft.Publication)
+	var publications topiccontract.ManagementPublicationPage
+	decode(request(0, http.MethodGet, "/publications", nil), &publications)
+	require.Len(t, publications.Publications, 1)
+	var publication topiccontract.ManagementPublication
+	decode(request(0, http.MethodGet, "/publications/"+draft.Publication.ID, nil), &publication)
+	require.Len(t, publication.RecordsView, 1)
+	var records topiccontract.ManagementRecordPage
+	decode(request(0, http.MethodGet, "/records?kind=topic", nil), &records)
+	require.Len(t, records.Records, 1)
+	var record topiccontract.RecordView
+	decode(request(0, http.MethodGet, "/records/"+records.Records[0].ID+"?version=1", nil), &record)
+	require.Equal(t, "http-storage", record.Definition.Key)
+	var rollback topiccontract.PublicationResult
+	decode(request(0, http.MethodPost, "/publications/"+publication.ID+"/rollback", map[string]any{"operation_key": uuid.NewString(), "expected_revision": publication.Revision, "reason": "Reverse HTTP correction"}), &rollback)
+	require.NotEqual(t, publication.ID, rollback.ID)
+	decode(request(0, http.MethodGet, "/publications/"+rollback.ID, nil), &publication)
+	require.Equal(t, draft.Publication.ID, publication.RollbackOf)
+	input = managementInput(rollback.Revision, topiccontract.ManagementEdit{Action: "define", Kind: topiccontract.Topic, Definition: &topiccontract.Definition{Key: "discard-http", Label: "Discarded"}})
+	var discarded topiccontract.ManagementDraft
+	decode(request(0, http.MethodPost, "/drafts", input), &discarded)
+	decode(request(0, http.MethodPost, "/drafts/"+discarded.ID+"/discard", managementCommand(discarded)), &discarded)
+	require.Equal(t, "discarded", discarded.State)
+	decode(request(0, http.MethodGet, "/drafts/"+discarded.ID, nil), &stored)
+	require.Equal(t, discarded, stored)
 	require.Equal(t, before, f.canonicalSnapshot(t))
 
 }

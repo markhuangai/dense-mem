@@ -2,24 +2,24 @@ package http
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v5"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	httpcontract "github.com/markhuangai/dense-mem/internal/http/contract"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
-func (h *controlIdentityHandler) listDirectoryConnectors(c *echo.Context) error {
+func (h *controlPortalHandler) listDirectoryConnectors(c *echo.Context) error {
 	if h.directory == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "directory identity service unavailable")
 	}
 	connectors, err := h.directory.ListConnectors(c.Request().Context())
 	if err != nil {
-		return h.respondToDirectoryError(c, err)
+		return controlDirectoryServiceError(err)
 	}
 	items := make([]controlDirectoryConnectorResponse, 0, len(connectors))
 	for _, connector := range connectors {
@@ -28,7 +28,7 @@ func (h *controlIdentityHandler) listDirectoryConnectors(c *echo.Context) error 
 	return c.JSON(200, map[string]any{"data": items})
 }
 
-func (h *controlIdentityHandler) getDirectoryConnector(c *echo.Context) error {
+func (h *controlPortalHandler) getDirectoryConnector(c *echo.Context) error {
 	if h.directory == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "directory identity service unavailable")
 	}
@@ -38,12 +38,12 @@ func (h *controlIdentityHandler) getDirectoryConnector(c *echo.Context) error {
 	}
 	connector, err := h.directory.GetConnectorForProvider(c.Request().Context(), providerID)
 	if err != nil {
-		return h.respondToDirectoryError(c, err)
+		return controlDirectoryServiceError(err)
 	}
 	return c.JSON(200, map[string]any{"data": toControlDirectoryConnector(connector)})
 }
 
-func (h *controlIdentityHandler) createDirectoryConnector(c *echo.Context) error {
+func (h *controlPortalHandler) createDirectoryConnector(c *echo.Context) error {
 	if h.directory == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "directory identity service unavailable")
 	}
@@ -57,7 +57,7 @@ func (h *controlIdentityHandler) createDirectoryConnector(c *echo.Context) error
 	}
 	connector, credential, err := h.directory.CreateConnector(c.Request().Context(), body.toDomain(uuid.Nil, providerID))
 	if err != nil {
-		return h.respondToDirectoryError(c, err)
+		return controlDirectoryServiceError(err)
 	}
 	return c.JSON(201, map[string]any{"data": controlDirectoryCredentialResponse{
 		Connector:  toControlDirectoryConnector(connector),
@@ -65,7 +65,7 @@ func (h *controlIdentityHandler) createDirectoryConnector(c *echo.Context) error
 	}})
 }
 
-func (h *controlIdentityHandler) updateDirectoryConnector(c *echo.Context) error {
+func (h *controlPortalHandler) updateDirectoryConnector(c *echo.Context) error {
 	if h.directory == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "directory identity service unavailable")
 	}
@@ -75,7 +75,7 @@ func (h *controlIdentityHandler) updateDirectoryConnector(c *echo.Context) error
 	}
 	current, err := h.directory.GetConnector(c.Request().Context(), connectorID)
 	if err != nil {
-		return h.respondToDirectoryError(c, err)
+		return controlDirectoryServiceError(err)
 	}
 	var body controlDirectoryConnectorRequest
 	if err := c.Bind(&body); err != nil {
@@ -83,12 +83,12 @@ func (h *controlIdentityHandler) updateDirectoryConnector(c *echo.Context) error
 	}
 	connector, err := h.directory.UpdateConnector(c.Request().Context(), body.toDomain(connectorID, current.ProviderID))
 	if err != nil {
-		return h.respondToDirectoryError(c, err)
+		return controlDirectoryServiceError(err)
 	}
 	return c.JSON(200, map[string]any{"data": toControlDirectoryConnector(connector)})
 }
 
-func (h *controlIdentityHandler) rotateDirectoryCredentials(c *echo.Context) error {
+func (h *controlPortalHandler) rotateDirectoryCredentials(c *echo.Context) error {
 	if h.directory == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "directory identity service unavailable")
 	}
@@ -98,12 +98,12 @@ func (h *controlIdentityHandler) rotateDirectoryCredentials(c *echo.Context) err
 	}
 	credential, err := h.directory.RotateCredentials(c.Request().Context(), connectorID)
 	if err != nil {
-		return h.respondToDirectoryError(c, err)
+		return controlDirectoryServiceError(err)
 	}
 	return c.JSON(200, map[string]any{"data": credential})
 }
 
-func (h *controlIdentityHandler) previewDirectoryConnector(c *echo.Context) error {
+func (h *controlPortalHandler) previewDirectoryConnector(c *echo.Context) error {
 	if h.directory == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "directory identity service unavailable")
 	}
@@ -113,12 +113,12 @@ func (h *controlIdentityHandler) previewDirectoryConnector(c *echo.Context) erro
 	}
 	preview, err := h.directory.Preview(c.Request().Context(), connectorID)
 	if err != nil {
-		return h.respondToDirectoryError(c, err)
+		return controlDirectoryServiceError(err)
 	}
 	return c.JSON(200, map[string]any{"data": preview})
 }
 
-func (h *controlIdentityHandler) setDirectoryConnectorStatus(c *echo.Context) error {
+func (h *controlPortalHandler) setDirectoryConnectorStatus(c *echo.Context) error {
 	if h.directory == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "directory identity service unavailable")
 	}
@@ -130,18 +130,14 @@ func (h *controlIdentityHandler) setDirectoryConnectorStatus(c *echo.Context) er
 	if err := c.Bind(&body); err != nil {
 		return httperr.New(httperr.VALIDATION_ERROR, "malformed JSON body")
 	}
-	started := time.Now()
 	connector, err := h.directory.SetConnectorStatus(c.Request().Context(), connectorID, domain.DirectoryConnectorStatus(body.Status), body.PreviewVersion)
 	if err != nil {
-		return h.respondToDirectoryError(c, err,
-			httpcontract.String("connector_id", connectorID.String()),
-			httpcontract.String("preview_version", body.PreviewVersion),
-			httpcontract.LogAttr{Key: "elapsed_ms", Value: time.Since(started).Milliseconds()})
+		return controlDirectoryServiceError(err)
 	}
 	return c.JSON(200, map[string]any{"data": toControlDirectoryConnector(connector)})
 }
 
-func (h *controlIdentityHandler) adoptDirectoryGroupTeam(c *echo.Context) error {
+func (h *controlPortalHandler) adoptDirectoryGroupTeam(c *echo.Context) error {
 	if h.directory == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "directory identity service unavailable")
 	}
@@ -162,7 +158,7 @@ func (h *controlIdentityHandler) adoptDirectoryGroupTeam(c *echo.Context) error 
 		return err
 	}
 	if err := h.directory.AdoptTeam(c.Request().Context(), connectorID, groupID, teamID); err != nil {
-		return h.respondToDirectoryError(c, err)
+		return controlDirectoryServiceError(err)
 	}
 	return c.JSON(200, map[string]any{"data": map[string]string{"status": "adopted"}})
 }
@@ -239,31 +235,21 @@ type controlDirectoryCredentialResponse struct {
 	Credential domain.DirectoryCredential        `json:"credential"`
 }
 
-func (h *controlIdentityHandler) respondToDirectoryError(c *echo.Context, err error, details ...httpcontract.LogAttr) error {
-	mapped := controlDirectoryServiceError(err)
-	var publicError *httperr.APIError
-	if errors.As(mapped, &publicError) && publicError.Code == httperr.INTERNAL_ERROR {
-		httpcontract.LogErrorContext(TransportLogContext(c), h.logger, "directory_operation_failed", err,
-			append(details, httpcontract.String("route", c.Path()), httpcontract.String("method", c.Request().Method),
-				httpcontract.String("outcome", "storage_failure"))...)
-	}
-	return mapped
-}
-
 func controlDirectoryServiceError(err error) error {
 	if err == nil {
 		return nil
 	}
+	message := strings.ToLower(err.Error())
 	if errors.Is(err, accessservice.ErrDirectoryConnectorDisabled) {
 		return httperr.WithGuidance(httperr.New(httperr.CONFLICT, "directory connector is disabled"), "connector_disabled", "contact_operator", "Contact an operator to enable the directory connector before retrying.", false, nil, "")
 	}
-	if errors.Is(err, accessservice.ErrDirectoryResourceNotFound) {
+	if strings.Contains(message, "not found") {
 		return httperr.New(httperr.NOT_FOUND, "directory resource not found")
 	}
-	if errors.Is(err, accessservice.ErrDirectoryResourceConflict) || errors.Is(err, accessservice.ErrDirectoryPreviewStale) {
+	if strings.Contains(message, "already") || strings.Contains(message, "preview") || strings.Contains(message, "disable") {
 		return httperr.New(httperr.CONFLICT, "directory connector state conflict")
 	}
-	if errors.Is(err, accessservice.ErrDirectoryInvalidValue) {
+	if strings.Contains(message, "directory") || strings.Contains(message, "sso provider") || strings.Contains(message, "group policy") || strings.Contains(message, "role entitlement") {
 		return httperr.New(httperr.VALIDATION_ERROR, "invalid directory connector request")
 	}
 	return httperr.New(httperr.INTERNAL_ERROR, "directory identity operation failed")
