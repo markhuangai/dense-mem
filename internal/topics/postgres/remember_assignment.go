@@ -149,6 +149,20 @@ func (s *Store) publishAssignment(tx *gorm.DB, fence scope, operationID string, 
 	if err != nil {
 		return err
 	}
+	for _, change := range changes {
+		if change.Record.Definition.ParentID == "" {
+			continue
+		}
+		// The definition write can restore its declared parent. Other hierarchy writers take the catalog lock before locking names or rows.
+		locked, err := tryLockOrganizationCatalog(tx, fence)
+		if err != nil {
+			return err
+		}
+		if !locked {
+			return fmt.Errorf("%w: topic hierarchy is being updated", assignment.ErrStale)
+		}
+		break
+	}
 	memberships, err := assignmentMemberships(tx, fence, handle.ID)
 	if err != nil {
 		return err

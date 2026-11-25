@@ -102,6 +102,7 @@ func TestCommunityPlacementChecksRevisionsAndAccountsForProviderWork(t *testing.
 
 	t.Run("manager publication rolls back when a later edge closes a mixed cycle", testCommunityMixedHierarchyPublicationRollback)
 	t.Run("parent metadata revision preserves effective edges", testCommunityParentRevision)
+	t.Run("placement revalidates after a concurrent assignment refresh", testCommunityAssignmentRefresh)
 	t.Run("rejected hierarchy placement is deferred", testCommunityHierarchyRejectionDeferred)
 	t.Run("admitted decision outlives the preparation lease", testCommunityDecisionRenewsLease)
 }
@@ -359,6 +360,121 @@ func testCommunityParentRevision(t *testing.T) {
 	view, err = f.store.GetRecord(manager, f.team, definitionParent.ID, 0)
 	require.NoError(t, err)
 	require.Equal(t, child.ID, view.Definition.ParentID)
+}
+
+func testCommunityAssignmentRefresh(t *testing.T) {
+	for _, variant := range []struct {
+		name           string
+		declaredParent bool
+		waitStatement  string
+	}{
+		{name: "restored declared parent", declaredParent: true, waitStatement: "%pg_advisory_xact_lock%"},
+		{name: "root endpoint revision", waitStatement: "%FOR NO KEY UPDATE%"},
+	} {
+		t.Run(variant.name, func(t *testing.T) {
+			f := newOntologyFixture(t)
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			window := maintenanceWindow(t, f, maintenanceSettings(t, f))
+			oldSource := f.organizationEvidence(t, 0, "PostgreSQL backup guidance.", nil)
+			const text = "PostgreSQL backup retention can be configured."
+			newSource := f.organizationEvidence(t, 0, text, nil)
+			parent, child := testTopic("postgresql-backup"), testTopic("postgresql")
+			parent.ID = "10000000-0000-4000-8000-000000000001"
+			child.ID = "10000000-0000-4000-8000-000000000002"
+			parent.Definition.Label = "PostgreSQL backup"
+			child.Definition.Label = "PostgreSQL"
+			parent.Sources = []contract.SourceDependency{f.source(t, oldSource)}
+			if variant.declaredParent {
+				parent.Definition.ParentID = child.ID
+			}
+			_, err := f.store.PublishAutomatic(ctx, f.team, testPublication("placement-refresh-fixture", 0,
+				contract.Change{Record: parent}, contract.Change{Record: child}))
+			require.NoError(t, err)
+
+			claim := func(topicID string) (contract.CommunityInput, contract.MaintenanceClaim) {
+				t.Helper()
+				turn, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now(), time.Minute)
+				require.NoError(t, err)
+				require.NotNil(t, turn)
+				input, batch, err := f.store.ClaimCommunity(ctx, *turn, window.ID, time.Now())
+				require.NoError(t, err)
+				require.NotNil(t, input)
+				require.NotNil(t, batch)
+				require.Equal(t, topicID, input.Topic.ID)
+				return *input, *batch
+			}
+			input, batch := claim(parent.ID)
+			require.NoError(t, f.store.CompleteCommunity(ctx, batch, input, contract.CommunityOutcome{
+				InputHash: testHash("standalone parent"), Method: "generation", Status: "standalone",
+			}, "", time.Now()))
+			input, batch = claim(child.ID)
+			require.Len(t, input.Candidates, 1)
+			require.Equal(t, parent.ID, input.Candidates[0].ID)
+
+			require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
+				return appendMaintenanceOccurrence(tx, f, oldSource)
+			}))
+			before, err := f.store.GetRecord(f.actor(0, "manager"), f.team, parent.ID, 0)
+			require.NoError(t, err)
+			require.Equal(t, "source_changed", before.StaleReason)
+			require.Equal(t, "standalone", before.CommunityPlacement)
+
+			assignmentScope := assignment.Scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation, OperationID: uuid.NewString()}
+			item := assignment.Publication{EvidenceID: newSource.ID, Outcome: assignment.Outcome{
+				Text: text, InputHash: testHash("refresh parent definition"), Method: "generation",
+				Proposals: []assignment.Proposal{{Label: parent.Definition.Label, Quote: parent.Definition.Label, Description: "PostgreSQL backup guidance"}},
+			}}
+			publish := func(tx *gorm.DB) error {
+				return f.store.PublishAssignmentsTx(ctx, tx, assignmentScope, []assignment.Publication{item})
+			}
+			if variant.declaredParent {
+				require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
+					fence := scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation}
+					if err := lockOrganizationCatalog(tx, fence); err != nil {
+						return err
+					}
+					require.ErrorIs(t, f.rls.WithSystemTx(ctx, f.app, publish), assignment.ErrStale)
+					return nil
+				}))
+			}
+
+			finished := make(chan error, 1)
+			require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
+				if err := publish(tx); err != nil {
+					return err
+				}
+				var writerPID int
+				if err := tx.Raw(`SELECT pg_backend_pid()`).Row().Scan(&writerPID); err != nil {
+					return err
+				}
+				go func() {
+					finished <- f.store.CompleteCommunity(ctx, batch, input, contract.CommunityOutcome{
+						InputHash: testHash("place under refreshed parent"), Method: "generation", Status: "placed", ParentID: parent.ID,
+					}, "", time.Now())
+				}()
+				require.Eventually(t, func() bool {
+					var blocked bool
+					err := f.admin.Raw(`SELECT EXISTS(SELECT 1 FROM pg_stat_activity
+                        WHERE wait_event_type='Lock' AND query LIKE ? AND ?=ANY(pg_blocking_pids(pid)))`,
+						variant.waitStatement, writerPID).Row().Scan(&blocked)
+					return err == nil && blocked
+				}, 5*time.Second, 20*time.Millisecond)
+				return nil
+			}))
+			require.ErrorIs(t, <-finished, contract.ErrSourceStale)
+			current, err := f.store.GetRecord(f.actor(0, "manager"), f.team, parent.ID, 0)
+			require.NoError(t, err)
+			require.EqualValues(t, 2, current.Version)
+			require.Equal(t, parent.Definition.ParentID, current.Definition.ParentID)
+			current, err = f.store.GetRecord(f.actor(0, "manager"), f.team, child.ID, 0)
+			require.NoError(t, err)
+			require.Empty(t, current.Definition.ParentID)
+			var placementCount int
+			require.NoError(t, f.admin.Raw(`SELECT count(*) FROM community_placement_outcomes WHERE operation_id=?::uuid`, batch.ID).Row().Scan(&placementCount))
+			require.Zero(t, placementCount)
+		})
+	}
 }
 
 func TestConcurrentTopicProposalsReuseScopedName(t *testing.T) {

@@ -78,9 +78,12 @@ func testTopicStorageUpgrade(t *testing.T) {
 	updateCapture("null")
 
 	require.NoError(t, evidenceOnlyMigrationUpTo(ctx, db, 20261124010004))
-	parent := uuid.NewString()
+	const parent = "00000000-0000-4000-8000-000000000001"
+	const nestedTopic = "00000000-0000-4000-8000-000000000002"
 	standalone := uuid.NewString()
 	fallback := uuid.NewString()
+	nestedMembership := uuid.NewString()
+	nestedFingerprint := "sha256:" + strings.Repeat("c", 64)
 	require.NoError(t, execPostgresTxMode(ctx, db, "system", func(tx *sql.Tx) error {
 		writeTopic := func(id, key, declared string, version int) error {
 			if _, err := tx.ExecContext(ctx, `SELECT dense_mem_insert_topic_revision($1,$2,$3,$4,jsonb_build_object(
@@ -112,7 +115,23 @@ func testTopicStorageUpgrade(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		return writeTopic(parent, "earlier-automatic-parent", "", 2)
+		if err := writeTopic(parent, "earlier-automatic-parent", "", 2); err != nil {
+			return err
+		}
+		if err := writeTopic(nestedTopic, "nested-membership-topic", parent, 1); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `SELECT dense_mem_insert_topic_revision($1,$2,$3,$4,jsonb_build_object(
+            'id',$5::uuid,'version',1,'kind','assignment','retired',false,'fingerprint',$9::text,
+            'assignment',jsonb_build_object('source',jsonb_build_object('kind','evidence','id',$6::uuid,'version',1),'definition_id',$7::uuid),
+            'dependencies',jsonb_build_array(jsonb_build_object('id',$8::uuid,'version',2),jsonb_build_object('id',$7::uuid,'version',1)),
+            'sources',jsonb_build_array(jsonb_build_object('kind','evidence','id',$6::uuid,'version',1,'fingerprint',$9::text))))`,
+			fixture.team, fixture.space, fixture.generation, publication, nestedMembership, fixture.evidence, nestedTopic, parent, nestedFingerprint); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO topic_record_heads(team_id,shared_space_id,space_generation,record_id,version,kind,retired)
+            VALUES($1,$2,$3,$4,1,'assignment',false)`, fixture.team, fixture.space, fixture.generation, nestedMembership)
+		return err
 	}))
 
 	interruptedRelational, stopRelational := context.WithCancel(ctx)
@@ -145,6 +164,15 @@ func testTopicStorageUpgrade(t *testing.T) {
 		}
 		require.Equal(t, topic, parentID.String)
 		require.Equal(t, "declared", placement)
+		var membershipVersion int64
+		var fingerprint string
+		if err := tx.QueryRowContext(ctx, `SELECT topic_version,source_fingerprint FROM topic_memberships
+            WHERE team_id=$1 AND shared_space_id=$2 AND space_generation=$3 AND record_id=$4 AND topic_id=$5 AND evidence_id=$6`,
+			fixture.team, fixture.space, fixture.generation, nestedMembership, nestedTopic, fixture.evidence).Scan(&membershipVersion, &fingerprint); err != nil {
+			return err
+		}
+		require.EqualValues(t, 1, membershipVersion)
+		require.Equal(t, nestedFingerprint, fingerprint)
 		return nil
 	}))
 	require.NoError(t, ValidateStartupMigrationState(ctx, db, MigrationsDir()))

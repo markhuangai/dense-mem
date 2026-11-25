@@ -83,7 +83,7 @@ func (s *Store) ClaimCommunity(ctx context.Context, turn topic.MaintenanceTurn, 
 		for _, candidate := range input.Candidates {
 			ids = append(ids, candidate.ID)
 		}
-		input.EndpointVersions, err = topicEndpointVersions(tx, fence, ids)
+		input.EndpointVersions, err = topicEndpointVersions(tx, fence, ids, false)
 		return err
 	})
 	if err != nil || input == nil {
@@ -139,7 +139,7 @@ func (s *Store) CompleteCommunity(ctx context.Context, claim topic.MaintenanceCl
 			parentVersion = versions[outcome.ParentID]
 			ids = append(ids, outcome.ParentID)
 		}
-		current, err := topicEndpointVersions(tx, fence, ids)
+		current, err := topicEndpointVersions(tx, fence, ids, true)
 		if err != nil {
 			return err
 		}
@@ -201,10 +201,14 @@ func (s *Store) CompleteCommunity(ctx context.Context, claim topic.MaintenanceCl
 
 type communityEdge struct{ TopicID, ParentID string }
 
-func topicEndpointVersions(tx *gorm.DB, fence scope, ids []string) (map[string]int64, error) {
-	rows, err := tx.Raw(`SELECT topic_id::text,version FROM topics
+func topicEndpointVersions(tx *gorm.DB, fence scope, ids []string, lock bool) (map[string]int64, error) {
+	query := `SELECT topic_id::text,version FROM topics
         WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?
-            AND topic_id=ANY(?::uuid[]) AND NOT retired ORDER BY topic_id`,
+            AND topic_id=ANY(?::uuid[]) AND NOT retired ORDER BY topic_id`
+	if lock {
+		query += ` FOR NO KEY UPDATE`
+	}
+	rows, err := tx.Raw(query,
 		fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(ids)).Rows()
 	if err != nil {
 		return nil, err

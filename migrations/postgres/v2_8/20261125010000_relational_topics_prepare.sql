@@ -145,7 +145,9 @@ BEGIN
             'placement',COALESCE(selected.status,'declared'));
     WHEN 'assignment' THEN
         value := jsonb_build_object('evidence_id',head.evidence_id,'topic_id',head.topic_id,
-            'topic_version',COALESCE((body#>>'{dependencies,0,version}')::bigint,0),
+            'topic_version',COALESCE((SELECT (dependency->>'version')::bigint
+                FROM jsonb_array_elements(NULLIF(body->'dependencies','null'::jsonb)) AS dependency
+                WHERE dependency->>'id'=head.topic_id::text),0),
             'source_fingerprint',COALESCE(body#>>'{sources,0,fingerprint}',''));
     WHEN 'evidence_group' THEN
         value := jsonb_build_object('members',(SELECT jsonb_agg(member->>'id' ORDER BY member->>'id')
