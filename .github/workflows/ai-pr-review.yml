@@ -338,7 +338,7 @@ jobs:
           ai-base-url: ${{ secrets.AI_ENDPOINT }}
           ai-secret: ${{ secrets.LOCAL_AI_SECRET }}
           model: auto
-          effort: xhigh
+          effort: medium
           parallel-count: "6"
           max-turns: "200"
           auto-approve: "false"
