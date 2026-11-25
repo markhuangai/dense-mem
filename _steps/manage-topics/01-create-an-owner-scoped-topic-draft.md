@@ -2,13 +2,13 @@
 workflow: "manage-topics"
 order: 1
 anchor: "create-an-owner-scoped-topic-draft"
-title: "Create an owner-scoped topic draft"
-chapter: "Draft"
-figure: "Review and publish topic changes"
-caption: "A draft holds proposed organizational changes."
+title: "Edit a Topic"
+chapter: "Edit"
+figure: "Save Topic changes"
+caption: "Select a current definition or create a Topic."
 guide: "/Topics-And-Organization/#manager-workflow"
 question: "Inspect this step"
-details: ["Choose an optional broader Topic for browsing. The Topic filter selects direct members."]
+details: ["Choose an optional parent for browsing. A Topic filter follows direct members."]
 ---
 
-Open Topics in the team portal as an authorized manager. Draft a Topic definition using the current catalog revision.
+Open Topics in the team portal as an authorized manager. Edit the definition and add the change.

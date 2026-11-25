@@ -7,7 +7,7 @@ workflows: ["manage-topics", "evidence", "diagnose"]
 
 # Topics And Organization
 
-Topics organize eligible team-shared Evidence. These routes and settings describe source behavior for the Topic assignment and Community placement release. Use the documentation for your installed image to verify deployment availability.
+Topics organize eligible team-shared Evidence. The editor and storage behavior below describes the relational Topics source. Check the revision of your installed image for availability. [Relational Topics and Offline Upgrades](https://github.com/markhuangai/dense-mem/blob/8b94038237b7291fe5b1eb97958fa7b4cf4c3175/adr/0021-relational-topics-and-offline-upgrades.md)
 
 ## Organization Boundary
 
@@ -55,9 +55,9 @@ Maintenance uses bounded scheduling, concurrency, provider backoff, and complete
 
 ## Topic Storage Upgrade
 
-The startup migration preserves existing Topic IDs, revisions, direct memberships, Evidence equivalence, Community hierarchy, and frozen receipts. It moves eight maintenance settings to their new keys. Historical override records remain readable in publication history. Previously published associations are retained at cutover and follow ordinary eligibility and reassessment after startup.
+Current Topics, direct memberships, and equivalences use scoped relational records. The upgrade keeps Topic IDs and earlier versions, declared parents, placement outcomes, and committed receipts. It uses the newest still-current settled placement, including standalone. A Topic with no current settled placement uses its declared parent.
 
-Before upgrading, stop incompatible writers and verify a restorable PostgreSQL backup. The compatible application finishes the migration before opening listeners. See [Operations Runbook]({{ '/Operations-Runbook/#topic-storage-upgrade' | relative_url }}).
+Follow the offline [upgrade procedure]({{ '/Operations-Runbook/#topic-storage-upgrade' | relative_url }}).
 
 ## Evidence-Only Cutover
 
@@ -75,24 +75,19 @@ Rebuilding after the earlier Evidence-only reset runs after startup when mainten
 
 ## Manager Workflow
 
-Managers use **Topics** in the team portal. Inspection requires read access. Saving and publication commands require write access. Drafts belong to their creator.
+Managers open **Topics** in the team portal. The catalog and history require read access. Editing requires write access.
 
 ```mermaid
 %%{init: {"flowchart": {"curve": "linear"}}}%%
 flowchart LR
-  Inspect["Inspect catalog"] --> Draft["Edit and save draft"]
-  Draft --> Preview["Read-only preview"]
-  Preview --> Publish["Publish + audit"]
-  Publish --> Maintenance["Reassess sources"]
-  Publish --> Rollback["Append rollback"]
+  Inspect["Inspect current Topic"] --> Edit["Add definition changes"]
+  Edit --> Save["Save with reason"]
+  Save --> History["Record revision and audit"]
+  Save --> Maintenance["Reassess affected memberships"]
 ```
 
-| Operation | Constraint |
-| --- | --- |
-| Define a Topic | Active optional parent within a 32-link hierarchy without cycles. |
-| Preview | Uses publication validation and reports bounded examples and affected-source counts. |
-| Publish / rollback | Rechecks versions and eligibility. Commits revision, audit, receipt, and draft completion together. |
+Select **New topic** or edit an existing Topic. Set its label, description, aliases, and optional parent. Add the changes, enter a reason, and select **Save**. The portal sends the bounded list to `POST /ui/api/topics/edits` with an operation key and the expected version of each record. Changes take effect when the save completes. The scheduler can revisit affected memberships on its normal cadence.
 
-The editor supports Topic definitions and their optional broader Topic. Remove retired edits from a historical draft before reuse. A stale draft stays open so the manager can refresh its versions and review it again.
+On a 409, refresh the records and review the current values before applying changes again. The original owner can inspect a migrated draft in **History**. Authorized exact replays of previously committed legacy commands still return their recorded results.
 
-First-party management interfaces are under `/ui/api/topics`. See [Portals And API Keys]({{ '/Portals-And-API-Keys/' | relative_url }}) for access and [Telemetry]({{ '/Telemetry/' | relative_url }}) for diagnostics.
+See [Portals And API Keys]({{ '/Portals-And-API-Keys/' | relative_url }}) for access and [Telemetry]({{ '/Telemetry/' | relative_url }}) for diagnostics.

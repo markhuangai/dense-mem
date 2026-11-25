@@ -96,8 +96,8 @@
     "lesson": "/learn/verify-a-change/"
   },
   "manage-topics": {
-    "title": "Review and publish topic changes",
-    "description": "Follow a team manager’s draft from preview through publication and recovery.",
+    "title": "Save Topic changes",
+    "description": "A team manager edits a Topic, saves the change, and checks its direct members.",
     "url": "/walkthroughs/manage-topics/",
     "lesson": "/learn/portal-topics/"
   },
