@@ -146,7 +146,7 @@ func TestActualConsoleCaptureProtectsCredentialsAndPreservesAdmittedText(t *test
 	os.Stdout = write
 	protector := NewRunnerCredentialProtector(secrets...)
 	logger := observability.NewWithProtector(slog.LevelDebug, protector)
-	capture := &Capture{Logger: logger.ContextSlog(), Protector: protector, RunID: "console-protection"}
+	capture := NewConsoleCapture(write, logger.ContextSlog(), protector, "console-protection")
 	emitErr := capture.Emit("started", map[string]any{"admitted": "public benchmark text; password is a normal field name", "password": "ordinary public text", "public_hex": "deadbeef", "operational": secrets, "encoded": encoded})
 	logger.ErrorContext(context.Background(), "dependency_failed", &HTTPStatusError{StatusCode: 503})
 	require.NoError(t, write.Close())
@@ -180,6 +180,71 @@ func TestActualConsoleCaptureProtectsCredentialsAndPreservesAdmittedText(t *test
 	require.NotContains(t, string(data), "provider_url")
 	require.Contains(t, string(data), "selected-model")
 	require.Contains(t, string(data), "text-embedding-3-small")
+}
+
+const runnerCaptureCanary = "answer-provider-credential-canary-832"
+
+func newRunnerCaptureFixture(writer io.Writer, runID string) *Capture {
+	protector := NewRunnerCredentialProtector(runnerCaptureCanary, "embedding-canary-key", "https://answer-canary.example/v1",
+		"https://embedding-canary.example/v1", "https://answer-canary.example/v1", "https://embedding-canary.example/v1",
+		"mcp-credential-canary", "control-credential-canary", "database-credential-canary",
+		"postgres://densemem:database-credential-canary@postgres/densemem")
+	logger := observability.NewConsoleWithProtector(slog.LevelDebug, protector, writer)
+	return NewConsoleCapture(writer, logger.ContextSlog(), protector, runID)
+}
+
+func largeAnswerRequest() string {
+	admitted := strings.Repeat(`{\"question\":\"A public question?\",\"content\":\"Public text.\\nPreserve password and token fields.\"}`, 2430)
+	return `{"messages":[{"role":"user","content":"` + admitted + `"}]}`
+}
+
+func TestActualConsoleCaptureReconstructsLargeAnswerAndQueuedCredentials(t *testing.T) {
+	var output bytes.Buffer
+	capture := newRunnerCaptureFixture(&output, "runner-832")
+	ctx, cancel := context.WithCancel(observability.WithAuthenticationSecrets(t.Context(), "presented-credential-canary-832"))
+	defer cancel()
+	capture.startQueue(cancel)
+	request := largeAnswerRequest()
+	require.Greater(t, len(request), 240_000)
+	require.NoError(t, capture.EmitContext(ctx, "answer_wire_request", map[string]string{
+		"body": request, "authorization": runnerCaptureCanary, "presented": "presented-credential-canary-832",
+	}))
+	require.NoError(t, capture.finishQueue(ctx))
+	events := capturedEvents(t, output.Bytes())
+	require.Len(t, events, 1)
+	require.Equal(t, "answer_wire_request", events[0].Kind)
+	var result map[string]string
+	require.NoError(t, json.Unmarshal(events[0].Payload, &result))
+	require.Equal(t, request, result["body"])
+	require.Equal(t, observability.CredentialProtectionRedacted, result["authorization"])
+	require.Equal(t, observability.CredentialProtectionRedacted, result["presented"])
+	require.NotContains(t, output.String(), runnerCaptureCanary)
+	require.NotContains(t, output.String(), "presented-credential-canary-832")
+}
+
+func TestActualConsoleCaptureFailsClosedForMetadataAndSink(t *testing.T) {
+	var output bytes.Buffer
+	capture := newRunnerCaptureFixture(&output, runnerCaptureCanary)
+	require.ErrorContains(t, capture.Emit("started", "public"), "payload protection unavailable")
+	require.NotContains(t, output.String(), runnerCaptureCanary)
+	require.Contains(t, output.String(), "eval_capture_unavailable")
+	require.Equal(t, "formatting_failed", capture.FirstFailure().Reason)
+	capture = newRunnerCaptureFixture(failedCaptureWriter{}, "runner-832")
+	require.ErrorContains(t, capture.Emit("started", "public"), "console write failed")
+	require.Equal(t, "console_write_failed", capture.FirstFailure().Reason)
+}
+
+func BenchmarkRunnerCapture(b *testing.B) {
+	capture := newRunnerCaptureFixture(io.Discard, "runner-832")
+	body := largeAnswerRequest()
+	payload := map[string]string{"body": body, "authorization": runnerCaptureCanary}
+	b.SetBytes(int64(len(body)))
+	b.ReportAllocs()
+	for b.Loop() {
+		if err := capture.Emit("answer_wire_request", payload); err != nil {
+			b.Fatal(err)
+		}
+	}
 }
 
 func TestRunnerCaptureRejectsOversizedEncodedCredentials(t *testing.T) {

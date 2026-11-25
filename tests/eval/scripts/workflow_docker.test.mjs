@@ -4,7 +4,8 @@ import fs from "node:fs";
 import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { requireRunner } from "../../../.github/scripts/evaluation-policy.mjs";
@@ -199,18 +200,32 @@ wait "$pid"
     if (verified) {
       await runBinary("run", runRuntime, environment);
     } else {
-      const cutoff = new AbortController();
-      const run = runBinary("run", runRuntime, environment, cutoff.signal).then(() => ({}), (error) => ({ error }));
+      const module = new URL("./workflow.mjs", import.meta.url).href;
+      const child = spawn(process.execPath, ["--input-type=module", "-e", `
+        import { runBinary, withScoringSignals } from ${JSON.stringify(module)};
+        const runtime = JSON.parse(process.env.EVAL_FIXTURE_RUNTIME);
+        delete process.env.EVAL_FIXTURE_RUNTIME;
+        await withScoringSignals((signal) => runBinary("run", runtime, process.env, signal)).catch((error) => {
+          process.stderr.write(error.message);
+          process.exitCode = 1;
+        });
+      `], { env: { ...environment, EVAL_FIXTURE_RUNTIME: JSON.stringify(runRuntime) }, stdio: ["ignore", "pipe", "pipe"] });
+      let messages = "";
+      child.stderr.on("data", (data) => { messages += data; });
+      child.stdout.on("data", (data) => { messages += data; });
+      const run = once(child, "close");
       let outcome;
       try {
         while (!(unfinishedRequests && fs.existsSync(output) && fs.readFileSync(output, "utf8").includes('"kind":"observation"'))) {
           assert.equal(await Promise.race([run, delay(100)]), undefined, "runner must enter the intended scoring state before cutoff");
         }
       } finally {
-        cutoff.abort();
+        child.kill("SIGTERM");
         outcome = await run;
       }
-      assert.match(outcome.error?.message ?? "", /Runner binary operation failed/);
+      assert.deepEqual(outcome, [1, null]);
+      assert.match(messages, /"cause":"external_signal","signal":"SIGTERM"/);
+      assert.match(messages, /Runner binary operation failed/);
     }
     const report = JSON.parse(fs.readFileSync(path.join(runtime.manifest.output_dir, "scores.json"), "utf8"));
     const console = fs.readFileSync(output, "utf8");
@@ -232,6 +247,10 @@ wait "$pid"
       assert.equal(report.capture_complete, true);
       assert.equal(report.completed_answers, 2);
       const records = console.split("\n").filter((line) => line.startsWith("{")).map(JSON.parse);
+      const final = records.find((record) => record.msg === "eval_dataset_outcome");
+      assert.equal(final?.completed_answers, 2);
+      assert.equal(final?.capture_complete, true);
+      assert.ok(Number.isFinite(final?.timings_ms?.runtime_log_capture));
       const terminal = records.find(({ kind, payload }) => kind === "answer_wire_unavailable" && payload?.state === "no_response");
       assert.ok(terminal, "cutoff must preserve the explicit no-response outcome");
       assert.ok(records.some(({ kind, payload }) => kind === "answer_response" && payload.operation_id === terminal.payload.operation_id &&
@@ -249,6 +268,18 @@ wait "$pid"
       });
       assert.ok(decoded.some(({ exchange_id, operation_id, attempt }) => exchange_id === terminal.payload.exchange_id &&
         operation_id === terminal.payload.operation_id && attempt === terminal.payload.attempt), "wire request and terminal must share an exchange and attempt");
+      const scores = path.join(runtime.manifest.output_dir, "scores.json");
+      fs.unlinkSync(scores);
+      await main("recover", runEnv);
+      const recoveredText = fs.readFileSync(scores, "utf8");
+      const recovered = JSON.parse(recoveredText);
+      assert.equal(recovered.completed_answers, report.completed_answers);
+      assert.equal(recovered.expected_answers, report.expected_answers);
+      assert.equal(recovered.complete, false);
+      assert.equal(recovered.capture_complete, false);
+      assert.deepEqual(recovered.identity, report.identity);
+      await main("recover", { ...runEnv, EVAL_RUNNER_BINARY: path.join(fixture, "missing-binary") });
+      assert.equal(fs.readFileSync(scores, "utf8"), recoveredText);
     }
     await cleanup(runEnv, { scoring: true });
     const receipt = JSON.parse(fs.readFileSync(path.join(runtime.manifest.output_dir, "cleanup.json"), "utf8"));

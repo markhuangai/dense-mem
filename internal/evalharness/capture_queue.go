@@ -38,7 +38,7 @@ func (c *Capture) startQueue(cancelWork context.CancelFunc) {
 				continue
 			}
 			started := time.Now()
-			err := c.emit(q.ctx, event.phase, event.Kind, event.Payload)
+			err := c.emit(event.context, event.phase, event.Kind, event.Payload)
 			q.sinkNS.Add(time.Since(started).Nanoseconds())
 			q.bytes.Release(int64(len(event.Payload)))
 			if err == nil && event.Kind == "condition_finished" {

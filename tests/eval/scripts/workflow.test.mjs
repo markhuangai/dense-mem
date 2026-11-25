@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -336,6 +337,10 @@ test("runner workflow reserves shutdown time, retains numeric artifacts and aggr
   const deadline = datasets.steps.find((step) => step.name === "Freeze model deadline").run;
   assert.match(deadline, /minutes=330/);
   assert.ok(datasets.steps.filter((step) => step.uses?.startsWith("actions/upload-artifact@")).every((step) => step.with["retention-days"] === 2));
+  const recovery = runStep(datasets, "node tests/eval/scripts/workflow.mjs recover");
+  assert.equal(recovery.if, "always()");
+  assert.ok(datasets.steps.indexOf(recovery) < datasets.steps.findIndex((step) => step.name === "Remove this job's runtime"));
+  assert.ok(datasets.steps.indexOf(recovery) < datasets.steps.findIndex((step) => step.uses?.startsWith("actions/upload-artifact@")));
   assert.equal(runStep(datasets, "node --test tests/eval/scripts/workflow_docker.test.mjs").if, "inputs.mode == 'fixtures'");
   assert.match(workflowJob(workflow, "aggregate").if, /always/);
   const caller = await readWorkflow("production-image-e2e.yml");
@@ -418,7 +423,12 @@ function frozenReport({ id, questions, corpus }) {
       embedding_dimensions: 1536, context_window_tokens: 500000, scoring_policy: "fixture" },
     corpus_rows: corpus.rows, restored_rows: corpus.rows, expected_answers: questions.rows * 2, completed_answers: questions.rows * 2,
     complete: true, capture_complete: true, owned_cleanup: true, model_verified_before_cutoff: true,
-    comparison_matrix: ["single", "multi_turn"].map((policy) => ({ policy, condition: "off", expected: questions.rows, completed: questions.rows })),
+    timings_ms: { ontology_off_scoring: 7000, capture_sink_ms: 80, runtime_log_capture: 2700 },
+    comparison_matrix: ["single", "multi_turn"].map((policy) => ({
+      policy, condition: "off", expected: questions.rows, completed: questions.rows, failed: 0, missing: 0,
+      mean: { recall_at_1: 0.5, recall_at_5: 0.6, recall_at_10: 0.7, exact_match: 0.3, f1: 0.4, cited_gold_source_coverage: 0.2 },
+      all_support_recovery_rate: 0.25, reported_input_tokens: 3000, reported_output_tokens: 2000, reported_total_tokens: 5000,
+    })),
   };
 }
 
@@ -444,6 +454,7 @@ test("a complete single-dataset run keeps its actual denominator and proves clea
   assert.equal(result.expected_answers, 2000);
   assert.equal(result.completed_answers, 2000);
   assert.deepEqual(result.datasets.map(({ dataset }) => dataset), ["hotpotqa"]);
+  assert.match(fs.readFileSync(env.GITHUB_STEP_SUMMARY, "utf8"), /hotpotqa \| single \| Complete \| 1,000 \/ 1,000/);
   fs.writeFileSync(cleanupReceipt, "{");
   await main("aggregate", env);
   const incomplete = JSON.parse(fs.readFileSync(resultPath));
@@ -451,6 +462,133 @@ test("a complete single-dataset run keeps its actual denominator and proves clea
   assert.equal(incomplete.completed_answers, 2000);
   assert.equal(incomplete.datasets[0].owned_cleanup, false);
   assert.equal(process.exitCode, 1);
+});
+
+test("aggregate renders and publishes output only for a verified complete public campaign", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "evaluation-full-summary-"));
+  const originalCode = process.exitCode;
+  t.after(() => { fs.rmSync(directory, { recursive: true, force: true }); process.exitCode = originalCode; });
+  const inputs = { ...hostedTest, EVAL_MODE: "live", RUNNER_TEMP: directory,
+    EVAL_SOURCE_REVISION: campaign.source, EVAL_IMAGE: campaign.image, EVAL_ANSWER_WORKERS: "10",
+    EVAL_PINNED_SEEDS: JSON.stringify(Object.fromEntries(registry.datasets.map(({ id }) => [id, { image: seedPin }]))),
+    GITHUB_STEP_SUMMARY: path.join(directory, "summary"), GITHUB_OUTPUT: path.join(directory, "output"),
+  };
+  const work = path.join(directory, "evaluation-reports");
+  for (const [index, row] of registry.datasets.entries()) {
+    const folder = path.join(work, `evaluation-${row.id}-off`);
+    fs.mkdirSync(folder, { recursive: true });
+    const result = frozenReport(row);
+    fs.writeFileSync(path.join(folder, "cleanup.json"), JSON.stringify({ run_id: result.identity.run_id, complete: true }));
+    if (index === 0) {
+      result.capture_complete = false;
+      result.capture_failure = { phase: "log capture", kind: "runtime_log", sequence: 37, reason: "enqueue_interrupted" };
+    }
+    if (index !== 1) fs.writeFileSync(path.join(folder, "scores.json"), JSON.stringify(result));
+  }
+  await main("aggregate", inputs);
+  const summary = fs.readFileSync(inputs.GITHUB_STEP_SUMMARY, "utf8");
+  assert.match(summary, /completed 8000\/10000 answers/);
+  assert.match(summary, /hotpotqa \| single \| Incomplete \| 1,000 \/ 1,000/);
+  assert.match(summary, /musique \| multi_turn \| Unavailable \| 0 \/ 1,000/);
+  assert.match(summary, /verification, capture or cleanup incomplete/);
+  assert.match(summary, /phase log capture, record runtime_log, sequence 37, reason enqueue_interrupted/);
+  assert.match(summary, /50\.00%.*60\.00%.*70\.00%.*3,000 \/ 2,000 \/ 5,000/);
+  assert.match(summary, /hotpotqa \| 7\.00 \| 0\.08 \| 2\.70/);
+  assert.equal(fs.existsSync(inputs.GITHUB_OUTPUT), false);
+  for (const row of registry.datasets.slice(0, 2)) {
+    fs.writeFileSync(path.join(work, `evaluation-${row.id}-off`, "scores.json"), JSON.stringify(frozenReport(row)));
+  }
+  fs.writeFileSync(inputs.GITHUB_STEP_SUMMARY, "");
+  await main("aggregate", inputs);
+  const receipt = JSON.parse(fs.readFileSync(inputs.GITHUB_OUTPUT, "utf8").trim().slice("complete_report=".length));
+  assert.equal(receipt.source, campaign.source);
+  assert.equal(receipt.image, campaign.image);
+  assert.equal(receipt.datasets, 5);
+  assert.equal(receipt.answers, 10000);
+  assert.equal(receipt.markdown, fs.readFileSync(inputs.GITHUB_STEP_SUMMARY, "utf8"));
+  assert.match(receipt.markdown, /completed 10000\/10000 answers\. The run passed/);
+});
+
+test("production report summary shows evaluation status and propagates failure", async (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "production-summary-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const caller = await readWorkflow("production-image-e2e.yml");
+  const script = workflowJob(caller, "report").steps[0].run;
+  const summary = path.join(directory, "summary");
+  for (const [mode, result] of [["live", "failure"], ["fixtures", "success"], ["none", "success"]]) {
+    fs.writeFileSync(summary, "");
+    const execution = spawnSync("bash", ["-c", script], { encoding: "utf8", env: {
+      ...process.env, GITHUB_STEP_SUMMARY: summary, AUTH_RESULT: "success", EVENT_NAME: "workflow_dispatch",
+      PRECHECK_RESULT: "success", DATABASE_PRECHECK_RESULT: "success", SCENARIO_RESULT: "success", CI_TRIAL_RESULT: "success",
+      EVALUATION_MODE: mode, EVALUATION_RESULT: result, IMAGE: pinnedImage, SOURCE_REVISION: revision,
+    } });
+    assert.equal(execution.status, result === "success" ? 0 : 1, execution.stderr);
+    const rendered = fs.readFileSync(summary, "utf8");
+    if (mode === "none") assert.match(rendered, /Scenario matrix \| success/);
+    else assert.ok(rendered.includes(`| Public RAG evaluation | ${result} |`));
+  }
+});
+
+test("only the complete own-PR workflow path can write and reconcile the evaluation comment", async () => {
+  const caller = await readWorkflow("production-image-e2e.yml");
+  const reusable = await readWorkflow("evaluation.yml");
+  const controller = await readWorkflow("pr-test-image.yml");
+  const job = workflowJob(caller, "evaluation-comment");
+  assert.deepEqual(job.permissions, { actions: "read", "pull-requests": "write" });
+  assert.deepEqual(job.needs, ["authorize", "evaluation"]);
+  assert.match(job.if, /github.event_name == 'workflow_dispatch'.*inputs.evaluation == 'live'/s);
+  for (const { id } of registry.datasets) assert.match(job.if, new RegExp(`inputs\\.run_${id}`));
+  assert.match(job.if, /needs\.evaluation\.result == 'success'/);
+  assert.ok(job.steps.every((step) => step.uses?.startsWith("actions/github-script@")));
+  for (const [definition, except] of [[caller, job], [reusable, null]]) {
+    for (const executable of Object.values(definition.jobs)) {
+      if (executable === except) continue;
+      assert.ok(Object.values(executable.permissions ?? definition.permissions).every((permission) => permission === "read"));
+    }
+  }
+  assert.equal(workflowJob(controller, "production-e2e").permissions["pull-requests"], "write");
+  const script = Object.getPrototypeOf(async function () {}).constructor("github", "context", "core", "process", job.steps[0].with.script);
+  const marker = "<!-- dense-mem-evaluation-v1:42 -->";
+  const comments = [{ id: 6, user: { login: "contributor" }, body: `${marker}\nCopied marker` }];
+  const artifacts = [{ id: 63, name: "evaluation-comparison", expired: false }];
+  const author = "authorized-admin";
+  const branch = "fix/evaluation";
+  const context = { eventName: "workflow_dispatch", runAttempt: 1, runId: 42, actor: author, sha: revision,
+    ref: `refs/heads/${branch}`, repo: { owner: "markhuangai", repo: "dense-mem" }, serverUrl: "https://github.com" };
+  const pull = { state: "open", draft: false, user: { login: author }, base: { ref: "main" }, head: { ref: branch, sha: revision, repo: { full_name: repository } } };
+  const receipt = { run_id: "42", source: revision, image: pinnedImage, datasets: 5, answers: 10_000, markdown: "| Scores | 10,000 |\n" };
+  const env = { INPUT_PR: "832", EVAL_SOURCE: revision, EVAL_IMAGE: pinnedImage, EVAL_ARTIFACT_ID: "63", EVAL_REPORT: JSON.stringify(receipt) };
+  const github = { paginate: (method, input) => method(input), rest: {
+    actions: { listWorkflowRunArtifacts: ({ run_id }) => { assert.equal(run_id, 42); return artifacts; } },
+    pulls: { get: () => ({ data: pull }) },
+    issues: {
+      listComments: ({ issue_number }) => { assert.equal(issue_number, 832); return comments; },
+      createComment: ({ issue_number, body }) => {
+        assert.equal(issue_number, 832);
+        const created = { id: 9, body, user: { login: "github-actions[bot]" }, html_url: "comment-link" };
+        comments.push(created);
+        return { data: created };
+      },
+      updateComment: ({ comment_id, body }) => { comments.find((item) => item.id === comment_id).body = body; },
+      getComment: ({ comment_id }) => ({ data: comments.find((item) => item.id === comment_id) }),
+    },
+  } };
+  const run = (overrides = {}) => script(github, context, { notice: (url) => assert.equal(url, "comment-link") }, { env: { ...env, ...overrides } });
+  await assert.rejects(run({ EVAL_REPORT: "" }), /invalid completed evaluation receipt/);
+  await assert.rejects(run({ EVAL_REPORT: JSON.stringify({ ...receipt, answers: 9999 }) }), /authorized full campaign/);
+  await assert.rejects(run({ EVAL_ARTIFACT_ID: "7" }), /artifact is unavailable/);
+  pull.head.sha = "f".repeat(40);
+  await assert.rejects(run(), /no longer the authorized head/);
+  assert.equal(comments.length, 1);
+  pull.head.sha = revision;
+  await run();
+  await run();
+  assert.equal(comments.length, 2);
+  assert.match(comments[1].body, /Scores.*10,000/);
+  assert.match(comments[1].body, /actions\/runs\/42\/artifacts\/63/);
+  await run({ EVAL_REPORT: JSON.stringify({ ...receipt, markdown: "Reconciled metric table" }) });
+  assert.equal(comments.length, 2);
+  assert.match(comments[1].body, /Reconciled metric table/);
 });
 
 test("a failed or missing dataset preserves a frozen denominator and other scores", () => {

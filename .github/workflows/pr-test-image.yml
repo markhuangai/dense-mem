@@ -580,7 +580,7 @@ jobs:
       contents: read
       issues: read
       packages: read
-      pull-requests: read
+      pull-requests: write
       statuses: read
     uses: ./.github/workflows/production-image-e2e.yml
     with:

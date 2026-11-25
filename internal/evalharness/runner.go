@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -129,8 +130,30 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 		if err := FinalizeReport(&report); err != nil {
 			runErr = errors.Join(runErr, err)
 		}
-		if err := writeJSON(filepath.Join(manifest.OutputDir, "scores.json"), report); err != nil {
+		if err := writeScoreFile(filepath.Join(manifest.OutputDir, "scores.json"), report); err != nil {
 			runErr = errors.Join(runErr, err)
+			report.Complete = false
+		}
+		if logger := client.Capture.Logger; logger != nil {
+			level := slog.LevelInfo
+			if runErr != nil || !report.Complete {
+				level = slog.LevelError
+			}
+			fields := []slog.Attr{
+				slog.String("run_id", manifest.RunID), slog.String("dataset", manifest.Dataset),
+				slog.Int("completed_answers", report.CompletedAnswers), slog.Int("expected_answers", report.ExpectedAnswers),
+				slog.Bool("model_verified_before_cutoff", report.ModelVerified), slog.Bool("capture_complete", report.CaptureComplete),
+				slog.Bool("complete", report.Complete), slog.Any("timings_ms", report.Timings),
+			}
+			if runErr != nil {
+				fields = append(fields, slog.String("failure", report.Failure), slog.Any("error", runErr))
+			}
+			if failure := report.CaptureFailure; failure != nil {
+				fields = append(fields, slog.Group("capture_failure", "phase", failure.Phase, "kind", failure.Kind,
+					"sequence", failure.Sequence, "reason", failure.Reason, "bytes", failure.Bytes,
+					"protection", failure.Protection, "source", failure.Source, "exchange_id", failure.ExchangeID))
+			}
+			logger.LogAttrs(context.WithoutCancel(ctx), level, "eval_dataset_outcome", fields...)
 		}
 	}()
 	if err := client.Capture.emit(work, stage, "started", manifest); err != nil {
@@ -144,16 +167,23 @@ func Run(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions 
 	report.Identity.SeedImage = manifest.SeedImage
 	report.Identity.SeedRelease = seed.BaseRelease
 	report.Identity.SeedPreparationWorkers = seed.ImportWorkers
-	if err = client.Capture.EmitContext(work, "seed_verified", map[string]any{"seed_image": manifest.SeedImage, "corpus_rows": len(mapping.BySourceDocID), "canonical_evidence": len(canonical)}); err != nil {
+	if err = client.Capture.EmitContext(work, "seed_verified", map[string]any{"seed_image": manifest.SeedImage, "corpus_rows": len(mapping.BySourceDocID), "canonical_evidence": len(canonical), "scope": native.Scope}); err != nil {
 		return report, err
 	}
 	report.Identity.CanonicalHash = initial.CanonicalHash
 	initial.ProviderAttempts = nil
 	report.NativeMeasurements = append(report.NativeMeasurements, initial)
 	pausedAndDrained = true
+	checkpoint, err := newScoreCheckpoint(manifest.OutputDir, report)
+	if err != nil {
+		stage = "score checkpoint"
+		return report, fmt.Errorf("initialize evaluation score checkpoint: %w", err)
+	}
+	client.Capture.checkpoint.Store(checkpoint)
+	client.Capture.saveCheckpointFailure(client.Capture.FirstFailure())
 	advance("ontology off", "ontology_off_scoring")
 	scoringStarted = phaseStarted
-	report.Scores, err = runCondition(work, manifest, corpus, questions, mapping, canonical, client, transport)
+	report.Scores, err = runCondition(work, manifest, corpus, questions, mapping, canonical, client, transport, checkpoint)
 	native.RequireRuntimeUsage = len(report.Scores) != 0
 	if err != nil {
 		return report, err
@@ -179,7 +209,7 @@ func elapsedMS(started time.Time) float64 {
 	return float64(time.Since(started)) / float64(time.Millisecond)
 }
 
-func runCondition(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions []Question, mapping KnowledgeMapping, canonical map[string]CanonicalEvidence, client *HTTPClient, transport modelprovider.StructuredTransport) ([]CaseScore, error) {
+func runCondition(ctx context.Context, manifest Manifest, corpus []CorpusItem, questions []Question, mapping KnowledgeMapping, canonical map[string]CanonicalEvidence, client *HTTPClient, transport modelprovider.StructuredTransport, checkpoint *scoreCheckpoint) ([]CaseScore, error) {
 	const condition = scoringCondition
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -195,50 +225,67 @@ func runCondition(ctx context.Context, manifest Manifest, corpus []CorpusItem, q
 	for _, item := range corpus {
 		bySource[item.SourceDocID] = item
 	}
-	jobs := make(chan Question)
+	jobs := make(chan int)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var scores []CaseScore
 	var first error
 	var progressWriter sync.Mutex
 	lastProgress := time.Now()
+	fail := func(err error) {
+		mu.Lock()
+		if first == nil {
+			first = err
+		}
+		mu.Unlock()
+		cancel()
+	}
 	for range manifest.effectiveAnswerWorkers() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for question := range jobs {
+			for ordinal := range jobs {
+				question := questions[ordinal]
 				initial := memoryCall(ctx, client, "recall_memory", map[string]any{"query": question.Query, "limit": 10, "topic_limit": 3})
 				if err := validateInitial(initial); err != nil {
 					initial.Error = err.Error()
 				}
 				observation := Observation{QuestionID: question.ID, Condition: condition, Initial: initial, Hosts: []HostResult{}}
 				if err := client.Capture.EmitContext(ctx, "initial_recall", map[string]any{"question_id": question.ID, "condition": condition, "call": initial}); err != nil {
-					mu.Lock()
-					if first == nil {
-						first = err
-					}
-					mu.Unlock()
-					cancel()
+					fail(err)
+					return
+				}
+				scorer, err := newAnswerScorer(question, observation, bySource, mapping, canonical)
+				if err != nil {
+					fail(err)
 					return
 				}
 				for _, policy := range policies {
-					observation.Hosts = append(observation.Hosts, RunHost(ctx, client, transport, manifest, HostQuestion{ID: question.ID, Query: question.Query}, initial, policy, condition))
-				}
-				measured, err := ScoreObservation(question, observation, bySource, mapping, canonical)
-				mu.Lock()
-				scores = append(scores, measured...)
-				completed := 0
-				for _, score := range measured {
-					if score.Completed {
-						completed++
+					if ctx.Err() != nil {
+						break
 					}
+					host := RunHost(ctx, client, transport, manifest, HostQuestion{ID: question.ID, Query: question.Query}, initial, policy, condition)
+					observation.Hosts = append(observation.Hosts, host)
+					score, err := scorer(host)
+					if err != nil {
+						fail(err)
+						break
+					}
+					if checkpoint != nil {
+						if err := checkpoint.save(ordinal, score); err != nil {
+							fail(fmt.Errorf("persist evaluation score checkpoint for question %d policy %s: %w", ordinal, policy, err))
+							break
+						}
+					}
+					mu.Lock()
+					scores = append(scores, score)
+					if score.Completed {
+						progress.Completed++
+					} else {
+						progress.Failed++
+					}
+					mu.Unlock()
 				}
-				progress.Completed += completed
-				progress.Failed += len(policies) - completed
-				if err != nil && first == nil {
-					first = err
-				}
-				mu.Unlock()
 				err = client.Capture.EmitTerminal(ctx, "observation", observationReceipt(observation))
 				// Workers can continue scoring while another worker publishes progress.
 				if err == nil && progressWriter.TryLock() {
@@ -252,20 +299,18 @@ func runCondition(ctx context.Context, manifest Manifest, corpus []CorpusItem, q
 					progressWriter.Unlock()
 				}
 				if err != nil {
-					mu.Lock()
-					if first == nil {
-						first = err
-					}
-					mu.Unlock()
-					cancel()
+					fail(err)
+				}
+				if ctx.Err() != nil {
+					return
 				}
 			}
 		}()
 	}
 schedule:
-	for _, question := range questions {
+	for ordinal := range questions {
 		select {
-		case jobs <- question:
+		case jobs <- ordinal:
 		case <-ctx.Done():
 			break schedule
 		}
