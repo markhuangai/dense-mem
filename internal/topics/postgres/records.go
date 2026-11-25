@@ -218,7 +218,7 @@ func (s *Store) currentView(tx *gorm.DB, fence scope, record topic.Record) (topi
 }
 
 func (s *Store) organizationViews(tx *gorm.DB, fence scope, records []topic.Record) ([]topic.RecordView, error) {
-	var result []topic.RecordView
+	result := make([]topic.RecordView, 0, len(records))
 	for len(records) > 0 {
 		count := min(topic.MaxOrganizationSources, len(records))
 		for {

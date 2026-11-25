@@ -127,6 +127,7 @@ test("manager saves with cookie authentication and reviews a real version confli
   const team = await createTeam(request);
   const manager = await createCredential(request, team, "manager");
   const member = await createCredential(request, team, "member");
+  expect(await readTopics(request, manager)).toEqual([]);
   const label = `Browser vocabulary ${randomUUID()}`;
   const reason = "Review browser vocabulary";
   await signIn(page, manager);
