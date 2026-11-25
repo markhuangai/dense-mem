@@ -704,7 +704,7 @@ func TestControlPortalMetricsErrors(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"status":"degraded"`)
 }
 
-func TestControlPortalTelemetryErrors(t *testing.T) {
+func TestControlPortalServicesErrors(t *testing.T) {
 	_, _, server := testControlServer(t)
 	req := httptest.NewRequest(http.MethodGet, "/control/api/telemetry", nil)
 	req.Header.Set("Authorization", "Bearer secret")
@@ -713,10 +713,10 @@ func TestControlPortalTelemetryErrors(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
 
 	telemetry := &controlTelemetrySvc{}
-	e, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
+	e, err := NewControlPortalServerWithServices(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
-	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{
+	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalServices{
 		Reader: telemetry,
 	}, HealthConfig{}, nil)
 	require.NoError(t, err)
@@ -980,10 +980,10 @@ func TestControlPortalTeamsIgnoreRetiredDreamingConfig(t *testing.T) {
 		CreatedAt: time.Now().UTC(),
 		UpdatedAt: time.Now().UTC(),
 	}}}
-	server, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
+	server, err := NewControlPortalServerWithServices(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
-	}, profiles, &controlKeySvc{}, nil, ControlPortalTelemetry{
+	}, profiles, &controlKeySvc{}, nil, ControlPortalServices{
 		Config: &controlAppConfigSvc{},
 	}, HealthConfig{}, nil)
 	require.NoError(t, err)

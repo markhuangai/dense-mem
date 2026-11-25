@@ -243,7 +243,7 @@ func TestEvidenceConflictSharedReaderQueryFailurePreservesDiagnostics(t *testing
 			grant := fmt.Sprintf("GRANT SELECT ON evidence_conflict_positions TO %s", ledgerTestRole)
 			t.Cleanup(func() { require.NoError(t, adminDB.Exec(grant).Error) })
 			require.NoError(t, adminDB.Exec(fmt.Sprintf("REVOKE SELECT ON evidence_conflict_positions FROM %s", ledgerTestRole)).Error)
-			_, err = NewStore(db, rls, nil).GetEvidenceConflict(ctx, EvidenceConflictGetInput{TeamID: team, ConflictID: id})
+			_, err = NewStore(db, rls).GetEvidenceConflict(ctx, EvidenceConflictGetInput{TeamID: team, ConflictID: id})
 			var cause *pgconn.PgError
 			require.ErrorAs(t, err, &cause)
 			require.Equal(t, "42501", cause.Code)
@@ -266,7 +266,7 @@ func TestEvidenceConflictSharedReaderQueryFailurePreservesDiagnostics(t *testing
 			}
 			require.True(t, found, "query cause must survive the root logger and sink filtering")
 			require.NoError(t, adminDB.Exec(grant).Error)
-			recovered, err := NewStore(db, rls, nil).GetEvidenceConflict(ctx, EvidenceConflictGetInput{TeamID: team, ConflictID: id})
+			recovered, err := NewStore(db, rls).GetEvidenceConflict(ctx, EvidenceConflictGetInput{TeamID: team, ConflictID: id})
 			require.NoError(t, err)
 			require.Len(t, recovered.Conflict.Positions, 2)
 			t.Logf("correlation_id=%s cause=SQLSTATE-42501 action=restore-fixture-SELECT outcome=recovered", correlation.FromContext(ctx))

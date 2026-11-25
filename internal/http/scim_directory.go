@@ -7,6 +7,7 @@ import (
 	"fmt"
 	nethttp "net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/elimity-com/scim"
@@ -39,6 +40,8 @@ type directorySCIMHandler struct {
 	publicBaseURL       string
 	runtimeConfigSource accessservice.SSORuntimeConfigProvider
 	security            settings.SecurityService
+	serversMu           sync.Mutex
+	servers             map[string]scim.Server
 }
 
 // RegisterDirectorySCIM exposes one authenticated SCIM endpoint per configured provider connector.
@@ -67,7 +70,8 @@ func RegisterDirectorySCIM(e *echo.Echo, directory *accessservice.DirectoryIdent
 }
 
 func newDirectorySCIMHandler(directory *accessservice.DirectoryIdentityService, cfg DirectorySCIMConfig) (*directorySCIMHandler, error) {
-	if _, err := newDirectorySCIMProtocolServer(directory, ""); err != nil {
+	server, err := newDirectorySCIMProtocolServer(directory, "")
+	if err != nil {
 		return nil, err
 	}
 	return &directorySCIMHandler{
@@ -75,6 +79,7 @@ func newDirectorySCIMHandler(directory *accessservice.DirectoryIdentityService, 
 		publicBaseURL:       strings.TrimRight(strings.TrimSpace(cfg.PublicBaseURL), "/"),
 		runtimeConfigSource: cfg.RuntimeConfig,
 		security:            cfg.Security,
+		servers:             map[string]scim.Server{"": server},
 	}, nil
 }
 
@@ -266,12 +271,30 @@ func (h *directorySCIMHandler) serve(c *echo.Context) error {
 	if publicBaseURL != "" {
 		baseURL = publicBaseURL + "/scim/v2/" + connectorID.String()
 	}
-	server, err := newDirectorySCIMProtocolServer(h.directory, baseURL)
+	server, err := h.protocolServer(baseURL)
 	if err != nil {
 		return directorySCIMError(c, scimerrors.ScimErrorInternal)
 	}
 	server.ServeHTTP(c.Response(), request)
 	return nil
+}
+
+func (h *directorySCIMHandler) protocolServer(baseURL string) (scim.Server, error) {
+	const maxCachedServers = 64
+	h.serversMu.Lock()
+	defer h.serversMu.Unlock()
+	if server, found := h.servers[baseURL]; found {
+		return server, nil
+	}
+	server, err := newDirectorySCIMProtocolServer(h.directory, baseURL)
+	if err != nil {
+		return scim.Server{}, err
+	}
+	if h.servers == nil || len(h.servers) == maxCachedServers {
+		h.servers = make(map[string]scim.Server)
+	}
+	h.servers[baseURL] = server
+	return server, nil
 }
 
 func directorySCIMAuthenticatedRequest(request *nethttp.Request, connectorID uuid.UUID, rawToken string) *nethttp.Request {

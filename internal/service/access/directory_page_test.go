@@ -7,7 +7,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
-	accesscontract "github.com/markhuangai/dense-mem/internal/access/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
@@ -21,9 +20,7 @@ func TestDirectoryPageValidationPreservesServiceErrorBoundary(t *testing.T) {
 	} {
 		_, _, err := svc.ListUsersPage(context.Background(), uuid.New(), request)
 		require.ErrorIs(t, err, ErrDirectoryInvalidValue)
-		require.NotErrorIs(t, err, accesscontract.ErrDirectoryInvalidValue)
 		_, _, err = svc.ListGroupsPage(context.Background(), uuid.New(), request)
 		require.ErrorIs(t, err, ErrDirectoryInvalidValue)
-		require.NotErrorIs(t, err, accesscontract.ErrDirectoryInvalidValue)
 	}
 }

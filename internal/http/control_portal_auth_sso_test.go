@@ -107,9 +107,9 @@ func TestControlPortalMiddlewareAcceptsCurrentSSOSessionAndRecordsSafeFailures(t
 	require.Nil(t, controlDirectoryServiceError(nil))
 	require.Nil(t, controlIdentityHTTPError(nil))
 	directoryErr := controlDirectoryServiceError(errors.New("directory constraint failed: duplicate key value violates unique constraint \"credential_secret\""))
-	require.Equal(t, "VALIDATION_ERROR: invalid directory connector request", directoryErr.Error())
+	require.Equal(t, "INTERNAL_ERROR: directory identity operation failed", directoryErr.Error())
 	identityErr := controlIdentityHTTPError(errors.New("control admin constraint failed: duplicate key value violates unique constraint \"admin_group\""))
-	require.Equal(t, "VALIDATION_ERROR: invalid control identity request", identityErr.Error())
+	require.Equal(t, "INTERNAL_ERROR: control identity operation failed", identityErr.Error())
 }
 
 func TestControlPortalMiddlewareRetainsPresentedSecretsOnFailure(t *testing.T) {

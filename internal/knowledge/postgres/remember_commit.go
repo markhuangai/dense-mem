@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -73,6 +74,10 @@ func (r *Store) CommitRememberWithEmbeddings(
 	return result, err
 }
 
+func (r *Store) CommitEvidenceTx(ctx context.Context, tx *gorm.DB, input SynchronousRememberCommitInput, inline []InlineEmbeddingResult) (*SynchronousRememberCommitResult, error) {
+	return r.commitRememberInTx(ctx, tx, input, inline)
+}
+
 func (r *Store) commitRememberInTx(ctx context.Context, tx *gorm.DB, input SynchronousRememberCommitInput, embeddings []InlineEmbeddingResult) (*SynchronousRememberCommitResult, error) {
 	input = normalizeSynchronousRememberCommitInput(input)
 	if err := validateSynchronousRememberCommitInput(input); err != nil {
@@ -106,7 +111,14 @@ func (r *Store) commitRememberInTx(ctx context.Context, tx *gorm.DB, input Synch
 		if replay, err := loadRememberAttemptInTx(ctx, tx, input); err != nil {
 			return err
 		} else if replay != nil {
-			result.PublicResult = replay.PublicResult
+			body, err := json.Marshal(replay.PublicResult)
+			if err != nil {
+				return err
+			}
+			result.Receipt = new(knowledgecontract.RememberReceipt)
+			if err := json.Unmarshal(body, result.Receipt); err != nil {
+				return err
+			}
 			result.Outcome = replay.Outcome
 			return ErrRememberReplay
 		}
@@ -239,14 +251,14 @@ func (r *Store) commitRememberInTx(ctx context.Context, tx *gorm.DB, input Synch
 			TeamID: input.TeamID, OwnerProfileID: input.OwnerProfileID, AttemptID: input.IngestID,
 			SpaceID: input.SpaceID, SpaceGeneration: input.SpaceGeneration, IdempotencyKey: input.IdempotencyKey,
 			RequestHash: input.RequestHash, ContractVersion: domain.ContractVersion, SubmissionKind: "remember",
-			Outcome: "completed", CorrelationID: rememberCorrelationID(input.Metadata), PublicResult: publicResult,
+			Outcome: "completed", CorrelationID: rememberCorrelationID(input.Metadata), Receipt: publicResult,
 			RetryabilitySet: true, AssessorDiagnostics: input.AssessorDiagnostics,
 			EvidenceCount: len(evidence),
 			DocumentCount: len(semanticResult.SearchDocuments), AssessorTurns: input.AssessorTurns, Duration: rememberAttemptDuration(input),
 		}); err != nil {
 			return err
 		}
-		result.PublicResult = publicResult
+		result.Receipt = publicResult
 		result.SearchDocuments = append([]SearchDocumentResult(nil), semanticResult.SearchDocuments...)
 		stage = "transaction_commit"
 		return nil

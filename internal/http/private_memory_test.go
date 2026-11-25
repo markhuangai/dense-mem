@@ -284,7 +284,7 @@ func TestControlErasureStatusIncludesGovernanceIdentifiers(t *testing.T) {
 	teamID := uuid.New()
 	credentialID := uuid.New()
 	operation := privateMemoryHTTPTestOperation(teamID, credentialID)
-	handler := &controlPortalHandler{privateMemory: &privateMemoryHTTPServiceStub{operation: operation}}
+	handler := &controlAccessHandler{privateMemory: &privateMemoryHTTPServiceStub{operation: operation}}
 	e := echo.New()
 	req := httptest.NewRequest(http.MethodGet, "/control/api/private-memory/erasures/"+operation.ID.String(), nil)
 	rec := httptest.NewRecorder()
@@ -310,7 +310,7 @@ func TestPrivateMemoryRetentionConfigErrorsAreBounded(t *testing.T) {
 	privateMemory := privacyservice.NewPrivateMemoryService(privacyservice.PrivateMemoryServiceConfig{
 		RuntimeConfig: &privateMemoryHTTPRuntimeConfigStub{err: rawErr},
 	})
-	handler := &controlPortalHandler{privateMemory: privateMemory}
+	handler := &controlAccessHandler{privateMemory: privateMemory}
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.POST(
@@ -386,7 +386,7 @@ func TestPrivateMemoryControlHTTPRoutes(t *testing.T) {
 		hold: hold, holdChanged: true, retentionRun: &run,
 		retentionRuns: []domain.PrivateMemoryRetentionRun{run},
 	}
-	handler := &controlPortalHandler{privateMemory: stub}
+	handler := &controlAccessHandler{privateMemory: stub}
 	e := echo.New()
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.GET("/control/api/private-memory/spaces", handler.listPrivateMemorySpaces)
@@ -578,7 +578,7 @@ func TestPrivateMemoryOwnerHandlersRejectUnavailableOrWrongPrincipals(t *testing
 func TestPrivateMemoryControlHandlersPropagateRepositoryFailures(t *testing.T) {
 	backendErr := errors.New("repository unavailable")
 	stub := &privateMemoryHTTPServiceStub{requestErr: backendErr}
-	handler := &controlPortalHandler{privateMemory: stub}
+	handler := &controlAccessHandler{privateMemory: stub}
 	e := echo.New()
 	newContext := func(method, target, path, name, value string) *echo.Context {
 		t.Helper()

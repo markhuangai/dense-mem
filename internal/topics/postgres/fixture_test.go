@@ -118,6 +118,7 @@ func newOntologyFixtureWithMode(t *testing.T, historical, maintenance bool) *ont
 		GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ontology_app;
 		ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO ontology_app;
 		GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO ontology_app;
+		ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE,SELECT ON SEQUENCES TO ontology_app;
 		GRANT EXECUTE ON FUNCTION dense_mem_active_space_generation(UUID,UUID) TO ontology_app;
 		GRANT EXECUTE ON FUNCTION dense_mem_lock_memory_space(UUID,UUID) TO ontology_app`).Error)
 	parsed, err := url.Parse(dsn)
@@ -191,30 +192,6 @@ func ontologySchemaSnapshot(t *testing.T, db *gorm.DB) map[string]string {
 		snapshot[object.Key] = object.Definition
 	}
 	return snapshot
-}
-
-func (f *ontologyFixture) restoreOntologySchema(t *testing.T) {
-	t.Helper()
-	require.NotEmpty(t, f.schema)
-	_, err := ontologyMigrationProvider(t, f.admin).Up(context.Background())
-	require.NoError(t, err)
-	current := ontologySchemaSnapshot(t, f.admin)
-	keys := make([]string, 0, len(f.schema))
-	for key := range f.schema {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	// Ontology rollback also removes later private-memory hooks; restore their exact migrated definitions.
-	for _, key := range keys {
-		if current[key] != f.schema[key] {
-			require.NoError(t, f.admin.Exec(f.schema[key]).Error, key)
-		}
-	}
-	current = ontologySchemaSnapshot(t, f.admin)
-	require.Len(t, current, len(f.schema))
-	for _, key := range keys {
-		require.Equal(t, f.schema[key], current[key], key)
-	}
 }
 
 // Exercise ontology rollback guards without crossing unrelated irreversible migration boundaries.

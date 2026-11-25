@@ -136,8 +136,8 @@ run_playwright() {
   case "$SCENARIO" in
     decision_providers) specs=("tests-compose/decisions.spec.ts") ;;
     synchronous_write) specs=("tests-compose/remember-attempts.spec.ts") ;;
-    ontology_management) specs=("tests-compose/ontology-management.spec.ts") ;;
-    ontology_organization) specs=("tests-compose/ontology-maintenance.spec.ts") ;;
+    ontology_management) specs=("tests-compose/topic-management.spec.ts") ;;
+    ontology_organization) specs=("tests-compose/topic-maintenance.spec.ts") ;;
     mcp_oauth) specs=("tests-compose/oauth-team-resource.spec.ts") ;;
   esac
   if [[ "$SCENARIO" == "synchronous_write" ]]; then
@@ -163,13 +163,13 @@ run_playwright() {
 
 case "$SCENARIO" in
   langchain_retriever) bash "${ROOT_DIR}/packages/python/scripts/e2e.sh" langchain_retriever ;;
-  ontology_management) run_node_case tests/uat/ontology_management_e2e.mjs ;;
-  ontology_upgrade) run_node_case tests/uat/ontology_upgrade_e2e.mjs ;;
+  ontology_management) run_node_case tests/uat/topic_management_e2e.mjs ;;
+  ontology_upgrade) run_node_case tests/uat/topic_upgrade_e2e.mjs ;;
   google_adk_memory) bash "${ROOT_DIR}/packages/python/scripts/e2e.sh" google_adk_memory ;;
   python_client) bash "${ROOT_DIR}/packages/python/scripts/e2e.sh" ;;
   ontology_organization)
-    run_node_case tests/uat/ontology_concurrency_e2e.mjs
-    run_node_case tests/uat/ontology_organization_e2e.mjs ;;
+    run_node_case tests/uat/topic_concurrency_e2e.mjs
+    run_node_case tests/uat/topic_organization_e2e.mjs ;;
   session_ingest) run_node_case tests/uat/session_ingest_e2e.mjs ;;
   decision_providers) run_node_case tests/uat/decision_providers/runner.mjs ;;
   mcp_boundaries|mcp_transport_cancellation) run_node_case tests/uat/mcp_boundaries_e2e.mjs ;;

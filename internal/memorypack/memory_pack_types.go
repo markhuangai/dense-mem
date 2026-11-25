@@ -25,7 +25,7 @@ type MemoryPackDependencies struct {
 	Logger   observability.LogProvider
 }
 type MemoryPackSemanticReader interface {
-	TraceEvidence(context.Context, tracecontract.Input) (*tracecontract.EvidenceTraceResult, error)
+	TraceEvidenceBatch(context.Context, tracecontract.Input, []string) ([]*tracecontract.EvidenceTraceResult, error)
 }
 type memoryPackService struct {
 	deps MemoryPackDependencies

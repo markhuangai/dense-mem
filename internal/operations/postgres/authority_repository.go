@@ -6,20 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
-	"time"
 
-	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
-	operationscontract "github.com/markhuangai/dense-mem/internal/operations/contract"
 	"github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
-
-var ErrFreshAuthorityBlocked = errors.New("authority repository: fresh authority blocked")
-
-type CommitFreshAuthorityInput = operationscontract.CommitFreshAuthorityInput
 
 type AuthorityRepository struct {
 	db  *gorm.DB
@@ -28,43 +20,6 @@ type AuthorityRepository struct {
 
 func NewAuthorityRepository(db *gorm.DB, rls postgres.RLSHelper) *AuthorityRepository {
 	return &AuthorityRepository{db: db, rls: rls}
-}
-
-var freshAuthorityApplicationTables = []string{
-	"teams",
-	"actor_identities",
-	"team_memberships",
-	"credentials",
-	"membership_grants",
-	"identity_external_links",
-	"ownership_aliases",
-	"audit_log",
-	"usage_metric_buckets",
-	"usage_metric_flushes",
-	"operation_logs",
-	"recall_feedback_events",
-	"security_ip_failures",
-	"security_ip_bans",
-	"sso_providers",
-	"sso_identities",
-	"sso_group_mappings",
-	"sso_entitlement_cache",
-	"sso_oauth_states",
-	"sso_sessions",
-	"knowledge_ingests",
-	"evidence_sources",
-	"evidence_source_revisions",
-	"evidence_fragments",
-	"evidence_security_events",
-	"evidence_security_signals",
-	"evidence_quarantines",
-	"embedding_contracts",
-	"search_index_generations",
-	"search_documents",
-	"remember_attempts",
-	"remember_attempt_events",
-	"remember_attempt_diagnostics",
-	"semantic_assessments",
 }
 
 func (r *AuthorityRepository) GetLatestMarker(ctx context.Context) (*domain.CompatibilityMarker, error) {
@@ -93,99 +48,6 @@ func (r *AuthorityRepository) GetLatestMarker(ctx context.Context) (*domain.Comp
 		return nil, fmt.Errorf("authority repository: get marker: %w", err)
 	}
 	return out, nil
-}
-
-func (r *AuthorityRepository) CommitFreshAuthority(
-	ctx context.Context,
-	input operationscontract.CommitFreshAuthorityInput,
-) (*domain.CompatibilityMarker, error) {
-	now := input.Now.UTC()
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
-	metadata := map[string]any{"fresh_install": true}
-	for key, value := range input.Metadata {
-		metadata[key] = value
-	}
-	metadataJSON, err := marshalAuthorityJSON(metadata)
-	if err != nil {
-		return nil, err
-	}
-	var out *domain.CompatibilityMarker
-	err = r.withSystemTx(ctx, func(tx *gorm.DB) error {
-		var existingMarkerCount int
-		if err := tx.Raw(`
-			SELECT count(*)::int
-			FROM v2_compatibility_markers
-			WHERE marker_kind = ?
-		`, domain.MigrationMarkerKindCutover).Scan(&existingMarkerCount).Error; err != nil {
-			return err
-		}
-		if existingMarkerCount > 0 {
-			return fmt.Errorf("%w: cutover marker already exists", ErrFreshAuthorityBlocked)
-		}
-		nonempty, err := freshAuthorityNonemptyTables(tx)
-		if err != nil {
-			return err
-		}
-		if len(nonempty) > 0 {
-			return fmt.Errorf("%w: nonempty application tables: %s", ErrFreshAuthorityBlocked, strings.Join(nonempty, ", "))
-		}
-		row := tx.Raw(`
-			INSERT INTO v2_compatibility_markers (
-			    marker_id, marker_kind, version, status, run_id,
-			    corpus_hash, gate_report_hash, metadata, created_at
-			) VALUES (
-			    ?::uuid, ?, ?, ?, NULL, '', '', ?::jsonb, ?
-			)
-			RETURNING marker_id::text, marker_kind, version, status,
-			          COALESCE(run_id::text, ''), corpus_hash, gate_report_hash,
-			          metadata::text, created_at
-		`, uuid.NewString(), domain.MigrationMarkerKindCutover, input.MarkerVersion,
-			domain.MigrationMarkerCompatible, string(metadataJSON), now).Row()
-		marker, err := scanCompatibilityMarker(row)
-		if err != nil {
-			return err
-		}
-		out = marker
-		return nil
-	})
-	if err != nil {
-		if errors.Is(err, ErrFreshAuthorityBlocked) {
-			return nil, err
-		}
-		return nil, fmt.Errorf("authority repository: commit fresh authority: %w", err)
-	}
-	return out, nil
-}
-
-func freshAuthorityNonemptyTables(tx *gorm.DB) ([]string, error) {
-	nonempty := []string{}
-	for _, table := range freshAuthorityApplicationTables {
-		var exists bool
-		if err := tx.Raw(`SELECT to_regclass(?) IS NOT NULL`, table).Scan(&exists).Error; err != nil {
-			return nil, err
-		}
-		if !exists {
-			continue
-		}
-		quoted := pqQuoteIdentifier(table)
-		if err := tx.Exec("LOCK TABLE " + quoted + " IN SHARE MODE").Error; err != nil {
-			return nil, err
-		}
-		var hasRows bool
-		if err := tx.Raw("SELECT EXISTS (SELECT 1 FROM " + quoted + " LIMIT 1)").Scan(&hasRows).Error; err != nil {
-			return nil, err
-		}
-		if hasRows {
-			nonempty = append(nonempty, table)
-		}
-	}
-	return nonempty, nil
-}
-
-func pqQuoteIdentifier(value string) string {
-	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
 }
 
 func (r *AuthorityRepository) withSystemTx(ctx context.Context, fn func(tx *gorm.DB) error) error {
@@ -219,17 +81,6 @@ func scanCompatibilityMarker(row authorityRowScanner) (*domain.CompatibilityMark
 		return nil, err
 	}
 	return &record, nil
-}
-
-func marshalAuthorityJSON(value map[string]any) ([]byte, error) {
-	if value == nil {
-		value = map[string]any{}
-	}
-	data, err := json.Marshal(value)
-	if err != nil {
-		return nil, fmt.Errorf("authority repository: encode json: %w", err)
-	}
-	return data, nil
 }
 
 func unmarshalAuthorityJSON(data string, target *map[string]any) error {

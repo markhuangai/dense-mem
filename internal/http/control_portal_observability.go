@@ -55,7 +55,7 @@ func controlMetricsFilter(c *echo.Context) (domain.UsageMetricsFilter, error) {
 	}, nil
 }
 
-func (h *controlPortalHandler) listOperationLogs(c *echo.Context) error {
+func (h *controlDiagnosticsHandler) listOperationLogs(c *echo.Context) error {
 	if h.operationLogs == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "operation logs unavailable")
 	}
@@ -74,7 +74,7 @@ func (h *controlPortalHandler) listOperationLogs(c *echo.Context) error {
 	})
 }
 
-func (h *controlPortalHandler) listRecallFeedbackEvents(c *echo.Context) error {
+func (h *controlDiagnosticsHandler) listRecallFeedbackEvents(c *echo.Context) error {
 	if h.recallFeedback == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "recall feedback events unavailable")
 	}
@@ -93,7 +93,7 @@ func (h *controlPortalHandler) listRecallFeedbackEvents(c *echo.Context) error {
 	})
 }
 
-func (h *controlPortalHandler) getRecallFeedbackEvent(c *echo.Context) error {
+func (h *controlDiagnosticsHandler) getRecallFeedbackEvent(c *echo.Context) error {
 	if h.recallFeedback == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "recall feedback events unavailable")
 	}

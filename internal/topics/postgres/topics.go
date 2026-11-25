@@ -2,10 +2,11 @@ package postgres
 
 import (
 	"context"
+	"sort"
+
 	"github.com/lib/pq"
 	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
-	"sort"
 )
 
 func (s *Store) NewTopicReader() func(context.Context, *gorm.DB, string, topiccontract.TopicReadInput) (topiccontract.TopicReadResult, error) {
@@ -38,9 +39,9 @@ func (s *Store) ReadEvidenceTopics(ctx context.Context, tx *gorm.DB, teamID stri
 		}
 	} else if len(input.EvidenceIDs) > 0 && input.MaxMembers == 0 {
 		records, err = recallRecords(tx, fence, `head.kind='topic' AND head.record_id IN (
-			SELECT assignment.topic_id FROM topic_record_heads assignment
+			SELECT assignment.topic_id FROM topic_memberships assignment
 			WHERE assignment.team_id=head.team_id AND assignment.shared_space_id=head.shared_space_id
-			  AND assignment.space_generation=head.space_generation AND assignment.kind='assignment'
+			  AND assignment.space_generation=head.space_generation
 			  AND NOT assignment.retired AND assignment.evidence_id=ANY(?::uuid[]))`, []any{pq.Array(input.EvidenceIDs)}, topiccontract.MaxPageSize)
 		if err != nil {
 			return result, err
@@ -83,7 +84,12 @@ func (s *Store) ReadEvidenceTopics(ctx context.Context, tx *gorm.DB, teamID stri
 	if len(ids) == 0 {
 		return result, nil
 	}
-	assignments, err := recallRecords(tx, fence, `head.kind='assignment' AND head.topic_id=ANY(?::uuid[])`, []any{pq.Array(ids)}, topiccontract.MaxDependencyRecords)
+	assignments, err := recallRecords(tx, fence, `head.kind='assignment' AND EXISTS (
+		SELECT 1 FROM topic_memberships AS membership
+		WHERE (membership.team_id,membership.shared_space_id,membership.space_generation,membership.record_id,membership.version)=
+			(head.team_id,head.shared_space_id,head.space_generation,head.record_id,head.version)
+		  AND NOT membership.retired AND membership.topic_id=ANY(?::uuid[])
+	)`, []any{pq.Array(ids)}, topiccontract.MaxDependencyRecords)
 	if err != nil {
 		return result, err
 	}
@@ -120,18 +126,18 @@ func smallTopicsForEvidence(tx *gorm.DB, fence scope, input topiccontract.TopicR
 		links AS MATERIALIZED (
 			SELECT seeds.evidence_id,item.topic_id FROM seeds CROSS JOIN scope
 			CROSS JOIN LATERAL (
-				SELECT head.topic_id FROM topic_record_heads AS head
+				SELECT head.topic_id FROM topic_memberships AS head
 				WHERE head.team_id=scope.team_id AND head.shared_space_id=scope.shared_space_id
 				  AND head.space_generation=scope.space_generation AND head.evidence_id=seeds.evidence_id
-				  AND head.kind='assignment' AND NOT head.retired
+				  AND NOT head.retired
 				ORDER BY head.topic_id LIMIT ?
 			) AS item
 		), sizes AS MATERIALIZED (
 			SELECT selected.topic_id,(SELECT count(*) FROM (
-				SELECT 1 FROM topic_record_heads AS peer
+				SELECT 1 FROM topic_memberships AS peer
 				WHERE peer.team_id=scope.team_id AND peer.shared_space_id=scope.shared_space_id
 				  AND peer.space_generation=scope.space_generation AND peer.topic_id=selected.topic_id
-				  AND peer.kind='assignment' AND NOT peer.retired LIMIT ?
+				  AND NOT peer.retired LIMIT ?
 			) AS probe) AS members
 			FROM (SELECT DISTINCT topic_id FROM links) selected CROSS JOIN scope
 		), ranked AS (

@@ -39,11 +39,8 @@ func lockPrivateMemoryLineageTx(ctx context.Context, tx *gorm.DB, team, space uu
 	return destinations, rows.Err()
 }
 
-func purgePrivateMemoryLineageTx(ctx context.Context, tx *gorm.DB, space *domain.MemorySpace, operationID uuid.UUID, legacy *uuid.UUID, destinations []privateErasureDestination, ordered []string) (map[string]int64, error) {
-	tables, err := inspectPrivateMigrationSchema(tx)
-	if err != nil {
-		return nil, err
-	}
+func purgePrivateMemoryLineageTx(ctx context.Context, tx *gorm.DB, space *domain.MemorySpace, operationID uuid.UUID, legacy *uuid.UUID, destinations []privateErasureDestination, ordered []string, tables map[string]*privateMigrationTable) (map[string]int64, error) {
+	var err error
 	if err := tx.Exec(`CREATE TEMP TABLE private_memory_purge_rows(table_name TEXT NOT NULL,row_key JSONB NOT NULL,space_id UUID NOT NULL,PRIMARY KEY(table_name,row_key)) ON COMMIT DROP`).Error; err != nil {
 		return nil, err
 	}

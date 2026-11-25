@@ -405,19 +405,7 @@ func recallEventAt(validAt, knownAt *time.Time) *time.Time {
 }
 
 func hydrateRecallEvidence(ctx context.Context, tx *gorm.DB, input RecallEvidenceInput, contract *ActiveSearchContract, evidenceIDs []string) (map[string]RecallEvidenceHit, error) {
-	filter, args := recallEvidenceEligibility(input, "fragment", false)
-	parameters := []any{pq.Array(evidenceIDs), input.TeamID, contract.EmbeddingContractID, recallEventAt(input.ValidAt, input.KnownAt)}
-	parameters = append(parameters, args...)
-	rows, err := tx.WithContext(ctx).Raw(`SELECT fragment.fragment_id::text,fragment.content,
-        COALESCE(NULLIF(fragment.source_ref,''),NULLIF(source.source_key,''),''),fragment.source_type,fragment.created_at,
-        document.search_state
-        FROM evidence_fragments AS fragment
-        JOIN search_documents AS document ON document.team_id=fragment.team_id AND document.source_kind='evidence'
-          AND document.source_id=fragment.fragment_id
-        LEFT JOIN evidence_sources AS source ON source.team_id=fragment.team_id AND source.source_id=fragment.source_id
-        WHERE fragment.fragment_id=ANY(?::uuid[]) AND fragment.team_id=?::uuid AND document.embedding_contract_id=?::uuid
-          AND (document.search_state IN ('pending','current','failed') OR (?::timestamptz IS NOT NULL AND document.search_state='not_required'))
-        `+filter, parameters...).Rows()
+	rows, err := readEligibleEvidenceRows(ctx, tx, input, contract, evidenceIDs, true)
 	if err != nil {
 		return nil, err
 	}
@@ -434,6 +422,44 @@ func hydrateRecallEvidence(ctx context.Context, tx *gorm.DB, input RecallEvidenc
 		out[hit.EvidenceID] = hit
 	}
 	return out, rows.Err()
+}
+
+func eligibleRecallEvidenceIDs(ctx context.Context, tx *gorm.DB, input RecallEvidenceInput, contract *ActiveSearchContract, ids []string) (map[string]struct{}, error) {
+	rows, err := readEligibleEvidenceRows(ctx, tx, input, contract, ids, false)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	eligible := make(map[string]struct{})
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		eligible[id] = struct{}{}
+	}
+	return eligible, rows.Err()
+}
+
+func readEligibleEvidenceRows(ctx context.Context, tx *gorm.DB, input RecallEvidenceInput, contract *ActiveSearchContract, evidenceIDs []string, hydrate bool) (*sql.Rows, error) {
+	columns := "fragment.fragment_id::text"
+	sourceJoin := ""
+	if hydrate {
+		columns += `,fragment.content,COALESCE(NULLIF(fragment.source_ref,''),NULLIF(source.source_key,''),''),
+            fragment.source_type,fragment.created_at,document.search_state`
+		sourceJoin = `LEFT JOIN evidence_sources AS source ON source.team_id=fragment.team_id AND source.source_id=fragment.source_id`
+	}
+	filter, args := recallEvidenceEligibility(input, "fragment", false)
+	parameters := []any{pq.Array(evidenceIDs), input.TeamID, contract.EmbeddingContractID, recallEventAt(input.ValidAt, input.KnownAt)}
+	parameters = append(parameters, args...)
+	return tx.WithContext(ctx).Raw(`SELECT `+columns+`
+        FROM evidence_fragments AS fragment
+        JOIN search_documents AS document ON document.team_id=fragment.team_id AND document.source_kind='evidence'
+          AND document.source_id=fragment.fragment_id
+        `+sourceJoin+`
+        WHERE fragment.fragment_id=ANY(?::uuid[]) AND fragment.team_id=?::uuid AND document.embedding_contract_id=?::uuid
+          AND (document.search_state IN ('pending','current','failed') OR (?::timestamptz IS NOT NULL AND document.search_state='not_required'))
+        `+filter, parameters...).Rows()
 }
 
 func recallEvidenceEligibility(input RecallEvidenceInput, alias string, excludeKnown bool) (string, []any) {

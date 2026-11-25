@@ -10,9 +10,8 @@ import (
 	"math"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
-	"gorm.io/gorm"
 
+	accesscontract "github.com/markhuangai/dense-mem/internal/access/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 )
@@ -113,9 +112,7 @@ func (s *TeamServiceImpl) Create(ctx context.Context, req CreateTeamRequest, act
 	}
 
 	if err := s.repo.Create(ctx, team); err != nil {
-		// Check for unique constraint violation (23505 is PostgreSQL unique constraint error code)
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+		if errors.Is(err, accesscontract.ErrTeamNameConflict) {
 			return nil, teamNameConflict(req.Name, correlationID)
 		}
 		return nil, fmt.Errorf("failed to create team: %w", err)
@@ -218,9 +215,7 @@ func (s *TeamServiceImpl) Update(ctx context.Context, id uuid.UUID, req UpdateTe
 
 	// Save the changes
 	if err := s.repo.Update(ctx, existing); err != nil {
-		// Check for unique constraint violation (23505 is PostgreSQL unique constraint error code)
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+		if errors.Is(err, accesscontract.ErrTeamNameConflict) {
 			name := existing.Name
 			if req.Name != nil {
 				name = *req.Name
@@ -328,7 +323,7 @@ func (s *TeamServiceImpl) Delete(ctx context.Context, id uuid.UUID, actorKeyID *
 	}
 
 	if err := s.repo.SoftDelete(ctx, id); err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, accesscontract.ErrTeamNotFound) {
 			return httperr.New(httperr.NOT_FOUND, fmt.Sprintf("team with id '%s' not found", id.String()))
 		}
 		return fmt.Errorf("failed to delete team: %w", err)

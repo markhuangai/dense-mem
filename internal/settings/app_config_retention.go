@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
@@ -33,21 +32,9 @@ func (s *AppConfigServiceImpl) UpdatePrivateMemorySettings(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	before, _ := s.GetPrivateMemorySettings(ctx)
-	now := s.now().UTC()
-	changed, err := s.repo.UpdateValues(ctx, normalized, now.Format(time.RFC3339Nano), now)
-	if err != nil {
-		return nil, err
-	}
-	s.invalidate()
-	updated, err := s.GetPrivateMemorySettings(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if changed {
-		s.appendAudit("APP_CONFIG_UPDATE", "app_config", "private_memory", actorRole, clientIP, correlationID, privateMemorySettingsPayload(before), privateMemorySettingsPayload(updated), map[string]any{"section": "private_memory"})
-	}
-	return updated, nil
+	updated, _, err := updateConfigSection(ctx, s,
+		configSectionUpdate{"private_memory", normalized, actorRole, clientIP, correlationID}, privateMemoryRuntimeConfigFromEntries, privateMemorySettingsPayload)
+	return updated, err
 }
 
 func (s *AppConfigServiceImpl) PrivateMemoryRuntimeConfig(ctx context.Context) (domain.PrivateMemoryRuntimeConfig, error) {

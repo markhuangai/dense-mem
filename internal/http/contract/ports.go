@@ -4,6 +4,8 @@ package contract
 import (
 	"context"
 	"time"
+
+	"github.com/markhuangai/dense-mem/internal/observability"
 )
 
 // ConfigProvider exposes only configuration values needed by HTTP transport.
@@ -21,25 +23,8 @@ type BodyLimitConfig interface {
 	GetHTTPMaxBodyBytes() int
 }
 
-// LogAttr is the bounded attribute shape consumed by HTTP transport. The
-// transport owns this representation so logging implementations remain a
-// composition concern.
-type LogAttr struct {
-	Key   string
-	Value any
-}
-
-// LogProvider is the minimal sanitized logging surface required by HTTP.
-type LogProvider interface {
-	Info(string, ...LogAttr)
-	Error(string, error, ...LogAttr)
-	Warn(string, ...LogAttr)
-	Debug(string, ...LogAttr)
-	With(...LogAttr) LogProvider
-}
-
-// ContextLogProvider is the optional context-aware extension used when the
-// transport has an authenticated request context to preserve.
+type LogAttr = observability.LogAttr
+type LogProvider = observability.LogProvider
 type ContextLogProvider interface {
 	LogProvider
 	InfoContext(context.Context, string, ...LogAttr)

@@ -15,7 +15,7 @@ func bindTraceTool(tool Tool, deps Dependencies) Tool {
 		if deps.TraceBindings.Service == nil {
 			return nil, ErrToolUnavailable
 		}
-		if err := ValidateContractInput(tool, input, authenticatedScopes(ctx)); err != nil {
+		if err := validateBindingInput(ctx, tool, input); err != nil {
 			return nil, fmt.Errorf("trace_memory: invalid input: %w", err)
 		}
 		var req traceapp.TraceRequest

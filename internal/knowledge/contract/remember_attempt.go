@@ -24,6 +24,7 @@ type RememberAttemptRecordInput struct {
 	RetryabilitySet              bool
 	CorrelationID                string
 	PublicResult                 map[string]any
+	Receipt                      *RememberReceipt
 	EvidenceCount                int
 	DocumentCount, AssessorTurns int
 	Duration                     time.Duration
@@ -78,6 +79,7 @@ type RememberAttemptDiagnosticInput struct {
 // RememberAttemptRecordInput so replay and conflict captures cannot influence
 // canonical idempotency selection.
 type RememberInvocationDiagnosticInput struct {
+	UsesAttemptCapture          bool
 	TeamID                      string
 	OwnerProfileID              string
 	InvocationID                string
@@ -105,6 +107,7 @@ type RememberInvocationDiagnosticInput struct {
 }
 
 type RememberInvocationDiagnosticRecord struct {
+	UsesAttemptCapture          bool
 	TeamID                      string
 	OwnerProfileID              string
 	InvocationID                string

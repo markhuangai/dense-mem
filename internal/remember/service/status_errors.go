@@ -1,6 +1,7 @@
 package service
 
 import (
+	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -63,15 +64,7 @@ func SubmissionErrorCodes() []string {
 	return result
 }
 
-type SubmissionStatusError struct {
-	Code        string         `json:"code"`
-	Message     string         `json:"message"`
-	Retryable   bool           `json:"retryable"`
-	NextAction  string         `json:"next_action"`
-	Remediation string         `json:"remediation"`
-	ReasonCode  string         `json:"reason_code,omitempty"`
-	Details     map[string]any `json:"details,omitempty"`
-}
+type SubmissionStatusError = knowledge.SubmissionStatusError
 
 type SubmissionNextAction string
 

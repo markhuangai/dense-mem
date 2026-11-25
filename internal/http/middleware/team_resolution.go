@@ -40,8 +40,6 @@ func isTeamResolvedRoute(path string) bool {
 	headerScopedPrefixes := []string{
 		"/mcp",
 		"/ui/api/recall",
-		"/ui/api/dreaming",
-		"/ui/api/dreams",
 	}
 
 	for _, prefix := range headerScopedPrefixes {
@@ -59,7 +57,7 @@ func isScopedMCPRoute(path string) bool {
 }
 
 // TeamResolutionMiddleware resolves the authenticated team for MCP and
-// first-party memory routes. Authorization remains a separate middleware.
+// first-party memory routes after authentication.
 func TeamResolutionMiddleware(svc TeamResolutionServiceInterface) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c *echo.Context) error {

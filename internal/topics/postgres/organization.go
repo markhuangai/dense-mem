@@ -306,13 +306,16 @@ func decodeOrganization(body []byte) (topic.OrganizationReceipt, error) {
 	return receipt, topic.ValidateOrganizationReceipt(receipt)
 }
 
+const organizationCatalogLockClass = 25021
+
 func lockOrganizationCatalog(tx *gorm.DB, fence scope) error {
-	if err := tx.Exec(`INSERT INTO topic_catalog_heads(team_id,shared_space_id,space_generation)
-        VALUES (?::uuid,?::uuid,?) ON CONFLICT DO NOTHING`, fence.TeamID, fence.SpaceID, fence.Generation).Error; err != nil {
-		return err
-	}
-	var revision int64
-	return tx.Raw(`SELECT revision FROM topic_catalog_heads WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? FOR UPDATE`, fence.TeamID, fence.SpaceID, fence.Generation).Row().Scan(&revision)
+	return tx.Exec(`SELECT pg_advisory_xact_lock(hashtextextended(?::text,?))`, fence.SpaceID, organizationCatalogLockClass).Error
+}
+
+func tryLockOrganizationCatalog(tx *gorm.DB, fence scope) (bool, error) {
+	var locked bool
+	err := tx.Raw(`SELECT pg_try_advisory_xact_lock(hashtextextended(?::text,?))`, fence.SpaceID, organizationCatalogLockClass).Row().Scan(&locked)
+	return locked, err
 }
 
 func organizationByKey(tx *gorm.DB, fence scope, key string, equivalenceOnly bool) (topic.OrganizationReceipt, bool, error) {
@@ -527,7 +530,7 @@ func (s *Store) CommitOrganization(ctx context.Context, teamID string, receipt t
 				if err != nil {
 					return err
 				}
-				publication, err := s.commitPublication(tx, fence, input, "automatic", "", receipt.InputHash, receipt.ID)
+				publication, err := s.writePublication(tx, fence, input, "automatic", "", receipt.InputHash, receipt.ID, false)
 				if err != nil {
 					return err
 				}

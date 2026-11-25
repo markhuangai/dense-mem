@@ -155,7 +155,7 @@ func (n *Native) systemTx(ctx context.Context) (*sql.Tx, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err = tx.ExecContext(ctx, `SELECT set_config('app.tx_mode','system',true),set_config('app.storage_layout','feature-storage-v1',true),set_config('app.topic_layout','topic-storage-v1',true)`); err != nil {
+	if _, err = tx.ExecContext(ctx, `SELECT set_config('app.tx_mode','system',true)`); err != nil {
 		tx.Rollback()
 		return nil, err
 	}

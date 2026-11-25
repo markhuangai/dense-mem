@@ -14,7 +14,7 @@ import (
 
 const maximumControlSSOProviderRequestBytes = 128 * 1024
 
-func (h *controlPortalHandler) listSSOProviders(c *echo.Context) error {
+func (h *controlIdentityHandler) listSSOProviders(c *echo.Context) error {
 	if h.sso == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "sso service unavailable")
 	}
@@ -29,7 +29,7 @@ func (h *controlPortalHandler) listSSOProviders(c *echo.Context) error {
 	return c.JSON(200, map[string]any{"data": items})
 }
 
-func (h *controlPortalHandler) createSSOProvider(c *echo.Context) error {
+func (h *controlIdentityHandler) createSSOProvider(c *echo.Context) error {
 	if h.sso == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "sso service unavailable")
 	}
@@ -44,7 +44,7 @@ func (h *controlPortalHandler) createSSOProvider(c *echo.Context) error {
 	return c.JSON(201, map[string]any{"data": toControlSSOProvider(provider)})
 }
 
-func (h *controlPortalHandler) updateSSOProvider(c *echo.Context) error {
+func (h *controlIdentityHandler) updateSSOProvider(c *echo.Context) error {
 	if h.sso == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "sso service unavailable")
 	}
@@ -69,7 +69,7 @@ func (h *controlPortalHandler) updateSSOProvider(c *echo.Context) error {
 	return c.JSON(200, map[string]any{"data": toControlSSOProvider(provider)})
 }
 
-func (h *controlPortalHandler) deleteSSOProvider(c *echo.Context) error {
+func (h *controlIdentityHandler) deleteSSOProvider(c *echo.Context) error {
 	if h.sso == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "sso service unavailable")
 	}
@@ -83,7 +83,7 @@ func (h *controlPortalHandler) deleteSSOProvider(c *echo.Context) error {
 	return c.JSON(200, map[string]any{"data": map[string]string{"status": "deleted"}})
 }
 
-func (h *controlPortalHandler) listSSOMappings(c *echo.Context) error {
+func (h *controlIdentityHandler) listSSOMappings(c *echo.Context) error {
 	if h.sso == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "sso service unavailable")
 	}
@@ -102,7 +102,7 @@ func (h *controlPortalHandler) listSSOMappings(c *echo.Context) error {
 	return c.JSON(200, map[string]any{"data": items})
 }
 
-func (h *controlPortalHandler) createSSOMapping(c *echo.Context) error {
+func (h *controlIdentityHandler) createSSOMapping(c *echo.Context) error {
 	if h.sso == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "sso service unavailable")
 	}
@@ -121,7 +121,7 @@ func (h *controlPortalHandler) createSSOMapping(c *echo.Context) error {
 	return c.JSON(201, map[string]any{"data": toControlSSOGroupMapping(mapping)})
 }
 
-func (h *controlPortalHandler) updateSSOMapping(c *echo.Context) error {
+func (h *controlIdentityHandler) updateSSOMapping(c *echo.Context) error {
 	if h.sso == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "sso service unavailable")
 	}
@@ -144,7 +144,7 @@ func (h *controlPortalHandler) updateSSOMapping(c *echo.Context) error {
 	return c.JSON(200, map[string]any{"data": toControlSSOGroupMapping(mapping)})
 }
 
-func (h *controlPortalHandler) deleteSSOMapping(c *echo.Context) error {
+func (h *controlIdentityHandler) deleteSSOMapping(c *echo.Context) error {
 	if h.sso == nil {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "sso service unavailable")
 	}

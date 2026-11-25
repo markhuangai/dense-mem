@@ -12,7 +12,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/domain"
 )
 
-func setupTeamRepositoryTest(t *testing.T, ctx context.Context) (*TeamRepositoryImpl, func()) {
+func setupTeamRepositoryTest(t *testing.T, ctx context.Context) (*teamRepository, func()) {
 	t.Helper()
 	_, db, rls, cleanup := setupLedgerRepositoryDB(t)
 	return NewTeamRepository(db, rls), cleanup

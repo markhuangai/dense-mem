@@ -70,10 +70,11 @@ func (s *Server) withSDKRememberProgress(ctx context.Context, name string, req *
 	case !sdkToolDispatchRequested(ctx):
 		reason = "not_a_request"
 	}
-	sdkLog(ctx, s.logger, slog.LevelDebug, "mcp_progress_eligibility",
-		LogField{Key: "tool", Value: name},
-		LogField{Key: "reason", Value: reason}, LogField{Key: "protocol_version", Value: transport.protocol},
-		LogField{Key: "sse", Value: transport.sse})
+	if s.logger != nil {
+		s.logger.LogAttrs(ctx, slog.LevelDebug, "mcp_progress_eligibility",
+			slog.String("tool", name), slog.String("reason", reason), slog.String("protocol_version", transport.protocol),
+			slog.Bool("sse", transport.sse))
+	}
 	if reason != "enabled" {
 		return ctx, noop
 	}
@@ -236,16 +237,19 @@ func (p *sdkRememberProgress) emitUpdate(ctx context.Context, update requestctx.
 	}
 	p.last, p.hasLast = update, true
 	p.sequence++
-	attrs := []LogField{
-		{Key: "tool", Value: p.tool},
-		{Key: "request_id", Value: json.RawMessage(p.metadata.requestID)},
-		{Key: "progress_token", Value: p.token}, {Key: "stage", Value: update.Stage},
-		{Key: "operation", Value: update.Operation}, {Key: "attempt", Value: update.Attempt}, {Key: "batch", Value: update.Batch},
-		{Key: "sequence", Value: p.sequence}, {Key: "protocol_version", Value: p.http.protocol},
-		{Key: "invocation_id", Value: requestctx.RememberInvocationIDFromContext(ctx)},
-		{Key: "write_budget_ms", Value: rememberProgressWriteBudget.Milliseconds()},
+	attrs := []slog.Attr{
+		slog.String("tool", p.tool),
+		slog.Any("request_id", json.RawMessage(p.metadata.requestID)),
+		slog.Any("progress_token", p.token), slog.String("stage", string(update.Stage)),
+		slog.Any("operation", update.Operation), slog.Int("attempt", update.Attempt), slog.Int("batch", update.Batch),
+		slog.Int("sequence", p.sequence), slog.String("protocol_version", p.http.protocol),
+		slog.String("invocation_id", requestctx.RememberInvocationIDFromContext(ctx)),
+		slog.Int64("write_budget_ms", rememberProgressWriteBudget.Milliseconds()),
 	}
-	sdkLog(ctx, p.server.logger, slog.LevelDebug, "mcp_progress_sending", attrs...)
+	logger := p.server.logger
+	if logger != nil {
+		logger.LogAttrs(ctx, slog.LevelDebug, "mcp_progress_sending", attrs...)
+	}
 	started := time.Now()
 	writeCtx, cancel := context.WithTimeout(ctx, rememberProgressWriteBudget)
 	defer cancel()
@@ -257,16 +261,20 @@ func (p *sdkRememberProgress) emitUpdate(ctx context.Context, update requestctx.
 		})
 		err = errors.Join(err, p.http.controller.SetWriteDeadline(time.Time{}))
 	}
-	attrs = append(attrs, LogField{Key: "duration_ms", Value: time.Since(started).Milliseconds()})
+	attrs = append(attrs, slog.Int64("duration_ms", time.Since(started).Milliseconds()))
 	if err != nil {
 		p.closed = true
 		reason := "delivery_failed"
 		if errors.Is(err, http.ErrNotSupported) {
 			reason = "write_deadline_unsupported"
 		}
-		attrs = append(attrs, LogField{Key: "reason", Value: reason}, LogField{Key: "error", Value: err.Error()}, LogField{Key: "disabled", Value: true})
-		sdkLog(context.WithoutCancel(ctx), p.server.logger, slog.LevelWarn, "mcp_progress_delivery_failed", attrs...)
+		if logger != nil {
+			attrs = append(attrs, slog.String("reason", reason), slog.String("error", err.Error()), slog.Bool("disabled", true))
+			logger.LogAttrs(context.WithoutCancel(ctx), slog.LevelWarn, "mcp_progress_delivery_failed", attrs...)
+		}
 		return
 	}
-	sdkLog(ctx, p.server.logger, slog.LevelDebug, "mcp_progress_delivered", attrs...)
+	if logger != nil {
+		logger.LogAttrs(ctx, slog.LevelDebug, "mcp_progress_delivered", attrs...)
+	}
 }

@@ -18,8 +18,11 @@ type progressSlot struct {
 func progressAttrs(s postgres.MigrationSnapshot) []any {
 	if s.MigrationVersion >= postgres.FeatureStoragePrepareVersion {
 		layout := postgres.FeatureStorageLayout
-		if s.MigrationVersion == postgres.TopicStorageDataVersion {
+		switch s.MigrationVersion {
+		case postgres.TopicStorageDataVersion:
 			layout = postgres.TopicStorageLayout
+		case postgres.RelationalTopicDataVersion:
+			layout = postgres.RelationalTopicLayout
 		}
 		return []any{"migration_execution_id", s.ExecutionID, "migration_version", s.MigrationVersion, "executor_version", layout,
 			"inventory_identity", s.InventoryFingerprint, "source_schema_fingerprint", s.SourceSchemaFingerprint,

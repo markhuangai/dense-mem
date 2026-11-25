@@ -52,10 +52,6 @@ func normalizeCreateIngestInput(input CreateIngestInput) CreateIngestInput {
 	return input
 }
 
-func requestHashMatches(input CreateIngestInput, existing string) bool {
-	return strings.TrimSpace(existing) == input.RequestHash
-}
-
 func validateCreateIngestInput(input CreateIngestInput) error {
 	if _, err := uuid.Parse(input.TeamID); err != nil {
 		return fmt.Errorf("team_id is required: %w", err)

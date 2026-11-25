@@ -129,7 +129,7 @@ type telemetryRangeResult struct {
 func telemetryExecutableSpecs(specs []telemetryQuerySpec, scope TelemetryScope, features map[string]telemetryFeatureState) []telemetryQuerySpec {
 	result := make([]telemetryQuerySpec, 0, len(specs))
 	for _, spec := range specs {
-		if spec.Ledger || strings.TrimSpace(spec.Query) == "" || telemetryScopeUnsupported(spec.ID, scope) {
+		if strings.TrimSpace(spec.Query) == "" || telemetryScopeUnsupported(spec.ID, scope) {
 			continue
 		}
 		if feature, ok := telemetryFeatureForSpec(spec.ID, features); ok && feature.Set {
@@ -501,15 +501,6 @@ func telemetryFeatureForSpec(id string, states map[string]telemetryFeatureState)
 	return telemetryFeatureState{}, false
 }
 
-func hasLedgerSpecs(specs []telemetryQuerySpec) bool {
-	for _, spec := range specs {
-		if spec.Ledger {
-			return true
-		}
-	}
-	return false
-}
-
 func telemetryReady() telemetryDisposition {
 	return telemetryDisposition{Status: TelemetryItemReady}
 }
@@ -544,8 +535,6 @@ func telemetryReason(code string) string {
 		return "The telemetry source is not configured."
 	case "query_failed":
 		return "The telemetry query failed."
-	case "ledger_unavailable":
-		return "The lifecycle ledger is unavailable."
 	default:
 		return "Telemetry is unavailable."
 	}
@@ -564,15 +553,9 @@ func telemetryUnpricedReasonCode(reason string) string {
 	}
 }
 
-func markTelemetryUnavailableForNonLedger(cards []TelemetryCard, specs []telemetryQuerySpec, code string) {
-	ledgerIDs := make(map[string]struct{}, len(specs))
-	for _, spec := range specs {
-		if spec.Ledger {
-			ledgerIDs[spec.ID] = struct{}{}
-		}
-	}
+func markTelemetryUnavailable(cards []TelemetryCard, code string) {
 	for index := range cards {
-		if _, ok := ledgerIDs[cards[index].ID]; ok || cards[index].Status == TelemetryItemInactive || cards[index].Status == TelemetryItemUnsupported {
+		if cards[index].Status == TelemetryItemInactive || cards[index].Status == TelemetryItemUnsupported {
 			continue
 		}
 		cards[index].Available = false

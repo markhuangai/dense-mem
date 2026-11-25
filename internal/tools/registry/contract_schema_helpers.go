@@ -79,15 +79,6 @@ func nullableDateTime(description string) map[string]any {
 	}
 }
 
-func nullableNumber(description string, minimum float64, maximum float64) map[string]any {
-	return map[string]any{
-		"type":        []any{"number", "null"},
-		"minimum":     minimum,
-		"maximum":     maximum,
-		"description": description,
-	}
-}
-
 func boundedMap(description string) map[string]any {
 	return map[string]any{
 		"type":                 "object",

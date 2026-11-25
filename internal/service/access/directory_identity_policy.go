@@ -18,10 +18,10 @@ var ErrDirectoryPreviewStale = errors.New("directory preview is stale")
 
 func normalizeDirectoryConnector(connector *domain.DirectoryConnector) error {
 	if connector == nil {
-		return fmt.Errorf("directory connector is required")
+		return fmt.Errorf("%w: directory connector is required", ErrDirectoryInvalidValue)
 	}
 	if connector.ProviderID == uuid.Nil {
-		return fmt.Errorf("sso provider ID is required")
+		return fmt.Errorf("%w: sso provider ID is required", ErrDirectoryInvalidValue)
 	}
 	if connector.Status == "" {
 		connector.Status = domain.DirectoryConnectorDisabled
@@ -29,27 +29,27 @@ func normalizeDirectoryConnector(connector *domain.DirectoryConnector) error {
 	switch connector.Status {
 	case domain.DirectoryConnectorDisabled, domain.DirectoryConnectorObserve, domain.DirectoryConnectorActive:
 	default:
-		return fmt.Errorf("directory connector status is invalid")
+		return fmt.Errorf("%w: directory connector status is invalid", ErrDirectoryInvalidValue)
 	}
 	connector.GroupPattern = strings.TrimSpace(connector.GroupPattern)
 	if connector.GroupPattern == "" {
-		return fmt.Errorf("directory group_pattern is required")
+		return fmt.Errorf("%w: directory group_pattern is required", ErrDirectoryInvalidValue)
 	}
 	if !strings.HasPrefix(connector.GroupPattern, "^") || !strings.HasSuffix(connector.GroupPattern, "$") {
-		return fmt.Errorf("directory group_pattern must be anchored with ^ and $")
+		return fmt.Errorf("%w: directory group_pattern must be anchored with ^ and $", ErrDirectoryInvalidValue)
 	}
 	re, err := directoryGroupPatternRegexp(connector.GroupPattern)
 	if err != nil {
-		return fmt.Errorf("directory group_pattern is invalid: %w", err)
+		return fmt.Errorf("%w: directory group_pattern is invalid: %w", ErrDirectoryInvalidValue, err)
 	}
 	if namedSubexpressionCount(re, "team") != 1 || namedSubexpressionCount(re, "role") != 1 {
-		return fmt.Errorf("directory group_pattern must contain exactly one named team capture and one named role capture")
+		return fmt.Errorf("%w: directory group_pattern must contain exactly one named team capture and one named role capture", ErrDirectoryInvalidValue)
 	}
 	if connector.MaxAutoTeams == 0 {
 		connector.MaxAutoTeams = DefaultDirectoryMaxAutoTeams
 	}
 	if connector.MaxAutoTeams < 1 || connector.MaxAutoTeams > 1000 {
-		return fmt.Errorf("directory max_auto_teams must be between 1 and 1000")
+		return fmt.Errorf("%w: directory max_auto_teams must be between 1 and 1000", ErrDirectoryInvalidValue)
 	}
 	entitlements, err := normalizeDirectoryRoleEntitlements(connector.RoleEntitlements)
 	if err != nil {
@@ -75,7 +75,7 @@ func namedSubexpressionCount(re *regexp.Regexp, name string) int {
 
 func normalizeDirectoryRoleEntitlements(values map[string]domain.DirectoryRoleEntitlement) (map[string]domain.DirectoryRoleEntitlement, error) {
 	if len(values) == 0 {
-		return nil, fmt.Errorf("directory role_entitlements is required")
+		return nil, fmt.Errorf("%w: directory role_entitlements is required", ErrDirectoryInvalidValue)
 	}
 	normalized := make(map[string]domain.DirectoryRoleEntitlement, len(values))
 	keys := make([]string, 0, len(values))
@@ -86,10 +86,10 @@ func normalizeDirectoryRoleEntitlements(values map[string]domain.DirectoryRoleEn
 	for _, key := range keys {
 		capture := strings.TrimSpace(key)
 		if capture == "" {
-			return nil, fmt.Errorf("directory role entitlement capture is required")
+			return nil, fmt.Errorf("%w: directory role entitlement capture is required", ErrDirectoryInvalidValue)
 		}
 		if _, exists := normalized[capture]; exists {
-			return nil, fmt.Errorf("directory role entitlement capture %q is duplicated", capture)
+			return nil, fmt.Errorf("%w: directory role entitlement capture %q is duplicated", ErrDirectoryInvalidValue, capture)
 		}
 		entitlement := values[key]
 		role, err := NormalizeCredentialRole(entitlement.Role)
@@ -97,10 +97,10 @@ func normalizeDirectoryRoleEntitlements(values map[string]domain.DirectoryRoleEn
 			return nil, err
 		}
 		if role == "" {
-			return nil, fmt.Errorf("directory role entitlement %q must set a membership role", capture)
+			return nil, fmt.Errorf("%w: directory role entitlement %q must set a membership role", ErrDirectoryInvalidValue, capture)
 		}
 		if len(entitlement.Scopes) == 0 {
-			return nil, fmt.Errorf("directory role entitlement %q must grant at least one scope", capture)
+			return nil, fmt.Errorf("%w: directory role entitlement %q must grant at least one scope", ErrDirectoryInvalidValue, capture)
 		}
 		scopes, err := NormalizeCredentialScopes(entitlement.Scopes)
 		if err != nil {
@@ -110,10 +110,10 @@ func normalizeDirectoryRoleEntitlements(values map[string]domain.DirectoryRoleEn
 			scopes = managerCredentialScopes(scopes)
 		}
 		if strings.EqualFold(capture, "manager") && role != CredentialRoleManager {
-			return nil, fmt.Errorf("directory role entitlement %q must map to manager", capture)
+			return nil, fmt.Errorf("%w: directory role entitlement %q must map to manager", ErrDirectoryInvalidValue, capture)
 		}
 		if isReadOnlyDirectoryRole(capture) && containsString(scopes, CredentialScopeWrite) {
-			return nil, fmt.Errorf("directory role entitlement %q must not grant write", capture)
+			return nil, fmt.Errorf("%w: directory role entitlement %q must not grant write", ErrDirectoryInvalidValue, capture)
 		}
 		normalized[capture] = domain.DirectoryRoleEntitlement{Role: role, Scopes: scopes}
 	}
@@ -127,7 +127,7 @@ func isReadOnlyDirectoryRole(value string) bool {
 
 func validateDirectoryConnectorTransition(current domain.DirectoryConnector, desired domain.DirectoryConnectorStatus, previewVersion string, preview domain.DirectoryPreview) error {
 	if desired == "" {
-		return fmt.Errorf("directory connector status is required")
+		return fmt.Errorf("%w: directory connector status is required", ErrDirectoryInvalidValue)
 	}
 	if current.Status == desired {
 		return nil
@@ -143,7 +143,7 @@ func validateDirectoryConnectorTransition(current domain.DirectoryConnector, des
 		}
 		if desired == domain.DirectoryConnectorActive {
 			if strings.TrimSpace(previewVersion) == "" {
-				return fmt.Errorf("directory preview version is required before activation")
+				return fmt.Errorf("%w: preview version is required before activation", ErrDirectoryResourceConflict)
 			}
 			if previewVersion != preview.Version {
 				return ErrDirectoryPreviewStale
@@ -155,5 +155,5 @@ func validateDirectoryConnectorTransition(current domain.DirectoryConnector, des
 			return nil
 		}
 	}
-	return fmt.Errorf("directory connector must transition through observe before active")
+	return fmt.Errorf("%w: connector must transition through observe before active", ErrDirectoryInvalidValue)
 }

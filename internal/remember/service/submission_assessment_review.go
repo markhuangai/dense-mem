@@ -8,7 +8,7 @@ import (
 
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	repository "github.com/markhuangai/dense-mem/internal/knowledge/contract"
-	assignment "github.com/markhuangai/dense-mem/internal/topicassignment/contract"
+	assignment "github.com/markhuangai/dense-mem/internal/topics/assignment"
 )
 
 var errSubmissionAssessmentStaleInput = errors.New("submission assessment exact input is stale")

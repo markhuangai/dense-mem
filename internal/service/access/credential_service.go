@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/lib/pq"
 
 	accesscontract "github.com/markhuangai/dense-mem/internal/access/contract"
 	"github.com/markhuangai/dense-mem/internal/crypto"
@@ -138,39 +136,17 @@ func credentialConflict(message, reasonCode, nextAction, remediation string, ret
 }
 
 func credentialNameConflict(err error, name string) error {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-		return credentialConflict(fmt.Sprintf("credential with name '%s' already exists for this team", name), "credential_name_conflict", "correct_and_resubmit", "Choose a different credential name and submit the request again.", false)
-	}
-
-	var pqErr *pq.Error
-	if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+	if errors.Is(err, accesscontract.ErrCredentialNameConflict) {
 		return credentialConflict(fmt.Sprintf("credential with name '%s' already exists for this team", name), "credential_name_conflict", "correct_and_resubmit", "Choose a different credential name and submit the request again.", false)
 	}
 	return nil
 }
 
 func credentialCreateConflict(err error, name string) error {
-	// The memory-space migration removes this legacy singleton index. If an
-	// older database is still serving traffic, fail closed instead of reporting
-	// a successful create without a durable credential row.
-	if uniqueViolationName(err) == "idx_credentials_owner_team_active_unique" {
+	if errors.Is(err, accesscontract.ErrCredentialOwnerConflict) {
 		return credentialConflict("api credential already exists for this owner and team", "credential_exists", "correct_and_resubmit", "Use the existing credential or choose a different credential owner and name, then submit again.", false)
 	}
 	return credentialNameConflict(err, name)
-}
-
-func uniqueViolationName(err error) string {
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-		return pgErr.ConstraintName
-	}
-
-	var pqErr *pq.Error
-	if errors.As(err, &pqErr) && pqErr.Code == "23505" {
-		return pqErr.Constraint
-	}
-	return ""
 }
 
 // CredentialService is the companion interface for API credential business logic.

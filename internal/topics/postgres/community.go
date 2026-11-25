@@ -12,18 +12,16 @@ import (
 	"gorm.io/gorm"
 )
 
-const currentCommunityParent = `(result.status <> 'placed' OR EXISTS(
-	SELECT 1 FROM topic_record_heads AS parent
-	WHERE parent.team_id=result.team_id AND parent.shared_space_id=result.shared_space_id
-	AND parent.space_generation=result.space_generation AND parent.record_id=result.parent_topic_id
-	AND parent.version=result.parent_topic_version AND parent.kind='topic' AND NOT parent.retired
-))`
-
 const communityWorkReady = `work.ready_at<=statement_timestamp() AND NOT EXISTS(
 	SELECT 1 FROM topic_maintenance_batches AS batch WHERE batch.team_id=work.team_id
 	AND batch.shared_space_id=work.shared_space_id AND batch.space_generation=work.space_generation
 	AND batch.community_topic_id=work.topic_id AND batch.status='running' AND batch.lease_until>statement_timestamp()
 )`
+
+const latestCommunityOutcome = `LEFT JOIN LATERAL (SELECT status FROM community_placement_outcomes AS result
+    WHERE (result.team_id,result.shared_space_id,result.space_generation,result.topic_id,result.topic_version)=
+        (current.team_id,current.shared_space_id,current.space_generation,current.topic_id,current.definition_version)
+    ORDER BY created_at DESC,outcome_id LIMIT 1) AS latest ON true`
 
 func (s *Store) ClaimCommunity(ctx context.Context, turn topic.MaintenanceTurn, windowID string, now time.Time) (*topic.CommunityInput, *topic.MaintenanceClaim, error) {
 	var input *topic.CommunityInput
@@ -41,9 +39,13 @@ func (s *Store) ClaimCommunity(ctx context.Context, turn topic.MaintenanceTurn, 
 			WHERE work.team_id=?::uuid AND work.shared_space_id=?::uuid AND work.space_generation=?
 			AND `+communityWorkReady+` ORDER BY work.ready_at,work.topic_id LIMIT 1
 		)
-		SELECT revision.body,candidate.work_id::text,COALESCE(candidate.parent_topic_id::text,'')
+		SELECT revision.body,candidate.work_id::text,COALESCE(current.parent_topic_id::text,'')
 		FROM candidate
-		LEFT JOIN topic_record_heads AS head ON
+		JOIN topics AS current ON
+			(current.team_id,current.shared_space_id,current.space_generation,current.topic_id,current.definition_version)=
+			(candidate.team_id,candidate.shared_space_id,candidate.space_generation,candidate.topic_id,candidate.topic_version)
+			AND NOT current.retired
+		JOIN topic_record_heads AS head ON
 			(head.team_id,head.shared_space_id,head.space_generation,head.record_id,head.version)=
 			(candidate.team_id,candidate.shared_space_id,candidate.space_generation,candidate.topic_id,candidate.topic_version)
 			AND head.kind='topic' AND NOT head.retired
@@ -61,10 +63,7 @@ func (s *Store) ClaimCommunity(ctx context.Context, turn topic.MaintenanceTurn, 
 		if err != nil {
 			return err
 		}
-		input = &topic.CommunityInput{Topic: communityCandidate(record), Current: record.Definition.ParentID, WorkID: workID}
-		if input.Current == "" {
-			input.Current = priorParent
-		}
+		input = &topic.CommunityInput{Topic: communityCandidate(record), Current: priorParent, WorkID: workID}
 		text := record.Definition.Label + " " + record.Definition.Description
 		words := []topic.SourceSnapshot{{State: map[string]string{"content": text}}}
 		var forced []string
@@ -80,7 +79,12 @@ func (s *Store) ClaimCommunity(ctx context.Context, turn topic.MaintenanceTurn, 
 				input.Candidates = append(input.Candidates, communityCandidate(candidate.Record))
 			}
 		}
-		return nil
+		ids := []string{input.Topic.ID}
+		for _, candidate := range input.Candidates {
+			ids = append(ids, candidate.ID)
+		}
+		input.EndpointVersions, err = topicEndpointVersions(tx, fence, ids, false)
+		return err
 	})
 	if err != nil || input == nil {
 		return nil, nil, err
@@ -117,11 +121,7 @@ func (s *Store) CompleteCommunity(ctx context.Context, claim topic.MaintenanceCl
 		if err := maintenancePublicationFence(topic.WithMaintenanceClaim(ctx, claim), tx, fence); err != nil {
 			return err
 		}
-		// Serialize hierarchy changes with catalog publication and rollback.
-		var catalogRevision int64
-		if err := tx.Raw(`SELECT revision FROM topic_catalog_heads
-			WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? FOR UPDATE`,
-			fence.TeamID, fence.SpaceID, fence.Generation).Row().Scan(&catalogRevision); err != nil {
+		if err := lockOrganizationCatalog(tx, fence); err != nil {
 			return err
 		}
 		ids := []string{input.Topic.ID}
@@ -139,32 +139,16 @@ func (s *Store) CompleteCommunity(ctx context.Context, claim topic.MaintenanceCl
 			parentVersion = versions[outcome.ParentID]
 			ids = append(ids, outcome.ParentID)
 		}
-		rows, err := tx.Raw(`SELECT record_id::text,version FROM topic_record_heads
-			WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND kind='topic' AND NOT retired
-			AND record_id=ANY(?::uuid[]) ORDER BY record_id FOR UPDATE`, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(ids)).Rows()
+		current, err := topicEndpointVersions(tx, fence, ids, true)
 		if err != nil {
 			return err
 		}
-		for rows.Next() {
-			var id string
-			var version int64
-			if err := rows.Scan(&id, &version); err != nil {
-				rows.Close()
-				return err
+		for id := range versions {
+			expected, ok := input.EndpointVersions[id]
+			if !ok || current[id] != expected {
+				versionError := topic.PublicationVersionRejection("community_endpoint_version", id, expected, current[id])
+				return errors.Join(topic.ErrSourceStale, versionError)
 			}
-			if versions[id] != version {
-				rows.Close()
-				return topic.ErrSourceStale
-			}
-			delete(versions, id)
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return err
-		}
-		if len(versions) != 0 {
-			return topic.ErrSourceStale
 		}
 		if outcome.ParentID != "" {
 			edge := communityEdge{TopicID: input.Topic.ID, ParentID: outcome.ParentID}
@@ -195,6 +179,15 @@ func (s *Store) CompleteCommunity(ctx context.Context, claim topic.MaintenanceCl
 			input.Topic.ID, input.Topic.Version, outcome.InputHash, outcome.Method, outcome.Status, outcome.ParentID, parentVersion, claim.ID).Error; err != nil {
 			return err
 		}
+		if settled {
+			if err := tx.Exec(`UPDATE topics SET parent_topic_id=NULLIF(?,'')::uuid,placement=?,version=version+1
+                WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND topic_id=?::uuid
+                AND version=? AND (parent_topic_id,placement) IS DISTINCT FROM (NULLIF(?,'')::uuid,?::text)`,
+				outcome.ParentID, outcome.Status, fence.TeamID, fence.SpaceID, fence.Generation, input.Topic.ID,
+				input.EndpointVersions[input.Topic.ID], outcome.ParentID, outcome.Status).Error; err != nil {
+				return err
+			}
+		}
 		phase := "batch_fence"
 		if err := completeMaintenanceBatch(tx, claim, topic.OrganizationResult{}, failure, now, &phase); err != nil {
 			return err
@@ -208,24 +201,29 @@ func (s *Store) CompleteCommunity(ctx context.Context, claim topic.MaintenanceCl
 
 type communityEdge struct{ TopicID, ParentID string }
 
-func exposedCommunityEdges(tx *gorm.DB, fence scope, revisedTopics []string) ([]communityEdge, error) {
-	if len(revisedTopics) == 0 {
-		return nil, nil
+func topicEndpointVersions(tx *gorm.DB, fence scope, ids []string, lock bool) (map[string]int64, error) {
+	query := `SELECT topic_id::text,version FROM topics
+        WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?
+            AND topic_id=ANY(?::uuid[]) AND NOT retired ORDER BY topic_id`
+	if lock {
+		query += ` FOR NO KEY UPDATE`
 	}
-	var edges []communityEdge
-	err := tx.Raw(`SELECT work.topic_id::text AS topic_id,payload.body->'definition'->>'parent_id' AS parent_id
-		FROM topic_maintenance_community_work AS work
-		JOIN topic_record_heads AS head ON
-			(head.team_id,head.shared_space_id,head.space_generation,head.record_id,head.version)=
-			(work.team_id,work.shared_space_id,work.space_generation,work.topic_id,work.topic_version)
-		JOIN topic_revision_payloads AS payload ON
-			(payload.team_id,payload.shared_space_id,payload.space_generation,payload.record_id,payload.version)=
-			(head.team_id,head.shared_space_id,head.space_generation,head.record_id,head.version)
-		WHERE work.team_id=?::uuid AND work.shared_space_id=?::uuid AND work.space_generation=?
-		AND work.parent_topic_id=ANY(?::uuid[]) AND NOT head.retired
-		AND NULLIF(payload.body->'definition'->>'parent_id','') IS NOT NULL
-		ORDER BY work.topic_id`, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(revisedTopics)).Scan(&edges).Error
-	return edges, err
+	rows, err := tx.Raw(query,
+		fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(ids)).Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	versions := make(map[string]int64, len(ids))
+	for rows.Next() {
+		var id string
+		var version int64
+		if err := rows.Scan(&id, &version); err != nil {
+			return nil, err
+		}
+		versions[id] = version
+	}
+	return versions, rows.Err()
 }
 
 func conflictingCommunityEdge(tx *gorm.DB, fence scope, edges []communityEdge) (*communityEdge, error) {
@@ -243,15 +241,10 @@ func conflictingCommunityEdge(tx *gorm.DB, fence scope, edges []communityEdge) (
 		SELECT edge.topic_id,edge.parent_id,edge.ordinal,1
 		FROM unnest(?::uuid[],?::uuid[]) WITH ORDINALITY AS edge(topic_id,parent_id,ordinal)
 		UNION ALL
-		SELECT chain.topic_id,CASE WHEN placement.status IS NULL THEN NULLIF(payload.body->'definition'->>'parent_id','')::uuid
-			ELSE placement.parent_topic_id END,chain.ordinal,chain.depth+1
-		FROM chain JOIN topic_record_heads AS head ON head.record_id=chain.id
-		JOIN topic_revision_payloads AS payload USING(team_id,shared_space_id,space_generation,record_id,version)
-		LEFT JOIN LATERAL (SELECT status,parent_topic_id FROM community_placement_outcomes AS result
-			WHERE result.team_id=head.team_id AND result.shared_space_id=head.shared_space_id AND result.space_generation=head.space_generation
-			AND result.topic_id=head.record_id AND result.topic_version=head.version AND result.status IN ('placed','standalone')
-			AND `+currentCommunityParent+` ORDER BY result.created_at DESC,result.outcome_id LIMIT 1) AS placement ON true
-		WHERE head.team_id=?::uuid AND head.shared_space_id=?::uuid AND head.space_generation=? AND head.kind='topic' AND NOT head.retired
+        SELECT chain.topic_id,parent.parent_topic_id,chain.ordinal,chain.depth+1
+        FROM chain JOIN topics AS parent ON parent.topic_id=chain.id
+        WHERE parent.team_id=?::uuid AND parent.shared_space_id=?::uuid AND parent.space_generation=?
+          AND NOT parent.retired
 		AND chain.depth<=?
 	) SELECT COALESCE(min(ordinal),0) FROM chain WHERE id=topic_id OR (id IS NOT NULL AND depth>?)`,
 		pq.Array(topics), pq.Array(parents), fence.TeamID, fence.SpaceID, fence.Generation,
@@ -266,7 +259,7 @@ func attachCommunityPlacement(tx *gorm.DB, fence scope, views []topic.RecordView
 	var ids []string
 	positions := make(map[string]int, len(views))
 	for i, view := range views {
-		if view.Kind == topic.Topic && view.Current && !view.Retired {
+		if view.Kind == topic.Topic && view.StaleReason != "historical_revision" && !view.Retired {
 			ids = append(ids, view.ID)
 			positions[view.ID] = i
 		}
@@ -274,24 +267,32 @@ func attachCommunityPlacement(tx *gorm.DB, fence scope, views []topic.RecordView
 	if len(ids) == 0 {
 		return nil
 	}
-	rows, err := tx.Raw(`SELECT DISTINCT ON (result.topic_id) result.topic_id::text,result.status,COALESCE(result.parent_topic_id::text,'')
-		FROM community_placement_outcomes AS result
-		JOIN topic_record_heads AS head ON head.team_id=result.team_id AND head.shared_space_id=result.shared_space_id
-		 AND head.space_generation=result.space_generation AND head.record_id=result.topic_id AND head.version=result.topic_version
-		WHERE result.team_id=?::uuid AND result.shared_space_id=?::uuid AND result.space_generation=?
-		 AND result.topic_id=ANY(?::uuid[]) AND `+currentCommunityParent+`
-		ORDER BY result.topic_id,result.created_at DESC,result.outcome_id`, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(ids)).Rows()
+	rows, err := tx.Raw(`SELECT current.topic_id::text,current.version,current.placement,
+        COALESCE(current.parent_topic_id::text,''),COALESCE(latest.status,'')
+        FROM topics AS current `+latestCommunityOutcome+`
+        WHERE current.team_id=?::uuid AND current.shared_space_id=?::uuid AND current.space_generation=?
+            AND current.topic_id=ANY(?::uuid[]) AND NOT current.retired`, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(ids)).Rows()
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id, status, parent string
-		if err := rows.Scan(&id, &status, &parent); err != nil {
+		var id, placement, parent, outcome string
+		var version int64
+		if err := rows.Scan(&id, &version, &placement, &parent, &outcome); err != nil {
 			return err
 		}
 		index := positions[id]
-		views[index].CommunityParentID, views[index].CommunityPlacement = parent, status
+		view := &views[index]
+		view.EditVersion = version
+		definition := *view.Definition
+		definition.ParentID = parent
+		view.Definition = &definition
+		if outcome == "failed" || outcome == "ambiguous" {
+			view.CommunityPlacement = outcome
+		} else if placement != "declared" {
+			view.CommunityParentID, view.CommunityPlacement = parent, placement
+		}
 	}
 	return rows.Err()
 }

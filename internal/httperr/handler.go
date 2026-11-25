@@ -27,6 +27,8 @@ func HTTPStatusCode(code ErrorCode) int {
 		return http.StatusBadRequest
 	case CONFLICT:
 		return http.StatusConflict
+	case GONE:
+		return http.StatusGone
 	case RATE_LIMITED:
 		return http.StatusTooManyRequests
 	case SERVICE_UNAVAILABLE:

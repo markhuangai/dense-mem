@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"strings"
 
 	"gorm.io/gorm"
@@ -36,7 +37,7 @@ func (r *Store) PlanRememberEmbeddings(
 			if text == "" {
 				return fmt.Errorf("%w: empty %s document", ErrInlineEmbeddingPlanMismatch, sourceKind)
 			}
-			hash := searchDocumentHash(text)
+			hash := storagepostgres.SearchDocumentHash(text)
 			if _, exists := seenHashes[hash]; exists {
 				return nil
 			}

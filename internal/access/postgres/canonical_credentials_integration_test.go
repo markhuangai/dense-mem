@@ -320,7 +320,7 @@ func createLedgerSSOIdentity(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS
 	return identityID
 }
 
-func createOwnedCredential(t *testing.T, repo *CredentialRepositoryImpl, teamID, ownerID uuid.UUID, name string) *domain.Credential {
+func createOwnedCredential(t *testing.T, repo *credentialRepository, teamID, ownerID uuid.UUID, name string) *domain.Credential {
 	t.Helper()
 	id := uuid.New()
 	prefix := "dm_" + strings.ReplaceAll(id.String(), "-", "")[:20]
@@ -421,6 +421,7 @@ func TestCanonicalCredentialScopesRespectMembershipGrants(t *testing.T) {
 	}))
 	updated, err = service.UpdateScopesForTeam(ctx, teamUUID, owned.ID, []string{"read"}, nil, "control", "127.0.0.1", "owned-scope-downgrade")
 	require.NoError(t, err)
+	require.Equal(t, []string{"read"}, updated.Scopes)
 	updated, err = service.UpdateScopesForTeam(ctx, teamUUID, owned.ID, []string{"read", "write"}, nil, "control", "127.0.0.1", "owned-scope-upgrade")
 	require.NoError(t, err)
 	require.True(t, updated.MemoryCapabilities().Private.Write)

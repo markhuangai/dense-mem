@@ -3,10 +3,11 @@ package service
 import (
 	"context"
 	"errors"
-	"github.com/markhuangai/dense-mem/internal/modelprovider"
-	assessmentfixture "github.com/markhuangai/dense-mem/internal/testfixture/assessment"
 	"strings"
 	"testing"
+
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	assessmentfixture "github.com/markhuangai/dense-mem/internal/testfixture/assessment"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
@@ -551,15 +552,6 @@ func validSynchronousAssessmentResponse(request assessor.SemanticAssessmentReque
 		response.EvidenceEquivalenceResults = append(response.EvidenceEquivalenceResults, assessor.SemanticAssessmentEvidenceEquivalenceResult{EvidenceID: group.EvidenceID, Action: "new"})
 	}
 	return response
-}
-
-func assessmentEvidenceByID(evidence []assessor.SemanticReviewEvidence, id string) assessor.SemanticReviewEvidence {
-	for _, item := range evidence {
-		if item.EvidenceID == id {
-			return item
-		}
-	}
-	panic("assessment evidence is missing")
 }
 
 func cloneRememberAssessmentSnapshot(snapshot RememberAssessmentSnapshot) RememberAssessmentSnapshot {

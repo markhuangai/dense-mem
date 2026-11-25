@@ -165,7 +165,7 @@ func TestSDKHTTPHandlerLogsRoutineSessionLifecycleAtDebug(t *testing.T) {
 func TestSDKLoggerDemotesOnlyRoutineSessionLifecycle(t *testing.T) {
 	var logBuffer bytes.Buffer
 	delegate := slog.New(slog.NewJSONHandler(&logBuffer, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	logger := newSDKLogger(delegate).With("component", "mcp_sdk").WithGroup("transport")
+	logger := newSDKLogger(delegate.With("component", "mcp_sdk")).WithGroup("transport")
 
 	for _, message := range []string{
 		"server connecting",
@@ -197,40 +197,9 @@ func TestSDKLoggerDemotesOnlyRoutineSessionLifecycle(t *testing.T) {
 		require.Equal(t, "DEBUG", byMessage[message]["level"])
 	}
 	require.Equal(t, "INFO", byMessage["resource subscribed"]["level"])
-	require.Equal(t, "WARN", byMessage["calling tools/list: warning"]["level"])
-	require.Equal(t, "ERROR", byMessage["server connect error"]["level"])
-}
-
-type sdkContextLogger struct {
-	events []string
-}
-
-type sdkContextKey struct{}
-
-func (l *sdkContextLogger) record(message string)                        { l.events = append(l.events, message) }
-func (l *sdkContextLogger) Error(message string, _ error, _ ...LogField) { l.record(message) }
-func (l *sdkContextLogger) Warn(message string, _ ...LogField)           { l.record(message) }
-func (l *sdkContextLogger) Trace(message string, _ ...LogField)          { l.record(message) }
-func (l *sdkContextLogger) Debug(message string, _ ...LogField)          { l.record(message) }
-func (l *sdkContextLogger) Info(message string, _ ...LogField)           { l.record(message) }
-func (l *sdkContextLogger) Fatal(message string, _ ...LogField)          { l.record(message) }
-func (l *sdkContextLogger) WarnContext(_ context.Context, message string, _ ...LogField) {
-	l.record(message)
-}
-func (l *sdkContextLogger) TraceContext(_ context.Context, message string, _ ...LogField) {
-	l.record(message)
-}
-func (l *sdkContextLogger) DebugContext(_ context.Context, message string, _ ...LogField) {
-	l.record(message)
-}
-func (l *sdkContextLogger) InfoContext(_ context.Context, message string, _ ...LogField) {
-	l.record(message)
-}
-func (l *sdkContextLogger) ErrorContext(_ context.Context, message string, _ error, _ ...LogField) {
-	l.record(message)
-}
-func (l *sdkContextLogger) FatalContext(_ context.Context, message string, _ ...LogField) {
-	l.record(message)
+	require.Equal(t, "WARN", records[5]["level"])
+	require.Equal(t, "mcp_sdk_event", records[5]["msg"])
+	require.Equal(t, "ERROR", byMessage["mcp_sdk_event"]["level"])
 }
 
 type sdkTestLogValuer struct{}
@@ -238,45 +207,29 @@ type sdkTestLogValuer struct{}
 func (sdkTestLogValuer) LogValue() slog.Value { return slog.StringValue("resolved-session") }
 
 func TestSDKRootLoggerRoutesContextAndSanitizesSDKFields(t *testing.T) {
-	logger := &sdkContextLogger{}
-	ctx := context.WithValue(context.Background(), sdkContextKey{}, "request")
-	handler := sdkRootLogHandler{logger: logger}
-	require.True(t, handler.Enabled(ctx, slog.LevelInfo))
-	require.False(t, (sdkRootLogHandler{}).Enabled(ctx, slog.LevelInfo))
+	var console bytes.Buffer
+	root := observability.NewWithHandler(slog.NewJSONHandler(&console, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	ctx := correlation.WithID(context.Background(), "trusted-correlation")
+	logger := newSDKLogger(root.ContextSlog()).With("ignored", "unexpected field").WithGroup("transport")
 
-	bound, ok := handler.WithAttrs([]slog.Attr{
-		slog.String("ignored", "value"),
+	logger.LogAttrs(ctx, slog.LevelError, "unexpected message",
 		slog.Any("session_id", sdkTestLogValuer{}),
-	}).(sdkRootLogHandler)
-	require.True(t, ok)
-	grouped, ok := bound.WithGroup(" transport ").WithGroup("inner").(sdkRootLogHandler)
-	require.True(t, ok)
-	record := slog.NewRecord(time.Now(), slog.LevelError, "server connect error", 0)
-	record.AddAttrs(slog.Any("session_id", sdkTestLogValuer{}), slog.String("ignored", "value"), slog.Any("error", errors.New("provider failure")))
-	require.NoError(t, grouped.Handle(ctx, record))
-	require.NotEmpty(t, logger.events)
-	require.Equal(t, "mcp_sdk_event", logger.events[len(logger.events)-1])
+		slog.String("ignored", "provider content"),
+		slog.Any("error", errors.New("provider failure")))
 
-	for _, level := range []slog.Level{slog.Level(-8), slog.LevelDebug, slog.LevelInfo, slog.LevelWarn, slog.LevelError, slog.Level(12)} {
-		sdkLog(ctx, logger, level, "sdk-log")
-	}
-	sdkLogError(ctx, logger, slog.LevelInfo, "sdk-error-low", errors.New("low"))
-	sdkLogError(ctx, logger, slog.LevelError, "sdk-error-high", errors.New("high"))
-	for _, message := range []string{"sdk-log", "sdk-error-low", "sdk-error-high"} {
-		require.Contains(t, logger.events, message)
-	}
-
-	var resolved slog.Value = slog.AnyValue(sdkTestLogValuer{})
-	require.Equal(t, "resolved-session", slogValueAny(resolved))
-	require.Equal(t, "mcp_sdk_event", sdkMessageClass("unclassified event"))
-	require.Equal(t, "server session connected", sdkMessageClass("server session connected"))
-
-	var nilRecord slog.Record
-	require.NoError(t, (sdkRootLogHandler{}).Handle(ctx, nilRecord))
+	records := decodeSDKLogRecords(t, console.Bytes())
+	require.Len(t, records, 1)
+	require.Equal(t, "mcp_sdk_event", records[0]["msg"])
+	require.Equal(t, "trusted-correlation", records[0]["correlation_id"])
+	require.Equal(t, "resolved-session", records[0]["transport.session_id"])
+	require.Contains(t, console.String(), "mcp SDK operation failed")
+	require.NotContains(t, console.String(), "provider")
+	require.NotContains(t, console.String(), "unexpected")
+	newSDKLogger(nil).Info("ignored")
 }
 
 func TestSDKToolOutcomeLoggingCoversAllApplicationOutcomesAndReferenceShapes(t *testing.T) {
-	logger := &sdkContextLogger{}
+	logger, console := testLogger(t)
 	server := &Server{logger: logger}
 	started := time.Now()
 	refs := map[string]any{
@@ -293,7 +246,7 @@ func TestSDKToolOutcomeLoggingCoversAllApplicationOutcomesAndReferenceShapes(t *
 	server.logSDKToolOutcome(cancelled, "tool", started, nil, nil)
 	server.logSDKToolOutcome(context.Background(), "tool", started, nil, nil)
 
-	attrs := []LogField{{Key: "existing", Value: true}}
+	attrs := []slog.Attr{slog.Bool("existing", true)}
 	for _, value := range []any{
 		refs,
 		json.RawMessage(`{"correlation_id":"raw-correlation"}`),
@@ -304,7 +257,7 @@ func TestSDKToolOutcomeLoggingCoversAllApplicationOutcomesAndReferenceShapes(t *
 		attrs = appendSDKApplicationRefs(attrs, value)
 	}
 	require.GreaterOrEqual(t, len(attrs), 4)
-	require.Contains(t, logger.events, "mcp_tool_outcome")
+	require.Contains(t, console.String(), "mcp_tool_outcome")
 	(&Server{}).logSDKToolOutcome(context.Background(), "tool", started, nil, nil)
 }
 
@@ -343,10 +296,6 @@ func (s *cancellationRejectingMCPLogSink) WriteLog(ctx context.Context, record o
 	return nil
 }
 
-type contextualMCPLogger struct {
-	testLoggerAdapter
-}
-
 type sdkCancellingLogWriter struct {
 	cancel context.CancelFunc
 }
@@ -354,16 +303,6 @@ type sdkCancellingLogWriter struct {
 func (w sdkCancellingLogWriter) Write(data []byte) (int, error) {
 	w.cancel()
 	return len(data), nil
-}
-
-func (l contextualMCPLogger) ErrorContext(ctx context.Context, message string, err error, fields ...LogField) {
-	if logger, ok := l.delegate.(interface {
-		ErrorContext(context.Context, string, error, ...observability.LogAttr)
-	}); ok {
-		logger.ErrorContext(ctx, message, err, testObservabilityFields(fields)...)
-		return
-	}
-	l.Error(message, err, fields...)
 }
 
 func TestSDKToolOutcomeLoggingDetachesCancelledContextForPersistence(t *testing.T) {
@@ -385,7 +324,7 @@ func TestSDKToolOutcomeLoggingDetachesCancelledContextForPersistence(t *testing.
 				root := observability.NewWithHandler(slog.NewJSONHandler(sdkCancellingLogWriter{cancel: cancel}, &slog.HandlerOptions{Level: slog.LevelDebug}))
 				sink := &cancellationRejectingMCPLogSink{}
 				require.NoError(t, root.AttachSink(sink))
-				server := &Server{logger: contextualMCPLogger{testLoggerAdapter{delegate: root}}}
+				server := &Server{logger: root.ContextSlog()}
 				if cancelBeforeLog || test.outcome == "cancelled" {
 					cancel()
 				}
@@ -406,7 +345,7 @@ func TestSDKToolOutcomeLoggingUsesTrustedCorrelationContext(t *testing.T) {
 	root := observability.NewWithHandler(slog.NewJSONHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	sink := &cancellationRejectingMCPLogSink{}
 	require.NoError(t, root.AttachSink(sink))
-	server := &Server{logger: testLoggerAdapter{delegate: root}}
+	server := &Server{logger: root.ContextSlog()}
 
 	clientContext := correlation.WithClientProvidedID(context.Background(), "client-controlled-correlation")
 	clientContext = requestctx.WithAuthenticationVerified(clientContext)
@@ -430,7 +369,7 @@ func TestSDKToolLookupFailureLoggingDetachesCancelledContextForPersistence(t *te
 	root := observability.NewWithHandler(slog.NewJSONHandler(&bytes.Buffer{}, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	sink := &cancellationRejectingMCPLogSink{}
 	require.NoError(t, root.AttachSink(sink))
-	server := &Server{logger: contextualMCPLogger{testLoggerAdapter{delegate: root}}}
+	server := &Server{logger: root.ContextSlog()}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -535,7 +474,7 @@ func TestSDKHTTPHandlerPreservesOversizedBodyForSDKValidation(t *testing.T) {
 	require.Equal(t, http.StatusRequestEntityTooLarge, response.Code)
 }
 
-func TestSDKHTTPHandlerValidatesBeforeToolLookup(t *testing.T) {
+func TestSDKHTTPHandlerValidatesEnvelopeBeforeToolLookup(t *testing.T) {
 	logger, _ := testLogger(t)
 	reg := registry.New()
 	require.NoError(t, reg.Register(registry.Tool{Name: "write_tool", RequiredScopes: []string{"write"}}))
@@ -575,7 +514,8 @@ func TestSDKHTTPHandlerValidatesBeforeToolLookup(t *testing.T) {
 	request.Header.Set("MCP-Protocol-Version", "2025-11-25")
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	require.NotContains(t, response.Body.String(), "tool not found")
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Contains(t, response.Body.String(), `"reason_code":"tool_not_available"`)
 }
 
 func TestSDKHTTPHandlerDoesNotAnswerInitializedNotification(t *testing.T) {
@@ -743,7 +683,7 @@ func TestSDKToolHandlerDoesNotCountToolNotifications(t *testing.T) {
 	server := NewServer(reg, "profile-a", logger)
 	request := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","method":"tools/call","params":{"name":"good","arguments":{}}}`))
 	request.Header.Set("Content-Type", "application/json")
-	annotateSDKToolDispatch(request)
+	require.NoError(t, PrepareSDKRequest(request))
 	ctx, metrics := domain.WithMCPToolMetrics(request.Context())
 	result, err := server.sdkToolHandler("good")(ctx, &sdkmcp.CallToolRequest{Params: &sdkmcp.CallToolParamsRaw{Arguments: json.RawMessage(`{}`)}})
 	require.NoError(t, err)
@@ -763,6 +703,7 @@ func TestSDKLookupRejectionCountsAsOneFailedCall(t *testing.T) {
 	ctx, metrics := domain.WithMCPToolMetrics(request.Context())
 	*request = *request.WithContext(ctx)
 	response := httptest.NewRecorder()
+	require.NoError(t, PrepareSDKRequest(request))
 	require.True(t, server.writeSDKToolLookupError(response, request, true))
 	require.NotContains(t, logBuffer.String(), unknownName)
 	require.Contains(t, logBuffer.String(), `"lookup_reason":"tool_not_available"`)

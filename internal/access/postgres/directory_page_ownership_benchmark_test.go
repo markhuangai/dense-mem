@@ -27,7 +27,7 @@ import (
 type directoryPageOwnershipFixture struct {
 	db           *gorm.DB
 	rls          *storagepostgres.RLS
-	repo         *DirectoryIdentityRepositoryImpl
+	repo         *directoryIdentityRepository
 	service      *accessservice.DirectoryIdentityService
 	connectorIDs []uuid.UUID
 	users        []*domain.DirectoryUser

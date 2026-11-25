@@ -179,7 +179,7 @@ func (s *Store) SaveManagementDraft(ctx context.Context, teamID, id string, inpu
 		if diagnostic := topic.PublicationDiagnosticFromContext(ctx); diagnostic != nil {
 			diagnostic.DraftID = id
 		}
-		current, err := managementEditContext(tx, fence, id, input)
+		current, err := managementEditContext(tx, fence, id, input, true)
 		if err != nil {
 			return err
 		}
@@ -307,3 +307,20 @@ func (s *Store) CommandManagementDraft(ctx context.Context, teamID, id, action s
 }
 
 var _ topic.ManagementRepository = (*Store)(nil)
+
+func (s *Store) ReplayManagementDraft(ctx context.Context, teamID, id, action, key string, input any) (topic.ManagementDraft, error) {
+	var result storedManagementDraft
+	err := s.withManagerScope(ctx, teamID, true, func(tx *gorm.DB, fence scope, owner string) error {
+		hash, err := topic.ManagementRequestHash(action, id, input)
+		if err != nil {
+			return err
+		}
+		var found bool
+		result, found, err = replayManagementDraft(tx, fence, owner, key, hash)
+		if err != nil || found {
+			return err
+		}
+		return topic.ErrLegacyMutation
+	})
+	return result.Draft, err
+}

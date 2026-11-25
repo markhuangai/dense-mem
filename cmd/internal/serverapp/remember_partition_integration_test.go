@@ -21,7 +21,6 @@ import (
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	privacy "github.com/markhuangai/dense-mem/internal/privacy/postgres"
 	remember "github.com/markhuangai/dense-mem/internal/remember/service"
-	processor "github.com/markhuangai/dense-mem/internal/remember/service/processor"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	trace "github.com/markhuangai/dense-mem/internal/trace/contract"
@@ -64,7 +63,7 @@ func TestRememberPartitionPostgres(t *testing.T) {
 	model, dimensions := ensureRememberProcessorIntegrationSearchContract(t, admin, rls)
 	provider := &partitionPostgresAssessor{}
 	ledger := knowledgepg.NewStore(app, rls)
-	service := remember.NewService(remember.Dependencies{Synchronous: processor.NewSynchronousProcessor(processor.ProcessorDependencies{
+	service := remember.NewService(remember.Dependencies{Synchronous: remember.NewSynchronousProcessor(remember.ProcessorDependencies{
 		Ledger: ledger, Assessor: provider, Limits: assessor.DefaultSemanticAssessmentLimits(), CommitFailureStage: knowledgepg.RememberCommitFailureStage,
 		EmbeddingExecutor: semanticwrite.NewProviderExecutor(rememberProcessorIntegrationSearchEmbedder{model: model, dimensions: dimensions}),
 	})})

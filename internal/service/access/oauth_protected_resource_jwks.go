@@ -64,6 +64,18 @@ func (validator *OAuthProtectedResourceValidator) cacheForProfile(name string) *
 	return cache
 }
 
+func (validator *OAuthProtectedResourceValidator) retainCompatibleJWKS(previous *OAuthProtectedResourceValidator, issuer string) {
+	if previous == nil {
+		return
+	}
+	profile, configured := validator.profileForIssuer(issuer)
+	oldProfile, previouslyConfigured := previous.profileForIssuer(issuer)
+	if configured && previouslyConfigured && profile.Name == oldProfile.Name &&
+		oauthJWKSSourceFingerprint(profile) == oauthJWKSSourceFingerprint(oldProfile) {
+		validator.caches[profile.Name] = previous.cacheForProfile(profile.Name)
+	}
+}
+
 func (validator *OAuthProtectedResourceValidator) loadOAuthJWKS(ctx context.Context, profile domain.OAuthProtectedResourceProfile, cache *oauthJWKSCache, force bool) (jose.JSONWebKeySet, bool, error) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()

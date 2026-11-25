@@ -99,38 +99,18 @@ func rememberInvocationExchanges(input []knowledgecontract.RememberAttemptDiagno
 	return result, nil
 }
 
-func rememberInvocationExchangesForJSONB(
-	ctx context.Context,
-	tx *gorm.DB,
-	input []knowledgecontract.RememberAttemptDiagnosticInput,
-	maxBytes int,
-) ([]byte, int64, error) {
-	compactLimit := maxBytes
-	for range 16 {
-		exchanges, err := rememberInvocationExchanges(input, compactLimit)
-		if err != nil {
-			return nil, 0, err
-		}
-		exchangesJSON, err := json.Marshal(exchanges)
-		if err != nil {
-			return nil, 0, err
-		}
-		var providerExchangeBytes int64
-		if err := tx.WithContext(ctx).Raw(
-			`SELECT octet_length(?::jsonb::text)`, string(exchangesJSON),
-		).Row().Scan(&providerExchangeBytes); err != nil {
-			return nil, 0, err
-		}
-		if providerExchangeBytes <= int64(maxBytes) {
-			return exchangesJSON, providerExchangeBytes, nil
-		}
-		excess := providerExchangeBytes - int64(maxBytes)
-		if excess >= int64(compactLimit) {
-			return nil, 0, fmt.Errorf("remember invocation: provider exchanges exceed %d bytes", maxBytes)
-		}
-		compactLimit -= int(excess)
+func marshalRememberInvocationExchanges(input []knowledgecontract.RememberAttemptDiagnosticInput, maxBytes int) ([]byte, error) {
+	// JSONB adds spaces between fields. Each exchange is a flat object with at most 17 fields.
+	const jsonbSeparatorBytesPerExchange = 34
+	compactLimit := maxBytes - len(input)*jsonbSeparatorBytesPerExchange
+	if compactLimit < 2 {
+		return nil, fmt.Errorf("remember invocation: provider exchanges exceed %d bytes", maxBytes)
 	}
-	return nil, 0, fmt.Errorf("remember invocation: provider exchanges could not be bounded to %d bytes", maxBytes)
+	exchanges, err := rememberInvocationExchanges(input, compactLimit)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(exchanges)
 }
 
 func validateRememberInvocationDiagnostic(input knowledgecontract.RememberInvocationDiagnosticInput) error {
@@ -248,7 +228,11 @@ func (r *Store) RecordRememberInvocationDiagnostic(ctx context.Context, input kn
 	if responseBody == nil {
 		responseBody = []byte{}
 	}
-	err := r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
+	exchangesJSON, err := marshalRememberInvocationExchanges(input.ProviderExchanges, maxExchangeBytes)
+	if err != nil {
+		return err
+	}
+	err = r.withTeamProfileTx(ctx, input.TeamID, input.OwnerProfileID, func(tx *gorm.DB) error {
 		if input.SpaceID != "" {
 			var locked bool
 			if err := tx.WithContext(ctx).Raw(`
@@ -272,25 +256,18 @@ func (r *Store) RecordRememberInvocationDiagnostic(ctx context.Context, input kn
 				return fmt.Errorf("remember invocation: private memory space generation is stale")
 			}
 		}
-		exchangesJSON, providerExchangeBytes, err := rememberInvocationExchangesForJSONB(ctx, tx, input.ProviderExchanges, maxExchangeBytes)
-		if err != nil {
-			return err
-		}
-		if int64(len(requestBody))+int64(len(responseBody))+providerExchangeBytes > 64<<20 {
-			return fmt.Errorf("remember invocation: payload exceeds %d bytes", 64<<20)
-		}
 		return tx.WithContext(ctx).Exec(`
 			INSERT INTO remember_invocation_diagnostics (
 				team_id, invocation_id, owner_profile_id, space_id, space_generation,
 				canonical_attempt_id, request_hash, correlation_id, classification, outcome,
 				failed_phase, error_code, retryable, duration_ms, request_bytes, request_capture_state, request_capture_reason,
-				provider_exchanges, response_bytes, response_capture_state, response_capture_reason, created_at, completed_at, expires_at)
+				provider_exchanges, response_bytes, response_capture_state, response_capture_reason, created_at, completed_at, expires_at, uses_attempt_capture)
 			VALUES (?::uuid, ?::uuid, ?::uuid, NULLIF(?, '')::uuid, ?, NULLIF(?, '')::uuid,
-				?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?)
+				?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?)
 				`, input.TeamID, input.InvocationID, input.OwnerProfileID, input.SpaceID, input.SpaceGeneration,
 			input.CanonicalAttemptID, input.RequestHash, input.CorrelationID, input.Classification, input.Outcome,
 			input.FailedPhase, input.ErrorCode, input.Retryable, input.Duration.Milliseconds(), requestBody, input.RequestCaptureState, input.RequestCaptureReason, string(exchangesJSON),
-			responseBody, input.CallerResponseCaptureState, input.CallerResponseCaptureReason, input.CreatedAt.UTC(), input.CompletedAt.UTC(), input.ExpiresAt.UTC()).Error
+			responseBody, input.CallerResponseCaptureState, input.CallerResponseCaptureReason, input.CreatedAt.UTC(), input.CompletedAt.UTC(), input.ExpiresAt.UTC(), input.UsesAttemptCapture).Error
 	})
 	if err != nil {
 		return err
@@ -380,7 +357,7 @@ func (r *Store) GetRememberInvocationDiagnostic(ctx context.Context, teamID, inv
 			       COALESCE(canonical_attempt_id::text, ''), COALESCE(space_id::text, ''),
 			       space_generation, request_hash, correlation_id, classification, outcome,
 			       failed_phase, error_code, retryable, duration_ms, request_bytes, request_capture_state, request_capture_reason,
-			       provider_exchanges, response_bytes, response_capture_state, response_capture_reason, created_at, completed_at, expires_at, dense_mem_private_space_held(space_id)
+			       provider_exchanges, response_bytes, response_capture_state, response_capture_reason, created_at, completed_at, expires_at, dense_mem_private_space_held(space_id), uses_attempt_capture
 			FROM remember_invocation_diagnostics
 			WHERE team_id = ?::uuid AND invocation_id = ?::uuid`, teamID, invocationID).Row()
 		value, err := scanRememberInvocationDiagnostic(row, true)
@@ -389,6 +366,11 @@ func (r *Store) GetRememberInvocationDiagnostic(ctx context.Context, teamID, inv
 		}
 		if err != nil {
 			return err
+		}
+		if value.UsesAttemptCapture {
+			if err := loadInvocationAttemptCapture(ctx, tx, &value); err != nil {
+				return err
+			}
 		}
 		result = &value
 		hideExpiredRememberInvocationDiagnostic(result)
@@ -424,6 +406,9 @@ func scanRememberInvocationDiagnostic(scanner rememberInvocationScanner, include
 		args = append(args, &requestBody, &requestCaptureState, &requestCaptureReason, &exchangesJSON, &responseBody, &responseCaptureState, &responseCaptureReason)
 	}
 	args = append(args, &value.CreatedAt, &completedAt, &value.ExpiresAt, &value.RetainedByLegalHold)
+	if includeBodies {
+		args = append(args, &value.UsesAttemptCapture)
+	}
 	if err := scanner.Scan(args...); err != nil {
 		return value, err
 	}
@@ -492,4 +477,45 @@ func drainExpiredRememberInvocationDiagnostics(ctx context.Context, r *Store) (i
 			return deletedTotal, err
 		}
 	}
+}
+
+func loadInvocationAttemptCapture(ctx context.Context, tx *gorm.DB, value *knowledgecontract.RememberInvocationDiagnosticRecord) error {
+	var valid bool
+	if err := tx.WithContext(ctx).Raw(`SELECT EXISTS(SELECT 1 FROM remember_attempts
+        WHERE team_id=?::uuid AND owner_profile_id=?::uuid AND attempt_id=?::uuid
+        AND space_id IS NOT DISTINCT FROM NULLIF(?,'')::uuid AND space_generation=? AND outcome='failed')`,
+		value.TeamID, value.OwnerProfileID, value.CanonicalAttemptID, value.SpaceID, value.SpaceGeneration).Row().Scan(&valid); err != nil {
+		return err
+	}
+	var items []RememberAttemptDiagnosticRecordItem
+	if valid {
+		var err error
+		items, err = loadRememberAttemptDiagnostics(ctx, tx, value.TeamID, value.CanonicalAttemptID)
+		if err != nil {
+			return err
+		}
+	}
+	if len(items) == 0 {
+		value.RequestCaptureState = "unavailable"
+		value.RequestCaptureReason = "attempt_capture_unavailable"
+		value.CallerResponseCaptureState = "unavailable"
+		value.CallerResponseCaptureReason = "attempt_capture_unavailable"
+		return nil
+	}
+	for _, item := range items {
+		switch item.Kind {
+		case "original_request":
+			value.RequestBody, value.RequestCaptureState = item.RequestBody, item.CaptureState
+		case "caller_response":
+			value.CallerResponse, value.CallerResponseCaptureState = item.ResponseBody, item.CaptureState
+		case "provider_exchange":
+			value.ProviderExchanges = append(value.ProviderExchanges, knowledgecontract.RememberAttemptDiagnosticInput{
+				DiagnosticID: item.DiagnosticID, SequenceNo: item.SequenceNo, Kind: item.Kind, Component: item.Component, Model: item.Model,
+				RequestBody: item.RequestBody, ResponseBody: item.ResponseBody, RequestContentType: item.RequestContentType,
+				ResponseContentType: item.ResponseContentType, StatusCode: item.StatusCode, Outcome: item.Outcome,
+				CaptureState: item.CaptureState, CapturedAt: item.CapturedAt, ExpiresAt: item.ExpiresAt,
+			})
+		}
+	}
+	return nil
 }

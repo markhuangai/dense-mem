@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"math"
 	"strconv"
 	"strings"
@@ -84,7 +85,7 @@ func validSearchSourceKind(kind string) bool {
 	return kind == "evidence"
 }
 
-func defaultProjectionFormat(sourceKind string) int { return 1 }
+func defaultProjectionFormat(string) int { return storagepostgres.EvidenceSearchProjectionFormat }
 
 func marshalSearchJSON(value map[string]any) ([]byte, error) {
 	if value == nil {

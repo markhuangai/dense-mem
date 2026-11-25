@@ -4,8 +4,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	recallquality "github.com/markhuangai/dense-mem/internal/recall/quality"
 )
 
 func ScoreTrace(caseID string, k int, qrel QRel, trace RecallTrace, mapping KnowledgeMapping) RetrievalScore {
@@ -24,7 +22,7 @@ func scoreTrace(caseID string, k int, qrel QRel, trace RecallTrace, scoring scor
 	badEvidence, unmappedBadEvidence := remapResultRefs(qrel.BadEvidenceRefs, mapping)
 	rankedRefs := scoring.refsForQRel(trace.RankedRefs, qrel.RequiredRefs, qrel.BadRefs)
 	ranked := resultRefs(rankedRefs)
-	metrics := recallquality.ScoreAtK(ranked, required, bad, k)
+	metrics := ScoreAtK(ranked, required, bad, k)
 	score := RetrievalScore{
 		CaseID:             caseID,
 		K:                  metrics.K,
@@ -44,7 +42,7 @@ func scoreTrace(caseID string, k int, qrel QRel, trace RecallTrace, scoring scor
 	score.UnmappedSourceRefs = scoringJudgmentRefs(score.UnmappedSourceRefs, mapping)
 	if trace.ContextRefs != nil {
 		contextRefs := scoring.refsForQRel(trace.ContextRefs, qrel.RequiredRefs, qrel.BadRefs)
-		contextMetrics := recallquality.ScoreAtK(resultRefs(contextRefs), required, bad, k)
+		contextMetrics := ScoreAtK(resultRefs(contextRefs), required, bad, k)
 		score.ContextScored = true
 		score.ContextRelevantAtK = contextMetrics.RelevantAtK
 		score.ContextRelevantTotal = contextMetrics.RelevantTotal
@@ -66,7 +64,7 @@ func scoreTrace(caseID string, k int, qrel QRel, trace RecallTrace, scoring scor
 		}
 		if evidenceAvailable {
 			evidenceRefs = scoring.refsForQRel(evidenceRefs, qrel.RequiredEvidenceRefs, qrel.BadEvidenceRefs)
-			evidenceMetrics := recallquality.ScoreAtK(resultRefs(evidenceRefs), requiredEvidence, badEvidence, k)
+			evidenceMetrics := ScoreAtK(resultRefs(evidenceRefs), requiredEvidence, badEvidence, k)
 			score.EvidenceScored = true
 			score.EvidenceRelevantAtK = evidenceMetrics.RelevantAtK
 			score.EvidenceRelevantTotal = evidenceMetrics.RelevantTotal
@@ -251,8 +249,8 @@ func SummarizeScores(runID, mode, seedID, seedHash, suitePath string, suite []Su
 	return summary
 }
 
-func remapJudgments(refs []Ref, mapping KnowledgeMapping) ([]recallquality.Judgment, []Ref) {
-	out := make([]recallquality.Judgment, 0, len(refs))
+func remapJudgments(refs []Ref, mapping KnowledgeMapping) ([]Judgment, []Ref) {
+	out := make([]Judgment, 0, len(refs))
 	unmapped := []Ref{}
 	for _, ref := range refs {
 		resolved, ok := resolveRef(ref, mapping)
@@ -260,7 +258,7 @@ func remapJudgments(refs []Ref, mapping KnowledgeMapping) ([]recallquality.Judgm
 			unmapped = append(unmapped, ref)
 			resolved = Ref{Type: ref.Type, ID: "unmapped:" + ref.SourceDocID}
 		}
-		out = append(out, recallquality.Judgment{Type: resolved.Type, ID: resolved.ID, Grade: judgmentGrade(ref.Grade)})
+		out = append(out, Judgment{Type: resolved.Type, ID: resolved.ID, Grade: judgmentGrade(ref.Grade)})
 	}
 	return out, unmapped
 }
@@ -359,8 +357,8 @@ func scoringJudgmentRefs(refs []Ref, mapping KnowledgeMapping) []Ref {
 	return out
 }
 
-func remapResultRefs(refs []Ref, mapping KnowledgeMapping) ([]recallquality.ResultRef, []Ref) {
-	out := make([]recallquality.ResultRef, 0, len(refs))
+func remapResultRefs(refs []Ref, mapping KnowledgeMapping) ([]ResultRef, []Ref) {
+	out := make([]ResultRef, 0, len(refs))
 	unmapped := []Ref{}
 	for _, ref := range refs {
 		resolved, ok := resolveRef(ref, mapping)
@@ -368,21 +366,21 @@ func remapResultRefs(refs []Ref, mapping KnowledgeMapping) ([]recallquality.Resu
 			unmapped = append(unmapped, ref)
 			continue
 		}
-		out = append(out, recallquality.ResultRef{Type: resolved.Type, ID: resolved.ID})
+		out = append(out, ResultRef{Type: resolved.Type, ID: resolved.ID})
 	}
 	return out, unmapped
 }
 
-func resultRefs(refs []Ref) []recallquality.ResultRef {
-	out := make([]recallquality.ResultRef, 0, len(refs))
+func resultRefs(refs []Ref) []ResultRef {
+	out := make([]ResultRef, 0, len(refs))
 	for _, ref := range refs {
 		out = append(out, resultRef(ref))
 	}
 	return out
 }
 
-func resultRef(ref Ref) recallquality.ResultRef {
-	item := recallquality.ResultRef{Type: ref.Type, ID: ref.ID}
+func resultRef(ref Ref) ResultRef {
+	item := ResultRef{Type: ref.Type, ID: ref.ID}
 	if ref.Type == "evidence" {
 		item.EquivalentIDs = ref.EquivalentEvidenceIDs
 	}

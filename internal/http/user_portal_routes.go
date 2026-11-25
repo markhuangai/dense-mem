@@ -59,9 +59,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 
 	teamHandler := handler.NewTeamHandler(deps.TeamSvc)
 	credentialHandler := handler.NewCredentialHandler(deps.CredentialSvc)
-	teamAuthz := httpmw.NewTeamAuthorizationService(deps.AuditSvc)
 	teamResolutionMW := httpmw.TeamResolutionMiddleware(deps.TeamSvc)
-	authorizeTeamMW := httpmw.AuthorizeTeam(teamAuthz)
 	teamSvcMW := userPortalServiceAvailable(deps.TeamSvc != nil, "team service unavailable")
 	credentialSvcMW := userPortalServiceAvailable(deps.CredentialSvc != nil, "credential service unavailable")
 
@@ -80,7 +78,7 @@ func RegisterUserPortal(e *echo.Echo, deps UserPortalDeps) {
 	api.PATCH("/team/credentials/:credentialId", credentialHandler.Update, httpmw.RequireRole(accessservice.CredentialRoleManager), credentialSvcMW, httpmw.BindAndValidate[dto.UpdateCredentialRequest](httpmw.UpdateCredentialBodyKey))
 	api.POST("/team/credentials/:credentialId/rotate", credentialHandler.Rotate, httpmw.RequireRole(accessservice.CredentialRoleManager), credentialSvcMW, httpmw.BindAndValidate[dto.CreateCredentialRequest](httpmw.CreateCredentialBodyKey))
 	api.DELETE("/team/credentials/:credentialId", credentialHandler.Delete, httpmw.RequireRole(accessservice.CredentialRoleManager), credentialSvcMW)
-	api.GET("/recall", portal.recall.Handle, teamSvcMW, teamResolutionMW, authorizeTeamMW, httpmw.RequireScopes("read"))
+	api.GET("/recall", portal.recall.Handle, teamSvcMW, teamResolutionMW, httpmw.RequireScopes("read"))
 	if deps.SSOService != nil {
 		api.POST("/sso/team", portal.switchSSOTeam, httpmw.RequireScopes("read"))
 		api.GET("/sso/credentials", portal.listSSOCredentials, httpmw.RequireScopes("read"))

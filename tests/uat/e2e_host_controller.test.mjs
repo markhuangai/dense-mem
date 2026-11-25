@@ -180,24 +180,28 @@ test("Client overlays retain ordinary settings and reserve a bounded request bud
     assert.ok(commandStart >= 0 && start > commandStart && end > start);
     const generator = join(fixture, "overlay.cjs");
     await writeFile(generator, stack.slice(start, end));
-    for (const name of ["google_adk_memory", "langchain_retriever", "python_client", "session_ingest", "synchronous_write", "synchronous_write_telemetry_disabled", "enterprise_exports"]) {
+    const traceWithoutTelemetry = ["synchronous_write_telemetry_disabled", "oauth_provider_compatibility", "ontology_management", "ontology_upgrade"];
+    for (const name of ["google_adk_memory", "langchain_retriever", "python_client", "session_ingest", "synchronous_write", "enterprise_exports", ...traceWithoutTelemetry]) {
       const destination = join(fixture, `${name}.yml`);
       await run(process.execPath, [
         generator, destination, "synchronous_write", "", "", "fixture-model", "1536",
         name, "adk-overlay-test", "30",
       ], { env: { DENSE_MEM_CI_HOSTED: "1", DENSE_MEM_E2E_EXPORT_PERFORMANCE: "1", DENSE_MEM_E2E_EXPORT_PERF_STATE: "disabled" } });
       const overlay = await readFile(destination, "utf8");
-      if (["langchain_retriever", "enterprise_exports"].includes(name)) {
-        assert.doesNotMatch(overlay, /SESSION_INGEST_ENABLED/);
-      } else {
+      if (["google_adk_memory", "python_client", "session_ingest", "synchronous_write", "synchronous_write_telemetry_disabled"].includes(name)) {
         assert.match(overlay, /SESSION_INGEST_ENABLED: "true"/);
+      } else {
+        assert.doesNotMatch(overlay, /SESSION_INGEST_ENABLED/);
       }
       if (["google_adk_memory", "langchain_retriever", "python_client"].includes(name)) {
         assert.match(overlay, /RATE_LIMIT_PER_MINUTE: "1000"/);
       } else {
         assert.doesNotMatch(overlay, /RATE_LIMIT_PER_MINUTE/);
       }
-      if (["python_client", "session_ingest", "synchronous_write", "synchronous_write_telemetry_disabled"].includes(name)) {
+      if (traceWithoutTelemetry.includes(name)) {
+        assert.match(overlay, /LOG_LEVEL: ""/);
+        assert.match(overlay, /TELEMETRY_ENABLED: "false"/);
+      } else if (["python_client", "session_ingest", "synchronous_write"].includes(name)) {
         assert.match(overlay, /LOG_LEVEL: "debug"/);
       } else {
         assert.doesNotMatch(overlay, /LOG_LEVEL/);
@@ -462,8 +466,8 @@ partition_precheck_capabilities "${sourceRoot}"
   }
 });
 
-test("the repository precheck isolates ontology and selects every case once", async () => {
-  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-precheck-ontology-"));
+test("the repository precheck isolates Topic cases and selects every case once", async () => {
+  const fixture = await mkdtemp(join(tmpdir(), "dense-mem-precheck-topics-"));
   try {
     const casesDir = join(scripts, "e2e-db-cases");
     const fragments = await Promise.all((await readdir(casesDir))
@@ -474,7 +478,7 @@ test("the repository precheck isolates ontology and selects every case once", as
       .filter(([, cases]) => cases.length > 0));
     const start = controller.indexOf("\ndatabase_case_capabilities()") + 1;
     const end = controller.indexOf("\nprecheck() {", start);
-    const scriptPath = join(fixture, "ontology-registry-test.sh");
+    const scriptPath = join(fixture, "topics-registry-test.sh");
     await executable(scriptPath, `#!/usr/bin/env bash
 set -euo pipefail
 ${controller.slice(start, end)}
@@ -483,7 +487,7 @@ partition_precheck_capabilities "$1"
     const { stdout } = await run("bash", [scriptPath, root]);
     const groups = stdout.trim().split(/\r?\n/).map((group) => group.split(","));
     assert.equal(groups.length, 3);
-    assert.deepEqual(groups[0], ["ontology"]);
+    assert.deepEqual(groups[0], ["topics"]);
     assert.deepEqual(groups.flat().sort(), [...casesByCapability.keys()].sort());
     const selected = groups.flatMap((group) => group
       .flatMap((capability) => casesByCapability.get(capability).map((item) => item.id)));
@@ -495,8 +499,8 @@ partition_precheck_capabilities "$1"
   }
 });
 
-for (const includeOntology of [false, true]) {
-  test(`weighted precheck partition ${includeOntology ? "isolates ontology and spreads other large fragments" : "spreads large capability fragments"}`, async () => {
+for (const includeTopics of [false, true]) {
+  test(`weighted precheck partition ${includeTopics ? "isolates Topic cases and spreads other large fragments" : "spreads large capability fragments"}`, async () => {
     const fixture = await mkdtemp(join(tmpdir(), "dense-mem-precheck-weighted-"));
     try {
       const sourceRoot = join(fixture, "repo");
@@ -511,7 +515,7 @@ for (const includeOntology of [false, true]) {
         ["http", 1],
         ["knowledge", 80],
         ["migration", 1],
-        ...(includeOntology ? [["ontology", 1]] : []),
+        ...(includeTopics ? [["topics", 1]] : []),
         ["operations", 1],
         ["postgres", 80],
         ["privacy", 1],
@@ -548,10 +552,10 @@ for (const includeOntology of [false, true]) {
       const { stdout } = await run("bash", [scriptPath]);
       const groups = stdout.trim().split(/\r?\n/).map((group) => group.split(","));
       assert.equal(groups.length, 3);
-      if (includeOntology) assert.deepEqual(groups[0], ["ontology"]);
+      if (includeTopics) assert.deepEqual(groups[0], ["topics"]);
       assert.deepEqual(groups.flat().sort(), fragments.map(([capability]) => capability).sort());
       const heavy = new Set(["access", "dream", "knowledge", "postgres", "repository", "trace"]);
-      assert.deepEqual(groups.map((group) => group.filter((capability) => heavy.has(capability)).length), includeOntology ? [0, 3, 3] : [2, 2, 2]);
+      assert.deepEqual(groups.map((group) => group.filter((capability) => heavy.has(capability)).length), includeTopics ? [0, 3, 3] : [2, 2, 2]);
     } finally {
       await rm(fixture, { recursive: true, force: true });
     }
@@ -1079,10 +1083,9 @@ test("Grafana range panels use a scrape-safe lookback", async () => {
   }
 });
 
-test("ontology fixtures forward healthy embeddings upstream", () => {
+test("Topic fixtures forward healthy embeddings upstream", () => {
   assert.match(stack, /const fixtureEmbeddingProvider = [^;]*\["ontology_organization", "ontology_management", "ontology_upgrade"\]\.includes\(scenario\)/);
   assert.match(stack, /AI_API_URL: "http:\/\/synchronous-write-provider:8787\/v1"/);
-  assert.ok(stack.includes('if (scenario === "ontology_management") serverEnvironment.set("LOG_LEVEL", "debug");'));
   assert.match(stack, /DENSE_MEM_E2E_EMBEDDING_BASE_URL/);
   assert.match(stack, /DENSE_MEM_E2E_EMBEDDING_API_KEY/);
   assert.match(stack, /embedding_upstream\.mjs/);
@@ -1669,14 +1672,14 @@ test("obsolete local Compose entrypoints are removed", async () => {
   }
 });
 
-test("ontology retains a complete dedicated precheck shard", async () => {
+test("Topic cases retain a complete dedicated precheck shard", async () => {
   const start = controller.indexOf("\ndatabase_case_capabilities()") + 1;
   const end = controller.indexOf("\nprecheck() {", start);
   const helper = controller.slice(start, end);
   const { stdout } = await run("bash", ["-c", `${helper}\npartition_precheck_capabilities "$1"`, "precheck-test", root]);
   const groups = stdout.trim().split(/\r?\n/).map((group) => group.split(","));
   assert.equal(groups.length, 3);
-  assert.deepEqual(groups[0], ["ontology"]);
+  assert.deepEqual(groups[0], ["topics"]);
   const { stdout: expected } = await run("bash", ["-c", `${helper}\ndatabase_case_capabilities "$1" precheck`, "precheck-test", root]);
   assert.deepEqual(groups.flat().sort(), expected.trim().split(/\r?\n/).sort());
 });
@@ -1686,7 +1689,7 @@ test("six precheck shards account for package batches while the legacy route ret
   try {
     const directory = join(fixture, "scripts/e2e-db-cases");
     await mkdir(directory, { recursive: true });
-    const ontologyIDs = [
+    const topicIDs = [
       "repository/TestOntologyMaintenanceCurrentReceiptCompletion",
       "repository/TestOntologyMaintenanceFinalizationAdmissionAndIsolation",
       "repository/TestOntologyMaintenanceLargeBacklogAndFairTurns",
@@ -1704,9 +1707,9 @@ test("six precheck shards account for package batches while the legacy route ret
       "repository/TestOntologyMaintenanceMatchingCohort",
       "repository/TestOntologyRemaining",
     ];
-    for (const [capability, count] of [["ontology", ontologyIDs.length], ["alpha", 41], ["beta", 40], ["gamma", 39], ["delta", 1]]) {
+    for (const [capability, count] of [["topics", topicIDs.length], ["alpha", 41], ["beta", 40], ["gamma", 39], ["delta", 1]]) {
       const cases = Array.from({ length: count }, (_, index) => ({
-        id: capability === "ontology" ? ontologyIDs[index] : `${capability}/TestCase${index}`,
+        id: capability === "topics" ? topicIDs[index] : `${capability}/TestCase${index}`,
         phase: "precheck",
         package: `./${capability}${capability === "beta" || capability === "gamma" ? index : ""}`,
       }));
@@ -1722,18 +1725,18 @@ test("six precheck shards account for package batches while the legacy route ret
     const ordinary = six.slice(3).map((selection) => selection.split(","));
     assert.deepEqual(ordinary.flat().sort(), ["alpha", "beta", "delta", "gamma"]);
     assert.ok(ordinary.find((group) => group.includes("delta")).includes("alpha"));
-    assert.deepEqual(await partition(3), ["ontology", "beta,delta", "gamma,alpha"]);
+    assert.deepEqual(await partition(3), ["topics", "beta,delta", "gamma,alpha"]);
     const seven = await partition(7);
     assert.equal(seven.length, 7);
     const measured = seven.slice(4).map((selection) => selection.split(","));
     assert.deepEqual(measured.flat().sort(), ["alpha", "beta", "delta", "gamma"]);
     assert.ok(measured.find((group) => group.includes("delta")).includes("alpha"));
-    const ontologyPath = join(directory, "ontology.json");
-    const incomplete = JSON.parse(await readFile(ontologyPath, "utf8"));
+    const topicsPath = join(directory, "topics.json");
+    const incomplete = JSON.parse(await readFile(topicsPath, "utf8"));
     incomplete.cases = incomplete.cases.filter(({ id }) => id !== "repository/TestOntologyMaintenanceCurrentReceiptCompletion");
-    await writeFile(ontologyPath, JSON.stringify(incomplete));
-    await assert.rejects(partition(6), /six precheck shards require dedicated ontology cases/);
-    assert.deepEqual(await partition(3), ["ontology", "beta,delta", "gamma,alpha"]);
+    await writeFile(topicsPath, JSON.stringify(incomplete));
+    await assert.rejects(partition(6), /six precheck shards require dedicated Topic cases/);
+    assert.deepEqual(await partition(3), ["topics", "beta,delta", "gamma,alpha"]);
   } finally {
     await rm(fixture, { recursive: true, force: true });
   }

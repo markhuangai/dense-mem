@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
-	assignment "github.com/markhuangai/dense-mem/internal/topicassignment/contract"
+	assignment "github.com/markhuangai/dense-mem/internal/topics/assignment"
 	organization "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
 )
@@ -45,19 +45,13 @@ func (s *Store) ReadAssignmentCandidates(ctx context.Context, input assignment.S
 // A linked definition can fall out of lexical search after a rename. Include its current
 // revision when either the definition or the Evidence changed since the membership was accepted.
 func touchedAssignmentTopics(tx *gorm.DB, fence scope, evidenceID, fingerprint string) ([]string, map[string]bool, error) {
-	rows, err := tx.Raw(`SELECT target.record_id::text, target.retired FROM topic_record_heads membership
-		JOIN topic_record_heads target ON (target.team_id,target.shared_space_id,target.space_generation,target.record_id)=
-			(membership.team_id,membership.shared_space_id,membership.space_generation,membership.topic_id) AND target.kind='topic'
+	rows, err := tx.Raw(`SELECT target.topic_id::text,target.retired
+		FROM topic_memberships AS membership
+		JOIN topics AS target USING(team_id,shared_space_id,space_generation,topic_id)
 		WHERE membership.team_id=?::uuid AND membership.shared_space_id=?::uuid AND membership.space_generation=?
-		  AND membership.evidence_id=?::uuid AND membership.kind='assignment' AND NOT membership.retired
-		  AND (target.retired OR NOT EXISTS (SELECT 1 FROM topic_revision_dependencies d WHERE
-			(d.team_id,d.shared_space_id,d.space_generation,d.record_id,d.record_version,d.dependency_id,d.dependency_version)=
-			(membership.team_id,membership.shared_space_id,membership.space_generation,membership.record_id,membership.version,target.record_id,target.version))
-		  OR NOT EXISTS (SELECT 1 FROM topic_source_dependencies d WHERE
-			(d.team_id,d.shared_space_id,d.space_generation,d.record_id,d.record_version)=
-			(membership.team_id,membership.shared_space_id,membership.space_generation,membership.record_id,membership.version)
-			AND d.source_kind='evidence' AND d.source_id=? AND d.fingerprint=?))
-		ORDER BY target.record_id LIMIT ?`, fence.TeamID, fence.SpaceID, fence.Generation, evidenceID, evidenceID, fingerprint, organization.MaxDependencyRecords+1).Rows()
+		  AND membership.evidence_id=?::uuid AND NOT membership.retired
+		  AND (target.retired OR membership.topic_version<>target.definition_version OR membership.source_fingerprint<>?)
+		ORDER BY target.topic_id LIMIT ?`, fence.TeamID, fence.SpaceID, fence.Generation, evidenceID, fingerprint, organization.MaxDependencyRecords+1).Rows()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -100,8 +94,25 @@ func (s *Store) PublishAssignmentsTx(ctx context.Context, tx *gorm.DB, input ass
 	if fence.SpaceID != input.SpaceID || fence.Generation != input.Generation {
 		return assignment.ErrStale
 	}
-	if err = lockOrganizationCatalog(tx, fence); err != nil {
+	var ids []string
+	var proposalNames []string
+	for _, item := range items {
+		if item.Outcome.Unchanged {
+			continue
+		}
+		ids = append(ids, item.EvidenceID)
+		for _, proposal := range item.Outcome.Proposals {
+			proposalNames = append(proposalNames, organization.NormalizeName(proposal.Label))
+		}
+	}
+	if err := lockTopicNames(tx, fence, proposalNames); err != nil {
 		return err
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtextextended(?::text,25022))`, fence.SpaceID+":"+id).Error; err != nil {
+			return err
+		}
 	}
 	for _, item := range items {
 		if item.Outcome.Unchanged {
@@ -137,6 +148,20 @@ func (s *Store) publishAssignment(tx *gorm.DB, fence scope, operationID string, 
 	targets, changes, err := s.assignmentDefinitions(tx, fence, item.Outcome, dep)
 	if err != nil {
 		return err
+	}
+	for _, change := range changes {
+		if change.Record.Definition.ParentID == "" {
+			continue
+		}
+		// The definition write can restore its declared parent. Other hierarchy writers take the catalog lock before locking names or rows.
+		locked, err := tryLockOrganizationCatalog(tx, fence)
+		if err != nil {
+			return err
+		}
+		if !locked {
+			return fmt.Errorf("%w: topic hierarchy is being updated", assignment.ErrStale)
+		}
+		break
 	}
 	memberships, err := assignmentMemberships(tx, fence, handle.ID)
 	if err != nil {
@@ -191,11 +216,7 @@ func (s *Store) publishAssignment(tx *gorm.DB, fence scope, operationID string, 
 	}
 	if len(changes) > 0 {
 		sort.Slice(changes, func(i, j int) bool { return changes[i].Record.ID < changes[j].Record.ID })
-		revision, err := catalogRevision(tx, fence)
-		if err != nil {
-			return err
-		}
-		publication := organization.Publication{OperationKey: "assign:" + operationID + ":" + item.EvidenceID, ExpectedRevision: revision, Reason: "Direct Topic reassessment retires stale reviewed memberships and memberships whose Topic was retired", Changes: changes}
+		publication := organization.Publication{OperationKey: "assign:" + operationID + ":" + item.EvidenceID, Reason: "Direct Topic reassessment retires stale reviewed memberships and memberships whose Topic was retired", Changes: changes}
 		if err := organization.ValidatePublication(publication); err != nil {
 			return err
 		}
@@ -203,7 +224,7 @@ func (s *Store) publishAssignment(tx *gorm.DB, fence scope, operationID string, 
 		if err != nil {
 			return err
 		}
-		if _, err = s.commitPublication(tx, fence, publication, "automatic", "", hash, ""); err != nil {
+		if _, err = s.writePublication(tx, fence, publication, "automatic", "", hash, "", false); err != nil {
 			return err
 		}
 	}
@@ -221,8 +242,8 @@ func (s *Store) publishAssignment(tx *gorm.DB, fence scope, operationID string, 
 }
 
 func assignmentMemberships(tx *gorm.DB, fence scope, id string) (map[string]organization.Record, error) {
-	rows, err := tx.Raw(`SELECT revision.body FROM topic_record_heads AS head JOIN topic_revision_records AS revision USING(team_id,shared_space_id,space_generation,record_id,version)
-		WHERE head.team_id=?::uuid AND head.shared_space_id=?::uuid AND head.space_generation=? AND head.kind='assignment' AND head.evidence_id=?::uuid
+	rows, err := tx.Raw(`SELECT revision.body FROM topic_memberships AS head JOIN topic_revision_records AS revision USING(team_id,shared_space_id,space_generation,record_id,version)
+		WHERE head.team_id=?::uuid AND head.shared_space_id=?::uuid AND head.space_generation=? AND head.evidence_id=?::uuid
 		ORDER BY head.retired DESC,head.version,head.record_id LIMIT ?`, fence.TeamID, fence.SpaceID, fence.Generation, id, organization.MaxDependencyRecords+1).Rows()
 	if err != nil {
 		return nil, err
@@ -267,6 +288,16 @@ func (s *Store) assignmentDefinitions(tx *gorm.DB, fence scope, outcome assignme
 	}
 	if len(ids) == 0 {
 		return nil, nil, nil
+	}
+	var locked []string
+	if err := tx.Raw(`SELECT target.topic_id::text FROM topics AS target
+		JOIN topic_record_heads AS head ON (head.team_id,head.shared_space_id,head.space_generation,head.record_id)=
+			(target.team_id,target.shared_space_id,target.space_generation,target.topic_id)
+		WHERE target.team_id=?::uuid AND target.shared_space_id=?::uuid AND target.space_generation=?
+		  AND (target.topic_id=ANY(?::uuid[]) OR (NOT target.retired AND head.names && ?::text[]))
+		ORDER BY target.topic_id FOR SHARE OF target`,
+		fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(ids), pq.Array(names)).Scan(&locked).Error; err != nil {
+		return nil, nil, err
 	}
 	heads, err := loadHeads(tx, fence, ids, names)
 	if err != nil {

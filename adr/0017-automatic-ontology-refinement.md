@@ -1,6 +1,8 @@
 # ADR 0017: Automatic Ontology Refinement
 
-- Status: Accepted
+- Status: Superseded by the Evidence-only ADR 0017 and ADR 0020
+
+The duplicate number is historical. [Evidence-only ADR 0017](0017-evidence-only-memory-without-factual-relationships.md) removed the factual graph, and [ADR 0020](0020-incremental-topic-assignment-and-community-placement.md) governs active Topic organization.
 - Date: 2026-11-08
 - Supersedes: ADR 0016's prohibition on explicit automatic updates to unpinned semantic parent links only
 - Refines: ADR 0008, ADR 0013, ADR 0014, ADR 0016

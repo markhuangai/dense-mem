@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { progressCall } from "./progress.mjs";
 import { createKnownEvidenceTeam, createKnownEvidenceCredential } from "./remember.mjs";
-import { captureSemanticAssessmentWindow } from "../../ontology_assessment_diagnostics.mjs";
+import { captureSemanticAssessmentWindow } from "../../topic_assessment_diagnostics.mjs";
 
 export const name = "tool_progress";
 

@@ -484,42 +484,22 @@ run_identity_cleanup_startup_matrix() {
   start_identity_cleanup_server
 
   reset_identity_cleanup_database
-  seed_identity_cleanup_database "$source_dir" "$project" v2_4_8
-  initial_state="$(identity_postgres_scalar "
-    SELECT concat(COALESCE(MAX(version_id) FILTER (WHERE is_applied), 0), '|',
-      to_regclass('public.team_profiles') IS NOT NULL, '|',
-      to_regclass('public.credentials') IS NULL) FROM goose_db_version
-  ")"
-  [[ "$initial_state" == "2026080905|true|true" || "$initial_state" == "2026080905|t|t" ]] ||
-    fail "unexpected populated v2.4.8 identity state: ${initial_state}"
-  start_identity_cleanup_server
-  verify_identity_cleanup_seed_upgrade v2.4.8
+  seed_identity_cleanup_database "$source_dir" "$project" bridge
+  initial_state="$(identity_postgres_scalar "SELECT max(version_id) FROM goose_db_version WHERE is_applied")"
+  [[ "$initial_state" == 2026081001 ]] || fail "unexpected populated bridge version"
+  start_identity_cleanup_server_expect_failure "upgrade the existing database through released v2.8.0"
+  [[ "$(identity_postgres_scalar "SELECT max(version_id) FROM goose_db_version WHERE is_applied")" == "$initial_state" ]] ||
+    fail "below-floor startup changed Goose history"
 
   reset_identity_cleanup_database
-  seed_identity_cleanup_database "$source_dir" "$project" bridge
-  initial_state="$(identity_postgres_scalar "
-    SELECT concat(COALESCE(MAX(version_id) FILTER (WHERE is_applied), 0), '|',
-      to_regclass('public.team_profiles') IS NOT NULL, '|',
-      to_regclass('public.identity_compatibility_state') IS NOT NULL, '|',
-      EXISTS (SELECT 1 FROM credentials WHERE id = '${DENSE_MEM_CI_IDENTITY_UPGRADE_PROFILE_ID}'::uuid AND scopes = ARRAY['read']::text[]))
-    FROM goose_db_version
-  ")"
-  [[ "$initial_state" == "2026081001|true|true|true" || "$initial_state" == "2026081001|t|t|t" ]] ||
-    fail "unexpected populated bridge identity state: ${initial_state}"
-  start_identity_cleanup_server_expect_failure "usage history missing ownership aliases"
-  identity_postgres_scalar "DELETE FROM usage_metric_buckets WHERE route = '/identity-cleanup-mismatch'" >/dev/null
-
-  hold_identity_cleanup_lock
-  start_identity_cleanup_server_expect_failure "lock timeout"
-  cleanup_identity_cleanup_lock
-  ci_compose up -d --wait --wait-timeout 300 redis prometheus server >/dev/null
-  verify_postgres_runtime_migration_state
-  verify_identity_cleanup_seed_upgrade bridge
+  seed_identity_cleanup_database "$source_dir" "$project" released
+  start_identity_cleanup_server
+  verify_identity_cleanup_seed_upgrade v2.8.0
   stage_identity_cleanup_retirement_preflight
   run_identity_cleanup_retirement
   ci_compose up -d --wait --wait-timeout 300 redis prometheus server >/dev/null
   verify_postgres_runtime_migration_state
-  verify_identity_cleanup_seed_upgrade bridge
+  verify_identity_cleanup_seed_upgrade v2.8.0
 }
 
 seed_ontology_upgrade_database() {
@@ -546,17 +526,16 @@ NODE
 }
 
 feature_storage_fixture_fingerprints() {
-  local revision_table="$1" table
+  local revision_table="$1" database="${2:-$DENSE_MEM_CI_IDENTITY_POSTGRES_DATABASE}" table
   for table in evidence_sources evidence_source_revisions evidence_exact_aliases evidence_occurrences evidence_fragments evidence_security_events evidence_security_signals evidence_quarantines evidence_lifecycle_operations evidence_lifecycle_events evidence_conflict_cases evidence_conflict_positions evidence_conflict_events; do
-    identity_postgres_scalar "SELECT '${table}:'||md5(COALESCE(jsonb_agg(to_jsonb(row) ORDER BY to_jsonb(row)::text)::text,'[]')) FROM ${table} AS row" || return
+    identity_postgres_scalar "SELECT '${table}:'||md5(COALESCE(jsonb_agg(to_jsonb(row) ORDER BY to_jsonb(row)::text)::text,'[]')) FROM ${table} AS row" "$database" || return
   done
-  identity_postgres_scalar "SELECT 'ontology_revisions:'||md5(COALESCE(jsonb_agg(to_jsonb(row) ORDER BY to_jsonb(row)::text)::text,'[]')) FROM ${revision_table} AS row"
+  identity_postgres_scalar "SELECT 'ontology_revisions:'||md5(COALESCE(jsonb_agg(to_jsonb(row) ORDER BY to_jsonb(row)::text)::text,'[]')) FROM ${revision_table} AS row" "$database"
 }
 
 collect_feature_storage_logs() {
   local source_dir="$1" outcome="$2" output
   output="$(ci_compose logs --no-color --no-log-prefix server 2>&1)" || fail "feature storage stdout capture failed"
-  printf '%s\n' "$output" | redact_diagnostics "$ENV_FILE" "$DENSE_MEM_CI_IDENTITY_POSTGRES_PASSWORD" >&2 || fail "feature storage diagnostic protection failed"
   printf '%s\n' "$output" | node "$source_dir/scripts/verify-feature-storage-logs.mjs" "$outcome" >&2 || fail "feature storage log-only diagnosis failed"
 }
 
@@ -596,30 +575,6 @@ run_feature_storage_startup_matrix() {
   printf '%s\n' '{"scenario":"ontology_upgrade","feature_storage_failed_batch_rolled_back":true,"feature_storage_resumed":true,"feature_storage_evidence_preserved":true}' >&2
 }
 
-ontology_upgrade_fingerprints() {
-  local era="$1" database="${2:-$DENSE_MEM_CI_IDENTITY_POSTGRES_DATABASE}" table label index
-  local labels=(evidence_fragments ontology_maintenance_windows ontology_maintenance_attempts ontology_assessments)
-  local tables=("${labels[@]}")
-  if [[ "$era" == "current" ]]; then
-    tables=(evidence_fragments topic_maintenance_windows topic_maintenance_attempts historical_organization_assessments)
-  fi
-  for index in "${!tables[@]}"; do
-    table="${tables[index]}"
-    label="${labels[index]}"
-    identity_postgres_scalar "SELECT '${label}:'||md5(COALESCE(jsonb_agg(to_jsonb(row)-'estimated_input_tokens'-'max_output_tokens' ORDER BY to_jsonb(row)::text)::text,'[]')) FROM ${table} AS row" "$database" || return
-  done
-}
-
-assert_ontology_upgrade_blocked() {
-  local state
-  state="$(identity_postgres_scalar "SELECT concat(paused,'|',
-    NOT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=20261023020000 AND is_applied),'|',
-    EXISTS(SELECT 1 FROM ontology_maintenance_batches WHERE status='running'),'|',
-    EXISTS(SELECT 1 FROM ontology_maintenance_runs WHERE operation_key='ontology-upgrade-fixture' AND status='pending'),'|',
-    NOT EXISTS(SELECT 1 FROM audit_log WHERE operation='ONTOLOGY_BUDGET_RETIREMENT')) FROM ontology_maintenance_state")"
-  [[ "$state" == "true|true|true|true|true" || "$state" == "t|t|t|t|t" ]] || fail "ontology upgrade did not preserve its blocked state: ${state}"
-}
-
 start_ontology_upgrade_helpers() {
   local source_dir="$1" project="$2" observed=0
   ci_compose --profile verifier up -d redis prometheus synchronous-write-provider >/dev/null || fail "ontology upgrade helpers failed to start"
@@ -657,78 +612,65 @@ restore_pre_cutover_backup() {
   ontology_backup_command "${restore[@]}" --data-only --schema=public --table=memory_spaces "$archive" || fail "pre-cutover memory space restore failed"
   ontology_backup_command "${restore[@]}" --section=data --section=post-data --use-list="$restore_list" "$archive" || fail "pre-cutover data restore failed"
   schema="$(identity_postgres_scalar "SELECT to_regclass('public.ontology_record_heads') IS NOT NULL
-    AND to_regclass('public.topic_record_heads') IS NULL AND EXISTS(SELECT 1 FROM ontology_maintenance_runs WHERE operation_key='ontology-upgrade-fixture')
+    AND to_regclass('public.topic_record_heads') IS NULL AND EXISTS(SELECT 1 FROM ontology_publications WHERE operation_key='feature-storage-progress')
     AND NOT EXISTS(SELECT 1 FROM v2_compatibility_markers WHERE marker_kind='topic_storage')" "$restored_database")"
   [[ "$schema" == "t" ]] || fail "restored database has the wrong physical layout or missing operation"
-  [[ "$(ontology_upgrade_fingerprints historical "$restored_database")" == "$before" ]] || fail "pre-cutover backup did not reproduce source history"
+  [[ "$(feature_storage_fixture_fingerprints ontology_revision_records "$restored_database")" == "$before" ]] || fail "pre-cutover backup did not reproduce source history"
 }
 
 run_ontology_upgrade_startup_matrix() {
-  local source_dir="$1" project="$2" variant before state observed archive
-  for variant in expired unreconciled live; do
-    reset_identity_cleanup_database
-    seed_ontology_upgrade_database "$source_dir" "$project" "$variant" || fail "ontology upgrade fixture seed failed"
-    start_ontology_upgrade_helpers "$source_dir" "$project"
-    before="$(ontology_upgrade_fingerprints historical)" || fail "ontology upgrade history snapshot failed"
-    if [[ "$variant" == "expired" ]]; then
-      archive="$(ontology_backup_command mktemp /tmp/topic-precutover.XXXXXXXX)" || fail "pre-cutover archive allocation failed"
-      ontology_backup_command pg_dump -h 127.0.0.1 -U "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER" \
-        --format=custom --file="$archive" "$DENSE_MEM_CI_IDENTITY_POSTGRES_DATABASE" || fail "pre-cutover backup failed"
+  local source_dir="$1" project="$2" before archive observed=0 log_output state
+  reset_identity_cleanup_database
+  seed_ontology_upgrade_database "$source_dir" "$project" v2.8.1 || fail "v2.8.1 fixture seed failed"
+  before="$(feature_storage_fixture_fingerprints ontology_revision_records)" || fail "v2.8.1 source snapshot failed"
+  archive="$(ontology_backup_command mktemp /tmp/topic-precutover.XXXXXXXX)" || fail "pre-cutover archive allocation failed"
+  ontology_backup_command pg_dump -h 127.0.0.1 -U "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER" \
+    --format=custom --file="$archive" "$DENSE_MEM_CI_IDENTITY_POSTGRES_DATABASE" || fail "pre-cutover backup failed"
+  restore_pre_cutover_backup "$source_dir" "$archive" "$before"
+  start_ontology_upgrade_helpers "$source_dir" "$project"
+  ci_compose --profile verifier up -d --wait --wait-timeout 300 >/dev/null || fail "v2.8.1 upgrade failed"
+  verify_postgres_runtime_migration_state
+  [[ "$(feature_storage_fixture_fingerprints topic_revision_records)" == "$before" ]] ||
+    fail "v2.8.1 upgrade changed Evidence or Topic history"
+
+  reset_identity_cleanup_database
+  seed_ontology_upgrade_database "$source_dir" "$project" interrupted || fail "interrupted relational fixture seed failed"
+  before="$(feature_storage_fixture_fingerprints topic_revision_records)" || fail "current-layout source snapshot failed"
+  start_ontology_upgrade_helpers "$source_dir" "$project"
+  ci_compose up -d server >/dev/null || fail "interrupted relational probe failed to start"
+  for _ in $(seq 1 90); do
+    if ci_compose logs --no-color --no-log-prefix server 2>&1 | grep -F 'relational_topic_migration_failed' >/dev/null; then
+      observed=1
+      break
     fi
-    if [[ "$variant" == "unreconciled" ]]; then
-      for _ in 1 2; do
-        ci_compose --profile verifier up -d --no-deps --force-recreate server >/dev/null || fail "ontology upgrade refusal probe failed to start"
-        observed=0
-        for _ in $(seq 1 60); do
-          if ci_compose logs --no-color server 2>&1 | grep -F 'unreconciled attempts require terminal evidence' >/dev/null; then
-            observed=1
-            break
-          fi
-          sleep 1
-        done
-        ((observed == 1)) || fail "ontology upgrade did not report unreconciled attempts"
-        ci_compose stop server >/dev/null || fail "ontology upgrade refusal probe failed to stop"
-        assert_ontology_upgrade_blocked
-        [[ "$(ontology_upgrade_fingerprints historical)" == "$before" ]] || fail "blocked ontology upgrade changed history"
-      done
-      state="$(identity_postgres_scalar "SELECT count(*) FROM audit_log WHERE operation='ONTOLOGY_UPGRADE_COMMAND'")"
-      [[ "$state" == "1" ]] || fail "blocked startup repeated the automatic pause audit"
-      continue
-    fi
-    if [[ "$variant" == "live" ]]; then
-      ci_compose --profile verifier up -d >/dev/null || fail "ontology upgrade interruption probe failed to start"
-      observed=0
-      for _ in $(seq 1 20); do
-        state="$(identity_postgres_scalar "SELECT paused AND EXISTS(SELECT 1 FROM ontology_maintenance_batches WHERE status='running' AND lease_until>clock_timestamp()) FROM ontology_maintenance_state")"
-        if [[ "$state" == "t" ]]; then observed=1; break; fi
-        sleep 1
-      done
-      ((observed == 1)) || fail "ontology upgrade did not wait for its live lease"
-      ci_compose stop server >/dev/null || fail "ontology upgrade interruption probe failed to stop"
-      assert_ontology_upgrade_blocked
-      [[ "$(ontology_upgrade_fingerprints historical)" == "$before" ]] || fail "interrupted ontology upgrade changed history"
-      observed=0
-      for _ in $(seq 1 40); do
-        state="$(identity_postgres_scalar "SELECT count(*) FROM ontology_maintenance_batches WHERE status='running' AND lease_until>clock_timestamp()")"
-        if [[ "$state" == "0" ]]; then observed=1; break; fi
-        sleep 1
-      done
-      ((observed == 1)) || fail "ontology fixture lease did not expire naturally"
-    fi
-    if ! ci_compose --profile verifier up -d --wait --wait-timeout 300 >/dev/null; then
-      ci_compose logs --no-color --tail 100 server 2>&1 |
-        redact_diagnostics "$ENV_FILE" "$DENSE_MEM_CI_IDENTITY_POSTGRES_PASSWORD" >&2 || fail "ontology upgrade diagnostics failed"
-      fail "ontology upgrade fixture startup failed"
-    fi
-    verify_postgres_runtime_migration_state
-    state="$(identity_postgres_scalar "SELECT concat(paused,'|',
-      NOT EXISTS(SELECT 1 FROM topic_maintenance_batches WHERE status='running'),'|',
-      (SELECT count(*) FROM audit_log WHERE operation='ONTOLOGY_UPGRADE_COMMAND'),'|',
-      (SELECT count(*) FROM audit_log WHERE operation='ONTOLOGY_BUDGET_RETIREMENT'),'|',
-      EXISTS(SELECT 1 FROM topic_maintenance_runs WHERE operation_key='ontology-upgrade-fixture' AND status='incomplete' AND failure_code='window_closed')) FROM topic_maintenance_state")"
-    [[ "$state" == "false|true|2|1|true" || "$state" == "f|t|2|1|t" ]] || fail "ontology upgrade did not restore its admission state: ${state}"
-    [[ "$(ontology_upgrade_fingerprints current)" == "$before" ]] || fail "automatic ontology upgrade changed canonical or historical rows"
-    if [[ "$variant" == "expired" ]]; then restore_pre_cutover_backup "$source_dir" "$archive" "$before"; fi
+    sleep 1
   done
-  printf '%s\n' '{"scenario":"ontology_upgrade","expired_recovered":true,"unreconciled_refused":true,"interrupted_restart_resumed":true,"history_preserved":true,"pre_cutover_restore_read":true}' >&2
+  ci_compose stop server >/dev/null || fail "interrupted relational probe failed to stop"
+  ((observed == 1)) || fail "interrupted relational migration did not produce a failure receipt"
+  log_output="$(ci_compose logs --no-color --no-log-prefix server 2>&1)" || fail "interrupted relational stdout capture failed"
+  printf '%s\n' "$log_output" | node "$source_dir/scripts/verify-feature-storage-logs.mjs" relational-failed >&2 ||
+    fail "interrupted relational log-only diagnosis failed"
+  state="$(identity_postgres_scalar "SET app.tx_mode='migration'; SELECT concat(
+    (SELECT count(*) FROM topics),'|',
+    (SELECT row_count FROM data_migration_checkpoints WHERE migration_version=20261125010001 AND phase='copy'),'|',
+    NOT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=20261125010001 AND is_applied))" | tail -n1)"
+  [[ "$state" == "100|100|true" || "$state" == "100|100|t" ]] || fail "interrupted relational copy moved beyond its committed checkpoint"
+  if identity_postgres_scalar "UPDATE teams SET updated_at=updated_at" >/dev/null 2>&1; then
+    fail "offline upgrade fence allowed a write"
+  fi
+  identity_postgres_scalar "DROP TRIGGER relational_topic_fixture_failure ON topics; DROP FUNCTION relational_topic_fixture_failure()" >/dev/null ||
+    fail "interrupted relational fixture cleanup failed"
+  ci_compose --profile verifier up -d --force-recreate --wait --wait-timeout 300 server >/dev/null || fail "relational recovery failed"
+  log_output="$(ci_compose logs --no-color --no-log-prefix server 2>&1)" || fail "resumed relational stdout capture failed"
+  printf '%s\n' "$log_output" | node "$source_dir/scripts/verify-feature-storage-logs.mjs" relational-resumed >&2 ||
+    fail "resumed relational log-only diagnosis failed"
+  verify_postgres_runtime_migration_state
+  [[ "$(feature_storage_fixture_fingerprints topic_revision_records)" == "$before" ]] ||
+    fail "relational recovery changed Evidence or Topic history"
+  state="$(identity_postgres_scalar "SELECT concat(
+    (SELECT count(*) FROM topics),'|',
+    EXISTS(SELECT 1 FROM data_migration_runs WHERE migration_version=20261125010001 AND phase='complete'),'|',
+    NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname IN ('offline_upgrade_fence','feature_storage_write_gate')))")"
+  [[ "$state" == "210|true|true" || "$state" == "210|t|t" ]] || fail "relational cutover receipt is incomplete"
+  printf '%s\n' '{"scenario":"ontology_upgrade","v2_8_1":true,"pre_cutover_restore_read":true,"relational_copy_resumed":true,"history_preserved":true}' >&2
 }

@@ -10,12 +10,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v5"
 
+	accesscontract "github.com/markhuangai/dense-mem/internal/access/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/httperr"
 	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 )
 
-func registerControlIdentityRoutes(e *echo.Echo, h *controlPortalHandler) {
+func registerControlIdentityRoutes(e *echo.Echo, h *controlIdentityHandler) {
 	if e == nil || h == nil || h.controlIdentity == nil {
 		return
 	}
@@ -26,7 +27,7 @@ func registerControlIdentityRoutes(e *echo.Echo, h *controlPortalHandler) {
 	auth.POST("/logout", h.logoutControlIdentity)
 }
 
-func (h *controlPortalHandler) controlIdentityProviders(c *echo.Context) error {
+func (h *controlIdentityHandler) controlIdentityProviders(c *echo.Context) error {
 	providers, err := h.controlIdentity.ListEnabledProviders(c.Request().Context())
 	if err != nil {
 		return controlIdentityHTTPError(err)
@@ -40,7 +41,7 @@ func (h *controlPortalHandler) controlIdentityProviders(c *echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": items})
 }
 
-func (h *controlPortalHandler) startControlIdentityLogin(c *echo.Context) error {
+func (h *controlIdentityHandler) startControlIdentityLogin(c *echo.Context) error {
 	providerID, err := parseControlUUID(c.Param("providerId"), "SSO provider ID")
 	if err != nil {
 		return err
@@ -56,7 +57,7 @@ func (h *controlPortalHandler) startControlIdentityLogin(c *echo.Context) error 
 	return c.Redirect(nethttp.StatusFound, start.AuthURL)
 }
 
-func (h *controlPortalHandler) completeControlIdentityLogin(c *echo.Context) error {
+func (h *controlIdentityHandler) completeControlIdentityLogin(c *echo.Context) error {
 	if strings.TrimSpace(c.QueryParam("error")) != "" {
 		return httperr.New(httperr.AUTH_INVALID, "control sign-in was denied")
 	}
@@ -94,7 +95,7 @@ func (h *controlPortalHandler) completeControlIdentityLogin(c *echo.Context) err
 	return c.Redirect(nethttp.StatusFound, "/")
 }
 
-func (h *controlPortalHandler) logoutControlIdentity(c *echo.Context) error {
+func (h *controlIdentityHandler) logoutControlIdentity(c *echo.Context) error {
 	secure := h.controlIdentity.CookieSecure(c.Request().Context())
 
 	var sessionCookie *nethttp.Cookie
@@ -128,7 +129,7 @@ func clearControlIdentityCookies(c *echo.Context, secure bool) {
 	nethttp.SetCookie(c.Response(), &nethttp.Cookie{Name: accessservice.ControlCSRFCookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: false, Secure: secure, SameSite: nethttp.SameSiteLaxMode})
 }
 
-func (h *controlPortalHandler) listControlAdminGroups(c *echo.Context) error {
+func (h *controlIdentityHandler) listControlAdminGroups(c *echo.Context) error {
 	providerID, err := parseControlUUID(c.Param("providerId"), "SSO provider ID")
 	if err != nil {
 		return err
@@ -144,7 +145,7 @@ func (h *controlPortalHandler) listControlAdminGroups(c *echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": items})
 }
 
-func (h *controlPortalHandler) createControlAdminGroup(c *echo.Context) error {
+func (h *controlIdentityHandler) createControlAdminGroup(c *echo.Context) error {
 	providerID, err := parseControlUUID(c.Param("providerId"), "SSO provider ID")
 	if err != nil {
 		return err
@@ -160,7 +161,7 @@ func (h *controlPortalHandler) createControlAdminGroup(c *echo.Context) error {
 	return c.JSON(nethttp.StatusCreated, map[string]any{"data": toControlAdminGroup(group)})
 }
 
-func (h *controlPortalHandler) updateControlAdminGroup(c *echo.Context) error {
+func (h *controlIdentityHandler) updateControlAdminGroup(c *echo.Context) error {
 	providerID, err := parseControlUUID(c.Param("providerId"), "SSO provider ID")
 	if err != nil {
 		return err
@@ -180,7 +181,7 @@ func (h *controlPortalHandler) updateControlAdminGroup(c *echo.Context) error {
 	return c.JSON(nethttp.StatusOK, map[string]any{"data": toControlAdminGroup(group)})
 }
 
-func (h *controlPortalHandler) deleteControlAdminGroup(c *echo.Context) error {
+func (h *controlIdentityHandler) deleteControlAdminGroup(c *echo.Context) error {
 	providerID, err := parseControlUUID(c.Param("providerId"), "SSO provider ID")
 	if err != nil {
 		return err
@@ -274,11 +275,10 @@ func controlIdentityHTTPError(err error) error {
 	if errors.Is(err, accessservice.ErrControlSSOUnavailable) {
 		return httperr.New(httperr.SERVICE_UNAVAILABLE, "control sign-in is not configured")
 	}
-	message := strings.ToLower(err.Error())
-	if strings.Contains(message, "not found") {
+	if errors.Is(err, accesscontract.ErrControlIdentityNotFound) {
 		return httperr.New(httperr.NOT_FOUND, "control identity resource not found")
 	}
-	if strings.Contains(message, "control admin") || strings.Contains(message, "sso provider") {
+	if errors.Is(err, accesscontract.ErrControlIdentityInvalid) {
 		return httperr.New(httperr.VALIDATION_ERROR, "invalid control identity request")
 	}
 	return httperr.New(httperr.INTERNAL_ERROR, "control identity operation failed")

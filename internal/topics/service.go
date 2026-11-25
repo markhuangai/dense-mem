@@ -18,18 +18,18 @@ import (
 )
 
 type Service struct {
-	repository contract.OrganizationRepository
-	provider   *assessment.Provider
-	observer   assessment.Observer
-	policy     *domain.TopicMaintenanceConfig
+	repository      contract.OrganizationRepository
+	provider        *assessment.Provider
+	captureCacheHit func(context.Context) bool
+	policy          *domain.TopicMaintenanceConfig
 }
 
 func NewService(repository contract.OrganizationRepository, provider *assessment.Provider) *Service {
 	return &Service{repository: repository, provider: provider}
 }
 
-func (s *Service) WithDiagnostics(observer assessment.Observer) *Service {
-	s.observer = observer
+func (s *Service) WithDiagnostics(observer assessment.Observer, captureCacheHit func(context.Context) bool) *Service {
+	s.captureCacheHit = captureCacheHit
 	if s.provider != nil {
 		s.provider.WithDiagnostics(observer)
 	}
@@ -106,7 +106,7 @@ func (s *Service) Organize(ctx context.Context, teamID string, input contract.Or
 	if cached, found, err := s.repository.FindOrganization(ctx, teamID, input, identity); err != nil {
 		return cached, err
 	} else if found {
-		if s.observer != nil {
+		if s.captureCacheHit != nil && s.captureCacheHit(ctx) {
 			snapshot, snapshotErr := readContext(ctx, teamID, input.Sources)
 			observation.SourceContext, observation.SnapshotError = &snapshot, snapshotErr
 			if snapshotErr == nil {

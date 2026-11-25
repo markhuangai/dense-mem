@@ -3,6 +3,7 @@ package settings
 import (
 	"context"
 	"errors"
+	settingscontract "github.com/markhuangai/dense-mem/internal/settings/contract"
 	"testing"
 	"time"
 
@@ -697,10 +698,11 @@ func (r *appConfigRepoStub) List(context.Context) (map[string]domain.AppConfigEn
 	return copy, nil
 }
 
-func (r *appConfigRepoStub) UpdateValues(_ context.Context, values map[string]string, updateTime string, now time.Time) (bool, error) {
+func (r *appConfigRepoStub) UpdateValues(_ context.Context, values map[string]string, updateTime string, now time.Time, prepare ...settingscontract.PrepareConfigUpdate) (bool, error) {
 	if r.updateErr != nil {
 		return false, r.updateErr
 	}
+	before := cloneAppConfigEntries(r.entries)
 	changed := false
 	for key, value := range values {
 		current := r.entries[key]
@@ -712,6 +714,12 @@ func (r *appConfigRepoStub) UpdateValues(_ context.Context, values map[string]st
 	}
 	if changed {
 		r.entries[domain.AppConfigUpdateTimeKey] = domain.AppConfigEntry{Key: domain.AppConfigUpdateTimeKey, Value: updateTime, UpdatedAt: now}
+	}
+	if len(prepare) != 0 {
+		if _, err := prepare[0](before, r.entries, changed); err != nil {
+			r.entries = before
+			return false, err
+		}
 	}
 	return changed, nil
 }

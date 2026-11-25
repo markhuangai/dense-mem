@@ -45,13 +45,7 @@ func recordRecallFeedbackSnapshot(
 		SnapshotMetadata: metadata,
 	})
 	if err != nil {
-		res.Degradations = append(res.Degradations, recall.RecallDegradationResult{
-			Frontier: "feedback",
-			Optional: true,
-			Code:     "recall_feedback_snapshot_unavailable",
-			Message:  "Recall succeeded, but session feedback is unavailable for this result.",
-		})
-		res.Degradation = &res.Degradations[0]
+		recall.MarkFeedbackSnapshotUnavailable(res)
 		return false
 	}
 	return true

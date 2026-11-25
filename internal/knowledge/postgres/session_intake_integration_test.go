@@ -16,7 +16,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	privacypostgres "github.com/markhuangai/dense-mem/internal/privacy/postgres"
-	processor "github.com/markhuangai/dense-mem/internal/remember/service/processor"
+	processor "github.com/markhuangai/dense-mem/internal/remember/service"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
 	"github.com/markhuangai/dense-mem/internal/session/extraction"
@@ -57,7 +57,7 @@ func TestSessionIntakeExactReplayAndMixedConflictAreAtomic(t *testing.T) {
 	team := createLedgerTeam(t, admin, rls, "session-intake")
 	owner := createLedgerProfile(t, admin, rls, team, "session-owner")
 	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
-	store := NewStore(app, rls)
+	store := newSessionFixtureStore(app, rls)
 	first, err := store.StageSession(ctx, intake)
 	require.NoError(t, err)
 	require.Equal(t, 1, first.AcceptedEventCount)
@@ -145,7 +145,7 @@ func TestSessionPrivateRLSAndGenerationFence(t *testing.T) {
 	ownerB := createLedgerProfile(t, admin, rls, team, "actor-b")
 	teamC := createLedgerTeam(t, admin, rls, "session-isolation-c")
 	ownerC := createLedgerProfile(t, admin, rls, teamC, "actor-c")
-	store := NewStore(app, rls)
+	store := newSessionFixtureStore(app, rls)
 	for _, kind := range []domain.MemorySpaceKind{domain.MemorySpacePrivate} {
 		t.Run(string(kind), func(t *testing.T) {
 			ctxA, intakeA := sessionIntakeFixture(t, admin, app, rls, team, ownerA, kind)
@@ -226,7 +226,7 @@ func TestSessionProfilePrivateOwnerAliasesAndIsolation(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, a.scope.SpaceID, keyScope.SpaceID)
 	require.NotEqual(t, a.scope.OwnerProfileID, keyScope.OwnerProfileID)
-	store := NewStore(app, rls)
+	store := newSessionFixtureStore(app, rls)
 	api := sessionservice.NewService(sessionservice.Dependencies{
 		Enabled: true, Repository: store, Tokenizer: "o200k_base",
 		Preparer:  processor.NewSynchronousProcessor(processor.ProcessorDependencies{Ledger: store}),
@@ -296,7 +296,7 @@ func TestSessionLockSerializesConcurrentSameKeyIntake(t *testing.T) {
 	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	store := NewStore(app, rls)
+	store := newSessionFixtureStore(app, rls)
 	var group sync.WaitGroup
 	ids := make(chan string, 4)
 	errorsCh := make(chan error, 4)
@@ -340,7 +340,7 @@ func TestSessionLockSerializesDifferentKeysAcrossStoreInstances(t *testing.T) {
 	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	first, second := NewStore(app, rls), NewStore(app, rls)
+	first, second := newSessionFixtureStore(app, rls), newSessionFixtureStore(app, rls)
 	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
 	go func() {
 		done <- first.WithSessionLock(ctx, intake.Scope, intake.Request, func() error { close(entered); <-release; return nil })
@@ -384,7 +384,7 @@ func TestSessionConcurrentMixedConflictsStageOnlyTheWinningBatch(t *testing.T) {
 				require.NoError(t, err)
 				candidate.Windows, err = sessionservice.BuildWindows(req, "o200k_base")
 				require.NoError(t, err)
-				store := NewStore(app, rls)
+				store := newSessionFixtureStore(app, rls)
 				go func() {
 					<-start
 					outcomes <- store.WithSessionLock(ctx, candidate.Scope, req, func() error { _, err := store.StageSession(ctx, candidate); return err })
@@ -423,7 +423,7 @@ func TestSessionDuplicatePreparationSupportsOneHundredPrivateExcerpts(t *testing
 	owner := createLedgerProfile(t, admin, rls, team, "owner")
 	ctx, intake := sessionIntakeFixture(t, admin, app, rls, team, owner, domain.MemorySpacePrivate)
 	insertSearchTestContract(t, admin, rls, "session-many-excerpts", 2, "exact", "")
-	store := NewStore(app, rls)
+	store := newSessionFixtureStore(app, rls)
 	for _, size := range []int{21, 100} {
 		input := RememberDuplicateCandidateInput{TeamID: team, OwnerProfileID: owner, SpaceID: intake.Scope.SpaceID, SpaceGeneration: intake.Scope.SpaceGeneration, MaxEvidenceItems: 100}
 		for index := range size {

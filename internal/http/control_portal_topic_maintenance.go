@@ -32,7 +32,7 @@ type controlTopicMaintenancePauseRequest struct {
 	OperationKey string `json:"operation_key" validate:"required,max=128"`
 }
 
-func registerTopicMaintenanceRoutes(api *echo.Group, h *controlPortalHandler) {
+func registerTopicMaintenanceRoutes(api *echo.Group, h *controlConfigHandler) {
 	if h.appConfig != nil {
 		api.GET("/config/topic-maintenance", h.getTopicMaintenanceConfig)
 		api.PATCH("/config/topic-maintenance", h.updateTopicMaintenanceConfig, middleware.BindAndValidateStrict[controlTopicMaintenanceConfigRequest](topicMaintenanceConfigBodyKey))
@@ -48,7 +48,7 @@ func registerTopicMaintenanceRoutes(api *echo.Group, h *controlPortalHandler) {
 	api.POST("/topic-maintenance/resume", h.resumeTopicMaintenance, middleware.BindAndValidateStrict[controlTopicMaintenancePauseRequest](topicMaintenancePauseBodyKey))
 }
 
-func (h *controlPortalHandler) getTopicMaintenanceConfig(c *echo.Context) error {
+func (h *controlConfigHandler) getTopicMaintenanceConfig(c *echo.Context) error {
 	value, err := h.appConfig.GetTopicMaintenanceSettings(c.Request().Context())
 	if err != nil {
 		return topicMaintenanceControlError(err)
@@ -56,7 +56,7 @@ func (h *controlPortalHandler) getTopicMaintenanceConfig(c *echo.Context) error 
 	return response.SuccessOK(c, value)
 }
 
-func (h *controlPortalHandler) updateTopicMaintenanceConfig(c *echo.Context) error {
+func (h *controlConfigHandler) updateTopicMaintenanceConfig(c *echo.Context) error {
 	body := middleware.MustGetValidatedBody[controlTopicMaintenanceConfigRequest](c.Request().Context(), topicMaintenanceConfigBodyKey)
 	values := map[string]string{}
 	for _, item := range body.Items {
@@ -72,7 +72,7 @@ func (h *controlPortalHandler) updateTopicMaintenanceConfig(c *echo.Context) err
 	return response.SuccessOK(c, value)
 }
 
-func (h *controlPortalHandler) getTopicMaintenanceStatus(c *echo.Context) error {
+func (h *controlConfigHandler) getTopicMaintenanceStatus(c *echo.Context) error {
 	value, err := h.topicMaintenance.Status(c.Request().Context())
 	if err != nil {
 		return topicMaintenanceControlError(err)
@@ -80,7 +80,7 @@ func (h *controlPortalHandler) getTopicMaintenanceStatus(c *echo.Context) error 
 	return response.SuccessOK(c, value)
 }
 
-func (h *controlPortalHandler) listTopicMaintenanceRuns(c *echo.Context) error {
+func (h *controlConfigHandler) listTopicMaintenanceRuns(c *echo.Context) error {
 	for key := range c.QueryParams() {
 		if key != "limit" && key != "cursor" {
 			return httperr.New(httperr.VALIDATION_ERROR, "unknown topic maintenance run query parameter")
@@ -101,31 +101,31 @@ func (h *controlPortalHandler) listTopicMaintenanceRuns(c *echo.Context) error {
 	return response.SuccessOK(c, value)
 }
 
-func (h *controlPortalHandler) runTopicMaintenance(c *echo.Context) error {
+func (h *controlConfigHandler) runTopicMaintenance(c *echo.Context) error {
 	return h.topicMaintenanceRunCommand(c, "run", "")
 }
-func (h *controlPortalHandler) retryTopicMaintenance(c *echo.Context) error {
+func (h *controlConfigHandler) retryTopicMaintenance(c *echo.Context) error {
 	id, err := parseControlUUID(c.Param("runId"), "run ID")
 	if err != nil {
 		return err
 	}
 	return h.topicMaintenanceRunCommand(c, "retry", id.String())
 }
-func (h *controlPortalHandler) topicMaintenanceRunCommand(c *echo.Context, action, runID string) error {
+func (h *controlConfigHandler) topicMaintenanceRunCommand(c *echo.Context, action, runID string) error {
 	body := middleware.MustGetValidatedBody[controlTopicMaintenanceRunRequest](c.Request().Context(), topicMaintenanceCommandBodyKey)
 	return h.topicMaintenanceCommand(c, domain.TopicMaintenanceCommand{OperationKey: body.OperationKey, Action: action, MaxBatches: body.MaxBatches, RetryRunID: runID})
 }
-func (h *controlPortalHandler) pauseTopicMaintenance(c *echo.Context) error {
+func (h *controlConfigHandler) pauseTopicMaintenance(c *echo.Context) error {
 	return h.topicMaintenancePauseCommand(c, "pause")
 }
-func (h *controlPortalHandler) resumeTopicMaintenance(c *echo.Context) error {
+func (h *controlConfigHandler) resumeTopicMaintenance(c *echo.Context) error {
 	return h.topicMaintenancePauseCommand(c, "resume")
 }
-func (h *controlPortalHandler) topicMaintenancePauseCommand(c *echo.Context, action string) error {
+func (h *controlConfigHandler) topicMaintenancePauseCommand(c *echo.Context, action string) error {
 	body := middleware.MustGetValidatedBody[controlTopicMaintenancePauseRequest](c.Request().Context(), topicMaintenancePauseBodyKey)
 	return h.topicMaintenanceCommand(c, domain.TopicMaintenanceCommand{OperationKey: body.OperationKey, Action: action})
 }
-func (h *controlPortalHandler) topicMaintenanceCommand(c *echo.Context, input domain.TopicMaintenanceCommand) error {
+func (h *controlConfigHandler) topicMaintenanceCommand(c *echo.Context, input domain.TopicMaintenanceCommand) error {
 	value, err := h.topicMaintenance.Command(c.Request().Context(), input, c.RealIP(), middleware.GetCorrelationID(c.Request().Context()))
 	if err != nil {
 		return topicMaintenanceControlError(err)

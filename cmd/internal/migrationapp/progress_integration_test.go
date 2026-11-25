@@ -29,7 +29,6 @@ import (
 )
 
 type progressLog struct {
-	mu     sync.Mutex
 	file   *os.File
 	logger *slog.Logger
 }
@@ -209,6 +208,16 @@ func progressEvidenceFingerprint(t testing.TB, db *gorm.DB) string {
 	return hex.EncodeToString(digest.Sum(nil))
 }
 
+func runHistoricalEvidenceOnlyMigration(parent context.Context, db *gorm.DB, logger infoLogger) error {
+	return run(parent, db, time.Minute, "up", logger, func(ctx context.Context, db *gorm.DB) error {
+		migrator, err := postgres.NewMigrator(db)
+		if err != nil {
+			return err
+		}
+		return migrateEvidenceOnly(ctx, db, migrator, logger)
+	})
+}
+
 func TestEvidenceOnlyPostgresProgressLiveSQL(t *testing.T) {
 	db := openMigrationIntegrationDB(t)
 	migrator, err := postgres.NewMigrator(db)
@@ -229,7 +238,7 @@ func TestEvidenceOnlyPostgresProgressLiveSQL(t *testing.T) {
 	defer blocker.ExecContext(context.Background(), `SELECT pg_advisory_unlock(749,1)`)
 	logs := newProgressLog(t)
 	done := make(chan error, 1)
-	go func() { done <- RunUp(context.Background(), db, time.Minute, logs.logger) }()
+	go func() { done <- runHistoricalEvidenceOnlyMigration(context.Background(), db, logs.logger) }()
 	require.Eventually(t, func() bool {
 		waits := 0
 		var last any
@@ -297,7 +306,7 @@ func TestEvidenceOnlyPostgresProgressLiveSQL(t *testing.T) {
 		previous = position
 	}
 	require.True(t, progressHas(t, logs, "evidence_only_migration_completed", ""))
-	require.NoError(t, RunUp(context.Background(), db, time.Minute, logs.logger))
+	require.NoError(t, runHistoricalEvidenceOnlyMigration(context.Background(), db, logs.logger))
 	require.True(t, progressHas(t, logs, "evidence_only_migration_skipped", ""))
 	var last map[string]any
 	for _, event := range logs.records(t) {
@@ -340,7 +349,7 @@ func TestEvidenceOnlyPostgresProgressWaitCancellation(t *testing.T) {
 					}
 					return strings.Replace(s, "DO $ontology_reset$", injection+"\nDO $ontology_reset$", 1)
 				})
-				require.NoError(t, RunUp(context.Background(), db, time.Minute, logs.logger))
+				require.NoError(t, runHistoricalEvidenceOnlyMigration(context.Background(), db, logs.logger))
 				require.True(t, progressHas(t, logs, "evidence_only_migration_capture_incomplete", ""))
 				require.Equal(t, before, progressEvidenceFingerprint(t, db))
 				expected := map[string]string{"missing_capture": "sql_stream_interrupted_or_unavailable", "malformed": "invalid_notice", "oversized": "notice_size_limit", "gap": "notice_sequence_gap"}[mode]
@@ -374,7 +383,7 @@ func TestEvidenceOnlyPostgresProgressWaitCancellation(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			done := make(chan error, 1)
-			go func() { done <- RunUp(ctx, db, time.Minute, logs.logger) }()
+			go func() { done <- runHistoricalEvidenceOnlyMigration(ctx, db, logs.logger) }()
 			require.Eventually(t, func() bool {
 				for _, event := range logs.records(t) {
 					if event["msg"] != "evidence_only_migration_wait" {
@@ -445,7 +454,7 @@ func TestEvidenceOnlyPostgresProgressConcurrentStarters(t *testing.T) {
 	logs := newProgressLog(t)
 	done := make(chan error, 2)
 	for i := 0; i < 2; i++ {
-		go func() { done <- RunUp(context.Background(), db, time.Minute, logs.logger) }()
+		go func() { done <- runHistoricalEvidenceOnlyMigration(context.Background(), db, logs.logger) }()
 	}
 	require.NoError(t, <-done)
 	require.NoError(t, <-done)

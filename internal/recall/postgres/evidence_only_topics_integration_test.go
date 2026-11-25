@@ -24,6 +24,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 func TestEvidenceOnlyPostgresTopicsUseDirectMembershipAndDeterministicHints(t *testing.T) {
@@ -40,18 +42,26 @@ func TestEvidenceOnlyPostgresTopicsUseDirectMembershipAndDeterministicHints(t *t
 		f.assignment(t, sibling.ID, first), f.assignment(t, sibling.ID, unseen[1]), f.assignment(t, sibling.ID, unseen[2]))
 	ctx := f.actor(2, "member")
 	input := RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, SpaceKind: "team_shared", OrganizationEnabled: true, Limit: 10}
-	hints, err := f.search.recall.RelatedEvidenceTopics(ctx, input, []string{first.ID, second.ID, parentEvidence.ID}, 2)
+	tracer := &relatedTopicEligibilityTrace{Interface: f.app.Logger}
+	measured := newSearchFixtureStore(f.app.Session(&gorm.Session{Logger: tracer}), f.rls)
+	measured.recall.WithTopics(f.topicStore.NewTopicReader())
+	hints, err := measured.recall.RelatedEvidenceTopics(ctx, input, []string{first.ID, second.ID, parentEvidence.ID}, 2)
 	require.NoError(t, err)
 	require.Equal(t, []recallcontract.RelatedTopic{
 		{TopicID: child.ID, Name: child.Definition.Label, Description: child.Definition.Description, Rank: 1, EligibleEvidenceCount: 3, MatchingResultCount: 2, AdditionalEvidenceCount: 1},
 		{TopicID: sibling.ID, Name: sibling.Definition.Label, Description: sibling.Definition.Description, Rank: 2, EligibleEvidenceCount: 3, MatchingResultCount: 1, AdditionalEvidenceCount: 2},
 	}, hints.Topics)
+	require.Equal(t, []string{"fragment.fragment_id::text"}, tracer.projections)
 	require.True(t, hints.Truncated)
 	input.TopicIDs = []string{parent.ID}
 	result, err := f.search.RecallEvidence(ctx, input)
 	require.NoError(t, err)
 	require.Len(t, result.Results, 1)
 	require.Equal(t, parentEvidence.ID, result.Results[0].EvidenceID, "a parent filter cannot expand its descendants")
+	for _, excluded := range []topiccontract.SourceHandle{first, second, unseen[0]} {
+		require.NotEqual(t, excluded.ID, result.Results[0].EvidenceID)
+		require.NotContains(t, result.Results[0].EquivalentEvidenceIDs, excluded.ID)
+	}
 	input.TopicIDs = []string{parent.ID, child.ID}
 	result, err = f.search.RecallEvidence(ctx, input)
 	require.NoError(t, err)
@@ -77,6 +87,20 @@ func TestEvidenceOnlyPostgresTopicsUseDirectMembershipAndDeterministicHints(t *t
 		}
 		require.NotEqual(t, sibling.ID, hint.TopicID, "known results cannot make a topic hint eligible")
 	}
+}
+
+type relatedTopicEligibilityTrace struct {
+	logger.Interface
+	projections []string
+}
+
+func (l *relatedTopicEligibilityTrace) Trace(ctx context.Context, started time.Time, query func() (string, int64), err error) {
+	sql, _ := query()
+	if strings.Contains(sql, "JOIN search_documents AS document ON document.team_id=fragment.team_id") {
+		head, _, _ := strings.Cut(strings.TrimSpace(sql), "FROM evidence_fragments")
+		l.projections = append(l.projections, strings.TrimSpace(strings.TrimPrefix(head, "SELECT")))
+	}
+	l.Interface.Trace(ctx, started, query, err)
 }
 
 func TestEvidenceOnlyPostgresTopicsRejectUnavailableAndReauthorizeCurrentMembership(t *testing.T) {
@@ -146,7 +170,8 @@ func TestEvidenceOnlyPostgresTopicLogDiagnosis(t *testing.T) {
 	f := newRecallOntologyFixture(t)
 	const credential, presentedCredential = "topic-credential-canary", "topic-request-credential-canary"
 	topic := topiccontract.Record{ID: uuid.NewString(), Kind: topiccontract.Topic, Definition: &topiccontract.Definition{Key: "diagnosis", Label: "Diagnosis", Description: "Topic diagnosis admitted detail. " + credential + " " + presentedCredential}}
-	records := []topiccontract.Record{topic}
+	retired := topiccontract.Record{ID: uuid.NewString(), Kind: topiccontract.Topic, Definition: &topiccontract.Definition{Key: "retired", Label: "Retired topic"}}
+	records := []topiccontract.Record{topic, retired}
 	evidenceIDs, assignmentIDs := []string{}, []string{}
 	for index := range 60 {
 		source := f.evidence(t, index%2, fmt.Sprintf("Topic diagnosis admitted Evidence %d.", index), nil)
@@ -155,6 +180,8 @@ func TestEvidenceOnlyPostgresTopicLogDiagnosis(t *testing.T) {
 		evidenceIDs, assignmentIDs = append(evidenceIDs, source.ID), append(assignmentIDs, assignment.ID)
 	}
 	f.publication(t, records...)
+	retired.Version, retired.Retired = 1, true
+	f.publication(t, retired)
 	path := filepath.Join(t.TempDir(), "topics.jsonl")
 	output, err := os.Create(path)
 	require.NoError(t, err)
@@ -172,8 +199,10 @@ func TestEvidenceOnlyPostgresTopicLogDiagnosis(t *testing.T) {
 	require.Len(t, selected.RelatedTopics, 1)
 	require.Equal(t, 60, selected.RelatedTopics[0].EligibleEvidenceCount)
 	missing := uuid.NewString()
-	_, err = api.Recall(ctx, recall.RecallRequest{TopicIDs: []string{missing}})
-	require.ErrorIs(t, err, recallcontract.ErrTopicUnavailable)
+	for _, unavailable := range []string{missing, retired.ID} {
+		_, err = api.Recall(ctx, recall.RecallRequest{TopicIDs: []string{unavailable}})
+		require.ErrorIs(t, err, recallcontract.ErrTopicUnavailable)
+	}
 	f.search.recall.WithTopics(nil)
 	degraded, err := api.Recall(ctx, recall.RecallRequest{Query: "diagnosis"})
 	require.NoError(t, err)
@@ -223,7 +252,8 @@ func TestEvidenceOnlyPostgresTopicLogDiagnosis(t *testing.T) {
 		require.Equal(t, hex.EncodeToString(digest[:]), chunks[0].SHA256)
 		payloads[id] = []byte(reconstructed.String())
 	}
-	filter, hints, rejected, optional := false, false, false, false
+	filter, hints, optional := false, false, false
+	rejected := make(map[string]string)
 	for _, record := range summaries {
 		require.Equal(t, f.team, record["team_id"])
 		captureID, ok := record["diagnostic_capture_id"].(string)
@@ -266,16 +296,17 @@ func TestEvidenceOnlyPostgresTopicLogDiagnosis(t *testing.T) {
 			if record["recall_id"] == degraded.RecallID {
 				optional = true
 			} else if record["requested_ids"] != nil {
-				rejected = true
 				var selection topiccontract.TopicReadResult
 				require.NoError(t, json.Unmarshal(payloads[captureID], &selection))
-				require.Equal(t, "unavailable", selection.Rejected[missing])
+				for id, reason := range selection.Rejected {
+					rejected[id] = reason
+				}
 			}
 		}
 	}
 	require.True(t, filter)
 	require.True(t, hints)
-	require.True(t, rejected)
+	require.Equal(t, map[string]string{missing: "unavailable", retired.ID: "unavailable"}, rejected)
 	require.True(t, optional)
 }
 

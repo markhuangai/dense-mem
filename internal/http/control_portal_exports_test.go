@@ -16,12 +16,12 @@ func TestControlExportsRequireControlAuthorizationAndAreDisabledWithoutBindings(
 	cfg := &config.Config{ControlPortalToken: "control-secret"}
 	diagnostic := operations.NewDiagnosticService(operations.DiagnosticPresence{}, nil, nil, nil, operations.AuthorityBootstrap{})
 	for _, enabled := range []bool{false, true} {
-		bindings := ControlPortalBindings{}
+		bindings := ControlPortalServices{}
 		if enabled {
-			bindings.Telemetry.AuditExport = audit.New(nil)
-			bindings.Telemetry.Diagnostics = diagnostic
+			bindings.AuditExport = audit.New(nil)
+			bindings.Diagnostics = diagnostic
 		}
-		server, err := NewControlPortalServerWithCapabilityBindings(cfg, nil, nil, nil, bindings, HealthConfig{}, nil)
+		server, err := NewControlPortalServerWithServices(cfg, nil, nil, nil, bindings, HealthConfig{}, nil)
 		require.NoError(t, err)
 		for _, path := range []string{"/control/api/audit/export", "/control/api/diagnostics/bundle"} {
 			request := httptest.NewRequest(http.MethodGet, path, nil)

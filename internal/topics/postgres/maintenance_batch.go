@@ -182,15 +182,6 @@ func maintenanceBusySources(tx *gorm.DB, fence scope) (map[string]bool, error) {
 	return busy, rows.Err()
 }
 
-func maintenanceClosureBusy(sources []topic.SourceHandle, busy map[string]bool) bool {
-	for _, source := range sources {
-		if busy[topic.SourceKey(source)] {
-			return true
-		}
-	}
-	return false
-}
-
 func hasMaintenanceSource(sources []topic.SourceHandle, source topic.SourceHandle) bool {
 	for _, existing := range sources {
 		if topic.SourceKey(existing) == topic.SourceKey(source) {
@@ -450,9 +441,7 @@ func currentMaintenanceCompletion(tx *gorm.DB, claim topic.MaintenanceClaim, res
 		return nil, nil, nil
 	}
 	fence := scope{TeamID: claim.TeamID, SpaceID: claim.SpaceID, Generation: claim.Generation}
-	// A successful assessment already has a catalog; inserting it can reject historical generations before their fence check.
-	var catalogVersion int64
-	if err := tx.Raw(`SELECT revision FROM topic_catalog_heads WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? FOR UPDATE`, fence.TeamID, fence.SpaceID, fence.Generation).Row().Scan(&catalogVersion); err != nil {
+	if err := lockOrganizationCatalog(tx, fence); err != nil {
 		return nil, nil, err
 	}
 	var active bool

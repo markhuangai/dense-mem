@@ -188,7 +188,7 @@ function assertSharedCI(shared, supportedVersions, regressions, local) {
   ]) runStep(quality, command);
   assert.ok(local.split("\n").includes(sharedRegressionsCommand));
   for (const suite of ["coverage_policy", "image_release_policy", "prerelease_version", "go_vulnerability_scan_policy",
-    "ai_pr_review_policy", "npm_vulnerability_scan_policy", "decision_providers/deployment", "ontology_semantic_diagnostics"]) {
+    "ai_pr_review_policy", "npm_vulnerability_scan_policy", "decision_providers/deployment", "topic_semantic_diagnostics"]) {
     assert.ok(regressions.includes("tests/uat/" + suite + ".test.mjs"), suite);
   }
   for (const command of ["go test -timeout=", "scripts/static-analysis.sh", "scripts/go-vulnerability-scan.sh"]) {

@@ -4,6 +4,7 @@ package postgres
 
 import (
 	"context"
+	accessservice "github.com/markhuangai/dense-mem/internal/service/access"
 	"strings"
 	"testing"
 	"time"
@@ -12,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
-	accesspostgres "github.com/markhuangai/dense-mem/internal/access/postgres"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 )
@@ -45,7 +45,7 @@ func createLedgerSSOIdentity(t *testing.T, db *gorm.DB, rls storagepostgres.RLSH
 	return identityID
 }
 
-func createOwnedCredential(t *testing.T, repo *accesspostgres.CredentialRepositoryImpl, teamID, ownerID uuid.UUID, name string) *domain.Credential {
+func createOwnedCredential(t *testing.T, repo accessservice.CredentialStore, teamID, ownerID uuid.UUID, name string) *domain.Credential {
 	t.Helper()
 	id := uuid.New()
 	prefix := "dm_" + strings.ReplaceAll(id.String(), "-", "")[:20]

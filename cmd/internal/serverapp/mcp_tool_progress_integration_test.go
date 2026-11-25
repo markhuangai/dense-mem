@@ -33,6 +33,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	searchpostgres "github.com/markhuangai/dense-mem/internal/search/postgres"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
+	sessionpostgres "github.com/markhuangai/dense-mem/internal/session/postgres"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -153,10 +154,12 @@ func TestMCPToolProgressPostgres(t *testing.T) {
 	embedder := &toolProgressEmbedder{progressPostgresEmbedder: progressPostgresEmbedder{rememberProcessorIntegrationSearchEmbedder: rememberProcessorIntegrationSearchEmbedder{model: model, dimensions: dimensions}}}
 	transport := &toolProgressTransport{}
 	knowledge := knowledgepostgres.NewStore(app, rls)
+	traceStore := buildTraceStore(app, rls)
 	var logs toolProgressLog
 	logger := observability.NewWithHandler(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	bundle := buildApplicationBundle(applicationCompositionDependencies{
-		Knowledge: knowledge, RememberPersistence: knowledge, TraceStore: buildTraceStore(app, rls),
+		Knowledge: knowledge, RememberPersistence: knowledge, TraceStore: traceStore, MemoryPackReader: traceStore,
+		SessionRepository:    sessionpostgres.New(app, rls, knowledge.CommitEvidenceTx, knowledge.WithSubmissionLock),
 		RecallSearch:         recallpostgres.NewStore(app, rls, searchpostgres.NewStore(app, rls), recallpostgres.LoadRecallEvidenceConflictRecords),
 		RecallFeedbackEvents: recallpostgres.NewFeedbackStore(app, rls), Assessor: provider, SessionAssessor: provider,
 		GeneratorTransport: transport, SessionEnabled: true, RememberModel: "tool-progress-extraction", AssessmentLimits: assessor.DefaultSemanticAssessmentLimits(),
@@ -193,7 +196,7 @@ func TestMCPToolProgressPostgres(t *testing.T) {
 	a := newActor(uuid.Nil)
 	b, c := newActor(actors[a].TeamID), newActor(uuid.Nil)
 	e := echo.New()
-	h := handler.NewMCPHandlerWithLifecycleAndRuntimeConfig(reg, handler.NewMCPLogger(transportLogger(logger)), nil, toolProgressConfig{})
+	h := handler.NewMCPHandlerWithLifecycleAndRuntimeConfig(reg, logger.ContextSlog(), nil, toolProgressConfig{})
 	e.POST("/mcp", h.HandlePost)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := actors[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]

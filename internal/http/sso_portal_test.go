@@ -292,7 +292,7 @@ func TestUserPortalSSOErrorBranches(t *testing.T) {
 
 func TestControlPortalSSOErrorBranches(t *testing.T) {
 	e := echo.New()
-	handler := &controlPortalHandler{}
+	handler := &controlIdentityHandler{}
 
 	for name, call := range map[string]func(*echo.Context) error{
 		"list providers":  handler.listSSOProviders,
@@ -512,10 +512,10 @@ func TestUserPortalPublicSSOStartIsRateLimited(t *testing.T) {
 func controlPortalSSOServer(t *testing.T, repo *httpSSORepoStub, now time.Time) nethttp.Handler {
 	t.Helper()
 	ssoSvc := accessservice.NewSSOService(repo, accessservice.SSOConfig{Now: func() time.Time { return now }})
-	e, err := newControlPortalServerWithMetricsAndTelemetry(&config.Config{
+	e, err := NewControlPortalServerWithServices(&config.Config{
 		ControlHTTPAddr:    "127.0.0.1:8090",
 		ControlPortalToken: "secret",
-	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalTelemetry{SSO: ssoSvc}, HealthConfig{}, nil)
+	}, &controlProfileSvc{}, &controlKeySvc{}, nil, ControlPortalServices{SSO: ssoSvc}, HealthConfig{}, nil)
 	require.NoError(t, err)
 	return e
 }
@@ -617,6 +617,20 @@ func (r *httpSSORepoStub) ListProviders(context.Context) ([]*domain.SSOProvider,
 		items = append(items, &copy)
 	}
 	return items, nil
+}
+
+func (r *httpSSORepoStub) ListEnabledOAuthIssuer(ctx context.Context, issuer string) ([]*domain.SSOProvider, error) {
+	providers, err := r.ListEnabledProviders(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var result []*domain.SSOProvider
+	for _, provider := range providers {
+		if provider != nil && provider.IssuerURL == issuer && provider.ProtectedResource.Enabled {
+			result = append(result, provider)
+		}
+	}
+	return result, nil
 }
 
 func (r *httpSSORepoStub) ListEnabledProviders(ctx context.Context) ([]*domain.SSOProvider, error) {

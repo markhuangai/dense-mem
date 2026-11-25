@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	assignment "github.com/markhuangai/dense-mem/internal/topicassignment/contract"
+	assignment "github.com/markhuangai/dense-mem/internal/topics/assignment"
 	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"

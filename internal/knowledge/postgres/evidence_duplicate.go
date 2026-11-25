@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	storagepostgres "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"sort"
 	"strings"
 
@@ -79,7 +80,7 @@ func (r *Store) PlanRememberDuplicateEmbeddings(
 			if !rememberEvidenceRequiresDuplicateAssessment(evidence) {
 				continue
 			}
-			documentHash := searchDocumentHash(evidence.Content)
+			documentHash := storagepostgres.SearchDocumentHash(evidence.Content)
 			if _, exists := seenContent[documentHash]; exists {
 				continue
 			}
@@ -165,7 +166,7 @@ func (r *Store) ResolveRememberDuplicateCandidates(
 				result.Exact[index] = resolution
 				continue
 			}
-			vector, ok := vectors[searchDocumentHash(evidence.Content)]
+			vector, ok := vectors[storagepostgres.SearchDocumentHash(evidence.Content)]
 			if !ok {
 				return fmt.Errorf("%w: duplicate evidence content was not embedded", ErrInlineEmbeddingPlanMismatch)
 			}
@@ -464,8 +465,8 @@ func lockRememberDuplicateEligibility(
 		}
 		spaceID = fence.ID
 	}
-	if err := lockKnownEvidenceSpace(ctx, tx, input.TeamID, spaceID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) || isPostgresLockNotAvailable(err) {
+	if err := storagepostgres.LockMemorySpaceTx(ctx, tx, input.TeamID, spaceID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) || storagepostgres.IsLockNotAvailable(err) {
 			return ErrRememberDuplicateCandidateStale
 		}
 		return err
@@ -502,7 +503,7 @@ func lockRememberDuplicateEligibility(
 	for _, key := range orderedSources {
 		source := sources[key]
 		if err := lockKnownEvidenceSource(ctx, tx, input.TeamID, source.SourceID, source.OwnerProfileID); err != nil {
-			if errors.Is(err, sql.ErrNoRows) || isPostgresLockNotAvailable(err) {
+			if errors.Is(err, sql.ErrNoRows) || storagepostgres.IsLockNotAvailable(err) {
 				return ErrRememberDuplicateCandidateStale
 			}
 			return err

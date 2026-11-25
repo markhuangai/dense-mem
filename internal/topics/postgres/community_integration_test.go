@@ -18,9 +18,9 @@ import (
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/provider/decision"
-	assignment "github.com/markhuangai/dense-mem/internal/topicassignment/contract"
 	"github.com/markhuangai/dense-mem/internal/topics"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
+	assignment "github.com/markhuangai/dense-mem/internal/topics/assignment"
 	"github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -101,7 +101,8 @@ func TestCommunityPlacementChecksRevisionsAndAccountsForProviderWork(t *testing.
 	require.EqualValues(t, 1, status.Usage.UnavailableUsageAttempts)
 
 	t.Run("manager publication rolls back when a later edge closes a mixed cycle", testCommunityMixedHierarchyPublicationRollback)
-	t.Run("parent revision cannot expose a cycle", testCommunityInvalidationRollback)
+	t.Run("parent metadata revision preserves effective edges", testCommunityParentRevision)
+	t.Run("placement revalidates after a concurrent assignment refresh", testCommunityAssignmentRefresh)
 	t.Run("rejected hierarchy placement is deferred", testCommunityHierarchyRejectionDeferred)
 	t.Run("admitted decision outlives the preparation lease", testCommunityDecisionRenewsLease)
 }
@@ -223,6 +224,10 @@ func testCommunityHierarchyRejectionDeferred(t *testing.T) {
 	require.Equal(t, "failed", disposition)
 	require.Equal(t, "community_hierarchy_conflict", failure)
 	require.True(t, deferred)
+	failed, err := f.store.GetRecord(f.actor(1, "member"), f.team, parent.ID, 0)
+	require.NoError(t, err)
+	require.Equal(t, "failed", failed.CommunityPlacement)
+	require.Empty(t, failed.Definition.ParentID)
 
 	progress, err = service.RunTurn(ctx)
 	require.NoError(t, err)
@@ -231,12 +236,23 @@ func testCommunityHierarchyRejectionDeferred(t *testing.T) {
 	view, err := f.store.GetRecord(manager, f.team, child.ID, 0)
 	require.NoError(t, err)
 	require.Equal(t, parent.ID, view.CommunityParentID)
+	require.Equal(t, parent.ID, view.Definition.ParentID)
 	status, err := f.store.MaintenanceStatus(ctx, time.Now())
 	require.NoError(t, err)
 	require.EqualValues(t, 1, status.Communities.Failed)
 	require.Zero(t, status.ActiveWork)
 	require.EqualValues(t, 2, status.Usage.Attempts)
 	require.Zero(t, status.Usage.UnreconciledAttempts)
+
+	failed.Definition.Description = "Updated database vocabulary"
+	_, err = managementService(f).SaveEdits(manager, contract.SaveEditsInput{
+		OperationKey: "revise-after-placement-failure", Reason: "Update database vocabulary",
+		Edits: []contract.ManagementEdit{{Action: "define", RecordID: parent.ID, Kind: contract.Topic, ExpectedVersion: failed.EditVersion, Definition: failed.Definition}},
+	})
+	require.NoError(t, err)
+	current, err := f.store.GetRecord(manager, f.team, parent.ID, 0)
+	require.NoError(t, err)
+	require.Empty(t, current.CommunityPlacement, "the failure belongs to the previous Topic revision")
 }
 
 func testCommunityMixedHierarchyPublicationRollback(t *testing.T) {
@@ -270,7 +286,10 @@ func testCommunityMixedHierarchyPublicationRollback(t *testing.T) {
 	placedView, err := f.store.GetRecord(manager, f.team, placed.ID, 0)
 	require.NoError(t, err)
 	require.Equal(t, placedParent.ID, placedView.CommunityParentID)
-	require.Empty(t, placedView.Definition.ParentID)
+	require.Equal(t, placedParent.ID, placedView.Definition.ParentID)
+	original, err := f.store.GetRecord(manager, f.team, placed.ID, 1)
+	require.NoError(t, err)
+	require.Empty(t, original.Definition.ParentID)
 
 	before, err := f.store.ListRecords(manager, f.team, contract.Topic, "", 10)
 	require.NoError(t, err)
@@ -292,11 +311,11 @@ func testCommunityMixedHierarchyPublicationRollback(t *testing.T) {
 	require.Equal(t, before, after)
 	accepted, err := f.store.PublishManager(manager, f.team, testPublication(operation, seed.Revision, legal))
 	require.NoError(t, err)
-	require.Equal(t, seed.Revision+1, accepted.Revision)
+	require.Greater(t, accepted.Revision, seed.Revision)
 	require.Equal(t, []contract.RevisionRef{{ID: legalChild.ID, Version: 2}}, accepted.Records)
 }
 
-func testCommunityInvalidationRollback(t *testing.T) {
+func testCommunityParentRevision(t *testing.T) {
 	ctx := t.Context()
 	f := newOntologyFixture(t)
 	manager := f.actor(0, "manager")
@@ -330,27 +349,132 @@ func testCommunityInvalidationRollback(t *testing.T) {
 
 	const operation = "edit-parent-description"
 	communityParent.Definition.Description = "PostgreSQL operations and administration."
-	edit := contract.Change{Record: communityParent, ExpectedVersion: 1}
-	_, err = f.store.PublishManager(manager, f.team, testPublication(operation, seed.Revision, edit))
-	require.ErrorIs(t, err, contract.ErrConflict)
-	var rejection *contract.PublicationRejection
-	require.ErrorAs(t, err, &rejection)
-	require.Equal(t, "community_hierarchy_conflict", rejection.Reason)
-	require.Equal(t, child.ID, rejection.RecordID)
-	require.Equal(t, definitionParent.ID, rejection.ParentID)
+	result, err := f.store.PublishManager(manager, f.team, testPublication(operation, seed.Revision,
+		contract.Change{Record: communityParent, ExpectedVersion: 1}))
+	require.NoError(t, err)
+	require.Greater(t, result.Revision, seed.Revision)
 	view, err := f.store.GetRecord(manager, f.team, child.ID, 0)
 	require.NoError(t, err)
 	require.Equal(t, communityParent.ID, view.CommunityParentID)
+	require.Equal(t, communityParent.ID, view.Definition.ParentID)
+	view, err = f.store.GetRecord(manager, f.team, definitionParent.ID, 0)
+	require.NoError(t, err)
+	require.Equal(t, child.ID, view.Definition.ParentID)
+}
 
-	definitionParent.Definition.Description = "PostgreSQL availability and recovery."
-	result, err := f.store.PublishManager(manager, f.team, testPublication(operation, seed.Revision,
-		edit, contract.Change{Record: definitionParent, ExpectedVersion: 1}))
-	require.NoError(t, err)
-	require.Equal(t, seed.Revision+1, result.Revision)
-	view, err = f.store.GetRecord(manager, f.team, child.ID, 0)
-	require.NoError(t, err)
-	require.Empty(t, view.CommunityParentID)
-	require.Equal(t, definitionParent.ID, view.Definition.ParentID)
+func testCommunityAssignmentRefresh(t *testing.T) {
+	for _, variant := range []struct {
+		name           string
+		declaredParent bool
+		waitStatement  string
+	}{
+		{name: "restored declared parent", declaredParent: true, waitStatement: "%pg_advisory_xact_lock%"},
+		{name: "root endpoint revision", waitStatement: "%FOR NO KEY UPDATE%"},
+	} {
+		t.Run(variant.name, func(t *testing.T) {
+			f := newOntologyFixture(t)
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			window := maintenanceWindow(t, f, maintenanceSettings(t, f))
+			oldSource := f.organizationEvidence(t, 0, "PostgreSQL backup guidance.", nil)
+			const text = "PostgreSQL backup retention can be configured."
+			newSource := f.organizationEvidence(t, 0, text, nil)
+			parent, child := testTopic("postgresql-backup"), testTopic("postgresql")
+			parent.ID = "10000000-0000-4000-8000-000000000001"
+			child.ID = "10000000-0000-4000-8000-000000000002"
+			parent.Definition.Label = "PostgreSQL backup"
+			child.Definition.Label = "PostgreSQL"
+			parent.Sources = []contract.SourceDependency{f.source(t, oldSource)}
+			if variant.declaredParent {
+				parent.Definition.ParentID = child.ID
+			}
+			_, err := f.store.PublishAutomatic(ctx, f.team, testPublication("placement-refresh-fixture", 0,
+				contract.Change{Record: parent}, contract.Change{Record: child}))
+			require.NoError(t, err)
+
+			claim := func(topicID string) (contract.CommunityInput, contract.MaintenanceClaim) {
+				t.Helper()
+				turn, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now(), time.Minute)
+				require.NoError(t, err)
+				require.NotNil(t, turn)
+				input, batch, err := f.store.ClaimCommunity(ctx, *turn, window.ID, time.Now())
+				require.NoError(t, err)
+				require.NotNil(t, input)
+				require.NotNil(t, batch)
+				require.Equal(t, topicID, input.Topic.ID)
+				return *input, *batch
+			}
+			input, batch := claim(parent.ID)
+			require.NoError(t, f.store.CompleteCommunity(ctx, batch, input, contract.CommunityOutcome{
+				InputHash: testHash("standalone parent"), Method: "generation", Status: "standalone",
+			}, "", time.Now()))
+			input, batch = claim(child.ID)
+			require.Len(t, input.Candidates, 1)
+			require.Equal(t, parent.ID, input.Candidates[0].ID)
+
+			require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
+				return appendMaintenanceOccurrence(tx, f, oldSource)
+			}))
+			before, err := f.store.GetRecord(f.actor(0, "manager"), f.team, parent.ID, 0)
+			require.NoError(t, err)
+			require.Equal(t, "source_changed", before.StaleReason)
+			require.Equal(t, "standalone", before.CommunityPlacement)
+
+			assignmentScope := assignment.Scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation, OperationID: uuid.NewString()}
+			item := assignment.Publication{EvidenceID: newSource.ID, Outcome: assignment.Outcome{
+				Text: text, InputHash: testHash("refresh parent definition"), Method: "generation",
+				Proposals: []assignment.Proposal{{Label: parent.Definition.Label, Quote: parent.Definition.Label, Description: "PostgreSQL backup guidance"}},
+			}}
+			publish := func(tx *gorm.DB) error {
+				return f.store.PublishAssignmentsTx(ctx, tx, assignmentScope, []assignment.Publication{item})
+			}
+			if variant.declaredParent {
+				require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
+					fence := scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation}
+					if err := lockOrganizationCatalog(tx, fence); err != nil {
+						return err
+					}
+					require.ErrorIs(t, f.rls.WithSystemTx(ctx, f.app, publish), assignment.ErrStale)
+					return nil
+				}))
+			}
+
+			finished := make(chan error, 1)
+			require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
+				if err := publish(tx); err != nil {
+					return err
+				}
+				var writerPID int
+				if err := tx.Raw(`SELECT pg_backend_pid()`).Row().Scan(&writerPID); err != nil {
+					return err
+				}
+				go func() {
+					finished <- f.store.CompleteCommunity(ctx, batch, input, contract.CommunityOutcome{
+						InputHash: testHash("place under refreshed parent"), Method: "generation", Status: "placed", ParentID: parent.ID,
+					}, "", time.Now())
+				}()
+				require.Eventually(t, func() bool {
+					var blocked bool
+					err := f.admin.Raw(`SELECT EXISTS(SELECT 1 FROM pg_stat_activity
+                        WHERE wait_event_type='Lock' AND query LIKE ? AND ?=ANY(pg_blocking_pids(pid)))`,
+						variant.waitStatement, writerPID).Row().Scan(&blocked)
+					return err == nil && blocked
+				}, 5*time.Second, 20*time.Millisecond)
+				return nil
+			}))
+			require.ErrorIs(t, <-finished, contract.ErrSourceStale)
+			current, err := f.store.GetRecord(f.actor(0, "manager"), f.team, parent.ID, 0)
+			require.NoError(t, err)
+			require.EqualValues(t, 2, current.Version)
+			require.Equal(t, parent.Definition.ParentID, current.Definition.ParentID)
+			current, err = f.store.GetRecord(f.actor(0, "manager"), f.team, child.ID, 0)
+			require.NoError(t, err)
+			require.Empty(t, current.Definition.ParentID)
+			var placementCount int
+			require.NoError(t, f.admin.Raw(`SELECT count(*) FROM community_placement_outcomes WHERE operation_id=?::uuid`, batch.ID).Row().Scan(&placementCount))
+			require.Zero(t, placementCount)
+		})
+	}
 }
 
 func TestConcurrentTopicProposalsReuseScopedName(t *testing.T) {

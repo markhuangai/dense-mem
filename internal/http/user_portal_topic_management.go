@@ -14,6 +14,7 @@ import (
 	topics "github.com/markhuangai/dense-mem/internal/topics"
 )
 
+const topicEditsBodyKey = "topicEdits"
 const topicSaveBodyKey = "topicDraftSave"
 const topicDraftBodyKey = "topicDraftCommand"
 const topicPreviewBodyKey = "topicDraftPreview"
@@ -55,6 +56,7 @@ func registerTopicManagementRoutes(api *echo.Group, service *topics.ManagementSe
 	group.GET("/status", h.status, read, topicQuery())
 	group.GET("/drafts", h.drafts, read, topicQuery("cursor", "limit"))
 	group.GET("/drafts/:id", h.draft, read, topicQuery())
+	group.POST("/edits", h.saveEdits, write, topicQuery(), mw.BindAndValidateStrict[topics.SaveEditsInput](topicEditsBodyKey))
 	group.POST("/drafts", h.saveDraft, write, topicQuery(), mw.BindAndValidateStrict[topicSaveDraftRequest](topicSaveBodyKey))
 	group.PUT("/drafts/:id", h.saveDraft, write, topicQuery(), mw.BindAndValidateStrict[topicSaveDraftRequest](topicSaveBodyKey))
 	group.POST("/drafts/:id/preview", h.preview, read, topicQuery(), mw.BindAndValidateStrict[dto.TopicPreviewRequest](topicPreviewBodyKey))
@@ -108,10 +110,12 @@ func managementResponse(c *echo.Context, value any, err error) error {
 	switch {
 	case errors.Is(err, topics.ErrUnauthorized):
 		return httperr.New(httperr.FORBIDDEN, "manager authorization required")
+	case errors.Is(err, topics.ErrLegacyMutation):
+		return httperr.New(httperr.GONE, "use POST /ui/api/topics/edits to save topic changes")
 	case errors.Is(err, topics.ErrNotFound):
 		return httperr.New(httperr.NOT_FOUND, "topic management item not found")
 	case errors.Is(err, topics.ErrConflict), errors.Is(err, topics.ErrSourceStale):
-		return httperr.New(httperr.CONFLICT, "topic state changed. Refresh the draft before resubmitting")
+		return httperr.New(httperr.CONFLICT, "topic state changed. Refresh the record before resubmitting")
 	case errors.Is(err, topics.ErrInvalid), errors.Is(err, topics.ErrOverride):
 		return httperr.New(httperr.VALIDATION_ERROR, "invalid or incompatible topic edit")
 	default:
@@ -165,13 +169,12 @@ func (h *topicManagementHandler) draft(c *echo.Context) error {
 }
 func (h *topicManagementHandler) saveDraft(c *echo.Context) error {
 	body := mw.MustGetValidatedBody[topicSaveDraftRequest](c.Request().Context(), topicSaveBodyKey)
-	value, err := h.service.SaveDraft(c.Request().Context(), c.Param("id"), topics.SaveDraftInput{OperationKey: body.OperationKey, ExpectedVersion: *body.ExpectedVersion, ExpectedRevision: *body.ExpectedRevision, Reason: body.Reason, Edits: body.Edits})
+	input := topics.SaveDraftInput{OperationKey: body.OperationKey, ExpectedVersion: *body.ExpectedVersion, ExpectedRevision: *body.ExpectedRevision, Reason: body.Reason, Edits: body.Edits}
+	value, err := h.service.ReplayDraft(c.Request().Context(), c.Param("id"), "save", body.OperationKey, input)
 	return managementResponse(c, value, err)
 }
 func (h *topicManagementHandler) preview(c *echo.Context) error {
-	body := mw.MustGetValidatedBody[dto.TopicPreviewRequest](c.Request().Context(), topicPreviewBodyKey)
-	value, err := h.service.Preview(c.Request().Context(), c.Param("id"), *body.ExpectedVersion)
-	return managementResponse(c, value, err)
+	return managementResponse(c, nil, h.service.RetiredPreview(c.Request().Context()))
 }
 func (h *topicManagementHandler) publish(c *echo.Context) error {
 	return h.commandDraft(c, "publish")
@@ -181,7 +184,8 @@ func (h *topicManagementHandler) discard(c *echo.Context) error {
 }
 func (h *topicManagementHandler) commandDraft(c *echo.Context, action string) error {
 	body := mw.MustGetValidatedBody[dto.TopicDraftCommandRequest](c.Request().Context(), topicDraftBodyKey)
-	value, err := h.service.CommandDraft(c.Request().Context(), c.Param("id"), action, topics.DraftCommand{OperationKey: body.OperationKey, ExpectedVersion: *body.ExpectedVersion, ExpectedRevision: *body.ExpectedRevision, Reason: body.Reason})
+	input := topics.DraftCommand{OperationKey: body.OperationKey, ExpectedVersion: *body.ExpectedVersion, ExpectedRevision: *body.ExpectedRevision, Reason: body.Reason}
+	value, err := h.service.ReplayDraft(c.Request().Context(), c.Param("id"), action, body.OperationKey, input)
 	return managementResponse(c, value, err)
 }
 func (h *topicManagementHandler) publications(c *echo.Context) error {
@@ -202,6 +206,12 @@ func (h *topicManagementHandler) publication(c *echo.Context) error {
 }
 func (h *topicManagementHandler) rollback(c *echo.Context) error {
 	body := mw.MustGetValidatedBody[dto.TopicRollbackRequest](c.Request().Context(), topicRollbackBodyKey)
-	value, err := h.service.Rollback(c.Request().Context(), c.Param("id"), topics.DraftCommand{OperationKey: body.OperationKey, ExpectedRevision: *body.ExpectedRevision, Reason: body.Reason})
+	value, err := h.service.ReplayRollback(c.Request().Context(), c.Param("id"), topics.DraftCommand{OperationKey: body.OperationKey, ExpectedRevision: *body.ExpectedRevision, Reason: body.Reason})
+	return managementResponse(c, value, err)
+}
+
+func (h *topicManagementHandler) saveEdits(c *echo.Context) error {
+	input := mw.MustGetValidatedBody[topics.SaveEditsInput](c.Request().Context(), topicEditsBodyKey)
+	value, err := h.service.SaveEdits(c.Request().Context(), *input)
 	return managementResponse(c, value, err)
 }
