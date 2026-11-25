@@ -58,7 +58,8 @@ temp/
 telemetry-scrape-token
 prometheus.yml
 # Codex local state and credentials; only the staging-test workflow is shared.
-.codex/*
+.codex
+.agents
 .claude
 .mcp.json
 # Python package development and validation
