@@ -4,6 +4,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -113,8 +114,10 @@ func TestTeamServiceCreateDuplicateName(t *testing.T) {
 
 	_, err = service.Create(ctx, req2, &actorKeyID, "system", "127.0.0.1", "test-correlation-id")
 
-	require.Error(t, err, "Duplicate name should fail")
-	assert.Contains(t, err.Error(), "duplicate", "Error should identify the duplicate team name")
+	var apiErr *httperr.APIError
+	require.ErrorAs(t, err, &apiErr)
+	require.Equal(t, httperr.CONFLICT, apiErr.Code)
+	require.Equal(t, "team_name_conflict", apiErr.ReasonCode)
 
 	sqlDB.Exec("DELETE FROM audit_log WHERE entity_id = $1", profile1.ID.String())
 	sqlDB.Exec("DELETE FROM teams WHERE id = $1", profile1.ID.String())
@@ -296,6 +299,20 @@ func TestTeamServiceUpdate(t *testing.T) {
 	require.NoError(t, err, "Should query audit log")
 	assert.GreaterOrEqual(t, auditCount, 1, "Audit log should have UPDATE entry")
 
+	otherTeam, err := service.Create(ctx, req, &actorKeyID, "system", "127.0.0.1", "test-correlation-id")
+	require.NoError(t, err, "The previous team name should be available after renaming")
+	conflictingName := strings.ToLower(otherTeam.Name)
+	_, err = service.Update(ctx, profile.ID, accessservice.UpdateTeamRequest{Name: &conflictingName}, &actorKeyID, "system", "127.0.0.1", "test-correlation-id")
+	var apiErr *httperr.APIError
+	require.ErrorAs(t, err, &apiErr)
+	require.Equal(t, httperr.CONFLICT, apiErr.Code)
+	require.Equal(t, "team_name_conflict", apiErr.ReasonCode)
+	current, err := service.Get(ctx, profile.ID)
+	require.NoError(t, err)
+	require.Equal(t, newName, current.Name, "A conflicting rename should leave the team name intact")
+
+	sqlDB.Exec("DELETE FROM audit_log WHERE entity_id = $1", otherTeam.ID.String())
+	sqlDB.Exec("DELETE FROM teams WHERE id = $1", otherTeam.ID.String())
 	sqlDB.Exec("DELETE FROM audit_log WHERE entity_id = $1", profile.ID.String())
 	sqlDB.Exec("DELETE FROM teams WHERE id = $1", profile.ID.String())
 }

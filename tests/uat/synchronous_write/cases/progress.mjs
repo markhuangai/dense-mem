@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { captureSemanticAssessmentWindow, reconstructDiagnosticBody } from "../../ontology_assessment_diagnostics.mjs";
+import { captureSemanticAssessmentWindow, reconstructDiagnosticBody } from "../../topic_assessment_diagnostics.mjs";
 import { createKnownEvidenceTeam, createKnownEvidenceCredential, postgresQuery, rememberCanonicalCounts } from "./remember.mjs";
 import { diagnoseProviderHTTPLog } from "./diagnostics.mjs";
 import { rememberWithEmbeddingRetry } from "../remember_retry.mjs";

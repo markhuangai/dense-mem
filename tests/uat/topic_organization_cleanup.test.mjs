@@ -51,7 +51,7 @@ for (const failures of [[], ["reset"], ["reset", "resume"]]) {
     const base = `http://127.0.0.1:${server.address().port}`;
     let child;
     try {
-      child = spawn(process.execPath, [new URL("ontology_organization_e2e.mjs", import.meta.url).pathname], {
+      child = spawn(process.execPath, [new URL("topic_organization_e2e.mjs", import.meta.url).pathname], {
         env: { ...process.env, DENSE_MEM_USER_URL: base, DENSE_MEM_CONTROL_URL: base, DENSE_MEM_E2E_PROVIDER_URL: base,
           DENSE_MEM_CONTROL_TOKEN: "fixture-control", DENSE_MEM_E2E_API_KEY: "fixture-key", DENSE_MEM_E2E_TEAM_ID: "fixture-team" },
       });
@@ -104,7 +104,7 @@ for (const failedTeam of ["fixture-team", "foreign-team"]) test(`ontology UAT pr
   const base = `http://127.0.0.1:${server.address().port}`;
   let child;
   try {
-    child = spawn(process.execPath, [new URL("ontology_organization_e2e.mjs", import.meta.url).pathname], {
+    child = spawn(process.execPath, [new URL("topic_organization_e2e.mjs", import.meta.url).pathname], {
       env: { ...process.env, DENSE_MEM_USER_URL: base, DENSE_MEM_CONTROL_URL: base, DENSE_MEM_E2E_PROVIDER_URL: base,
         DENSE_MEM_CONTROL_TOKEN: "fixture-control", DENSE_MEM_E2E_API_KEY: "fixture-key", DENSE_MEM_E2E_TEAM_ID: "fixture-team",
         DENSE_MEM_E2E_REMEMBER_FAILURE_DIR: directory },

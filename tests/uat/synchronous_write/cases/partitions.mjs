@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { progressCall } from "./progress.mjs";
 import { postgresExec, postgresQuery, rememberCanonicalCounts } from "./remember.mjs";
-import { captureSemanticAssessmentWindow, reconstructDiagnosticBody } from "../../ontology_assessment_diagnostics.mjs";
+import { captureSemanticAssessmentWindow, reconstructDiagnosticBody } from "../../topic_assessment_diagnostics.mjs";
 
 export const name = "partitions";
 

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
-import { captureSemanticAssessmentWindow, reconstructDiagnosticBody } from "./ontology_assessment_diagnostics.mjs";
+import { captureSemanticAssessmentWindow, reconstructDiagnosticBody } from "./topic_assessment_diagnostics.mjs";
 const diagnosticSince = new Date().toISOString();
 
 const userURL = required("DENSE_MEM_USER_URL").replace(/\/$/, "");

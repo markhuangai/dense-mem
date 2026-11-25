@@ -14,7 +14,7 @@
       "package": "./cmd/internal/serverapp",
       "run": "^TestOntologyFailureCapturePersistsAtInfoAndScopesControlReads$",
       "phase": "precheck",
-      "source": "cmd/internal/serverapp/ontology_diagnostic_integration_test.go"
+      "source": "cmd/internal/serverapp/topic_diagnostic_integration_test.go"
     },
     {
       "id": "postgres/TestDemoCleanupRepositorySelectsOnlyExpiredDemoTeamsInBatches",
@@ -84,7 +84,7 @@
       "package": "./cmd/internal/serverapp",
       "run": "^TestRunnerOntologyPacingUnderForegroundLoad$",
       "phase": "precheck",
-      "source": "cmd/internal/serverapp/runner_ontology_pacing_integration_test.go"
+      "source": "cmd/internal/serverapp/runner_topic_pacing_integration_test.go"
     },
     {
       "id": "server/TestMCPToolProgressPostgres",

@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { captureRememberFailure } from "./synchronous_write/cases/diagnostics.mjs";
 import { rememberWithEmbeddingRetry } from "./synchronous_write/remember_retry.mjs";
-import { assessmentRecords, captureSemanticAssessmentWindow, reconstructDiagnosticBody } from "./ontology_assessment_diagnostics.mjs";
+import { assessmentRecords, captureSemanticAssessmentWindow, reconstructDiagnosticBody } from "./topic_assessment_diagnostics.mjs";
 
 const userURL = required("DENSE_MEM_USER_URL").replace(/\/$/, "");
 const controlURL = required("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");

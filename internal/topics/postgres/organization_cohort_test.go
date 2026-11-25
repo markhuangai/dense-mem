@@ -46,7 +46,7 @@ func testOntologyCohortWithMatching(t *testing.T, maintenance bool, matching []e
 	matchingCases := map[string]evalharness.OrganizationMatchingCase{}
 	if len(matching) > 0 {
 		cohort, judgments = nil, matching
-		lockPath = "../../testfixture/evaluation/testdata/ontology_matching_v1.json"
+		lockPath = "../../testfixture/evaluation/testdata/topic_matching_v1.json"
 		for _, item := range matching {
 			cohort = append(cohort, item.Case)
 			matchingCases[item.Case.ID] = item
@@ -55,7 +55,7 @@ func testOntologyCohortWithMatching(t *testing.T, maintenance bool, matching []e
 	if len(supplements) > 0 {
 		cohort = nil
 		judgments = supplements[0]
-		lockPath = "../../testfixture/evaluation/testdata/ontology_followups_v1.json"
+		lockPath = "../../testfixture/evaluation/testdata/topic_followups_v1.json"
 		for _, supplement := range supplements[0] {
 			cohort = append(cohort, supplement.Case)
 			followups[supplement.Case.ID] = supplement

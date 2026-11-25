@@ -17,8 +17,8 @@ node --test \
   tests/uat/go_vulnerability_scan_policy.test.mjs \
   tests/uat/image_release_policy.test.mjs \
   tests/uat/npm_vulnerability_scan_policy.test.mjs \
-  tests/uat/ontology_organization_cleanup.test.mjs \
-  tests/uat/ontology_semantic_diagnostics.test.mjs \
+  tests/uat/topic_organization_cleanup.test.mjs \
+  tests/uat/topic_semantic_diagnostics.test.mjs \
   tests/uat/pr_image_cleanup.test.mjs \
   tests/uat/pr_validation_policy.test.mjs \
   tests/uat/prerelease_version.test.mjs \

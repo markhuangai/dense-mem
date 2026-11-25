@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
-import { assessmentRecords, captureSemanticAssessmentWindow } from "./ontology_assessment_diagnostics.mjs";
+import { assessmentRecords, captureSemanticAssessmentWindow } from "./topic_assessment_diagnostics.mjs";
 
 const controlURL = required("DENSE_MEM_CONTROL_URL");
 const userURL = required("DENSE_MEM_USER_URL");

@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { captureSemanticAssessmentWindow, reconstructDiagnosticBody } from "../../ontology_assessment_diagnostics.mjs";
+import { captureSemanticAssessmentWindow, reconstructDiagnosticBody } from "../../topic_assessment_diagnostics.mjs";
 
 export const name = "diagnostics";
 const rememberModel = "dense-mem-synchronous-write-e2e-remember";

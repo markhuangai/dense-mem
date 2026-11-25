@@ -17,7 +17,7 @@ import (
 )
 
 func TestRecallOntologyManagementLockedCohort(t *testing.T) {
-	data, err := os.ReadFile("../../testfixture/evaluation/testdata/ontology_management_v1.json")
+	data, err := os.ReadFile("../../testfixture/evaluation/testdata/topic_management_v1.json")
 	require.NoError(t, err)
 	var lock struct {
 		Cases []struct {

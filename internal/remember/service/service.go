@@ -147,7 +147,8 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 	if strings.TrimSpace(req.IdempotencyKey) == "" {
 		return nil, errors.New("remember: idempotency_key is required")
 	}
-	scan, scanErr := scanRememberEvidence(req.Evidence)
+	reviewContext := s.publicSeedAdmission == nil
+	scan, scanErr := scanRememberEvidence(req.Evidence, reviewContext)
 	if scanErr != nil {
 		if err := recordSubmissionSecurityRejection(ctx, s.auditor, s.logger, actor, "remember", scan, scanErr); err != nil {
 			observability.RecordRememberAcknowledgement(ctx, s.metrics, time.Since(started), "error")
@@ -164,7 +165,7 @@ func (s *service) Remember(ctx context.Context, req RememberRequest) (*RememberR
 		return nil, err
 	}
 	key := strings.TrimSpace(req.IdempotencyKey)
-	skipAIReview := scanErr == nil && s.publicSeedAdmission != nil
+	skipAIReview := scanErr == nil && !reviewContext
 	if skipAIReview && !s.publicSeedAdmission.allows(actor, space, key, requestHash) {
 		return nil, domain.ErrMemoryWriteDenied
 	}

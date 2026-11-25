@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { collectSemanticPublicationProof } from "./ontology_semantic_diagnostics.mjs";
+import { collectSemanticPublicationProof } from "./topic_semantic_diagnostics.mjs";
 
 const required = (name) => { assert(process.env[name], `${name} is required`); return process.env[name]; };
 const userURL = required("DENSE_MEM_USER_URL").replace(/\/$/, "");

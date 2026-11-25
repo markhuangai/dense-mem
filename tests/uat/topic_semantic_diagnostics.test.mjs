@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { semanticPublicationRecords, verifySemanticPublication } from "./ontology_semantic_diagnostics.mjs";
-import { verifySemanticAssessment } from "./ontology_assessment_diagnostics.mjs";
+import { semanticPublicationRecords, verifySemanticPublication } from "./topic_semantic_diagnostics.mjs";
+import { verifySemanticAssessment } from "./topic_assessment_diagnostics.mjs";
 
 const expected = { correlationID: "correlation", operationKey: "operation", teamID: "team", profileID: "profile", reason: "hierarchy_cycle", credentials: ["credential-canary"] };
 function fixture() {
