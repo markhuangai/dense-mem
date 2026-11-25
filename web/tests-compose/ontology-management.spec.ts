@@ -1,272 +1,239 @@
-import { navigate, confirmAction, expectPageContained } from "../tests-support/portal";
 import { randomUUID } from "node:crypto";
-import { expect, test } from "@playwright/test";
-import type { TopicDefinition, TopicEdit, TopicRecord } from "../src/user/topic-types";
+import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import type { SaveTopicEdits, TopicDefinition, TopicEdit, TopicPublication, TopicRecord, TopicRecordPage } from "../src/user/topic-types";
+import { confirmAction, expectPageContained, navigate } from "../tests-support/portal";
 
 const userURL = process.env.DENSE_MEM_USER_URL!;
 const controlURL = process.env.DENSE_MEM_CONTROL_URL!;
-const controlToken = process.env.DENSE_MEM_CONTROL_TOKEN!;
 const teamID = process.env.DENSE_MEM_E2E_TEAM_ID!;
+const topicsURL = `${userURL}/ui/api/topics`;
 
-test("topic hierarchy publishes, replays and restores organizational parents", async ({ page, request }) => {
-  const createdTeam = await request.post(`${controlURL}/control/api/teams`, { headers: { Authorization: `Bearer ${controlToken}` }, data: { name: `topic-browser-${randomUUID()}` } });
-  expect(createdTeam.status()).toBe(201);
-  const team = (await createdTeam.json()).data;
-  const created = await request.post(`${controlURL}/control/api/teams/${team.id}/credentials`, { headers: { Authorization: `Bearer ${controlToken}` }, data: { name: "Topic manager", role: "manager", scopes: ["read", "write"] } });
-  expect(created.status()).toBe(201);
-  const manager = (await created.json()).data;
-  const headers = { Authorization: `Bearer ${manager.api_key}` };
-  async function publish(edits: TopicEdit[]) {
-    const revision = (await (await request.get(`${userURL}/ui/api/topics/status`, { headers })).json()).data.revision;
-    const saved = await request.post(`${userURL}/ui/api/topics/drafts`, { headers, data: { operation_key: randomUUID(), expected_version: 0, expected_revision: revision, reason: "Topic parent acceptance", edits } });
-    expect(saved.ok()).toBeTruthy(); const draft = (await saved.json()).data;
-    const response = await request.post(`${userURL}/ui/api/topics/drafts/${draft.id}/publish`, { headers, data: { operation_key: randomUUID(), expected_version: draft.version, expected_revision: revision, reason: draft.reason } });
-    expect(response.ok()).toBeTruthy();
-  }
+function authorization(key: string) {
+  return { Authorization: `Bearer ${key}` };
+}
+
+async function createTeam(request: APIRequestContext): Promise<string> {
+  const response = await request.post(`${controlURL}/control/api/teams`, {
+    headers: authorization(process.env.DENSE_MEM_CONTROL_TOKEN!),
+    data: { name: `topic-browser-${randomUUID()}` },
+  });
+  expect(response.status()).toBe(201);
+  return (await response.json()).data.id;
+}
+
+async function createCredential(request: APIRequestContext, team: string, role: "manager" | "member") {
+  const response = await request.post(`${controlURL}/control/api/teams/${team}/credentials`, {
+    headers: authorization(process.env.DENSE_MEM_CONTROL_TOKEN!),
+    data: { name: `topic-browser-${randomUUID()}`, role, scopes: ["read", "write"], rate_limit: 300 },
+  });
+  expect(response.status()).toBe(201);
+  return (await response.json()).data.api_key as string;
+}
+
+async function signIn(page: Page, key: string) {
+  await page.goto(`${userURL}/ui/`);
+  await page.getByLabel("API key").fill(key);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await expect(page.getByLabel("Current workspace")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Refresh session" })).toBeEnabled();
+}
+
+function tab(page: Page, name: string) {
+  return page.getByRole("tab", { name, exact: true });
+}
+
+function definitionEdit(definition: TopicDefinition, current?: TopicRecord): TopicEdit {
+  return {
+    action: "define", kind: "topic", definition,
+    expected_version: current?.edit_version ?? current?.version ?? 0,
+    ...(current ? { record_id: current.id } : {}),
+  };
+}
+
+async function saveEdits(request: APIRequestContext, key: string, reason: string, edits: TopicEdit[]): Promise<TopicPublication> {
+  const data: SaveTopicEdits = { operation_key: randomUUID(), reason, edits };
+  const response = await request.post(`${topicsURL}/edits`, { headers: authorization(key), data });
+  expect(response.status()).toBe(200);
+  return (await response.json()).data;
+}
+
+async function readRecord(request: APIRequestContext, key: string, id: string): Promise<TopicRecord> {
+  const response = await request.get(`${topicsURL}/records/${id}`, { headers: authorization(key) });
+  expect(response.status()).toBe(200);
+  return (await response.json()).data;
+}
+
+async function readTopics(request: APIRequestContext, key: string): Promise<TopicRecord[]> {
+  const response = await request.get(`${topicsURL}/records?kind=topic&limit=200`, { headers: authorization(key) });
+  expect(response.status()).toBe(200);
+  const result: TopicRecordPage = (await response.json()).data;
+  return result.records;
+}
+
+async function clickSave(page: Page) {
+  const [response] = await Promise.all([
+    page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/ui/api/topics/edits"),
+    page.getByRole("button", { name: "Save", exact: true }).click(),
+  ]);
+  return response;
+}
+
+async function addEdit(page: Page, reason: string) {
+  await page.getByRole("button", { name: "Add topic change", exact: true }).click();
+  await page.getByLabel("Audit reason").fill(reason);
+}
+
+test("manager saves, replays and clears a Topic parent", async ({ page, request }) => {
+  const team = await createTeam(request);
+  const manager = await createCredential(request, team, "manager");
   const definition = (key: string): TopicDefinition => ({ key, label: key, description: "Organizational topic" });
-  await publish(["parent", "alternate"].map((key) => ({ action: "define", kind: "topic", expected_version: 0, definition: definition(key) })));
-  const records: TopicRecord[] = (await (await request.get(`${userURL}/ui/api/topics/records?kind=topic&limit=200`, { headers })).json()).data.records;
+  await saveEdits(request, manager, "Define parent Topics", ["parent", "alternate"].map((key) => definitionEdit(definition(key))));
+  const records = await readTopics(request, manager);
   const parent = records.find((record) => record.definition?.key === "parent")!;
   const alternate = records.find((record) => record.definition?.key === "alternate")!;
-  await publish([{ action: "define", kind: "topic", expected_version: 0, definition: { ...definition("child"), parent_id: parent.id } }]);
-  await page.goto(`${userURL}/ui/`); await page.getByLabel("API key").fill(manager.api_key);
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  const child = (await saveEdits(request, manager, "Define child Topic", [
+    definitionEdit({ ...definition("child"), parent_id: parent.id }),
+  ])).records[0];
+
+  await signIn(page, manager);
   await navigate(page, "Topics");
-  await page.getByRole("button", { name: "Edit child", exact: true }).click();
+  const editChild = page.getByRole("button", { name: "Edit child", exact: true });
+  await editChild.click();
   await expect(page.getByLabel("Definition parent")).toHaveValue(parent.id);
-  await expect(page.getByLabel("Parent meaning")).toHaveCount(0);
   await page.getByLabel("Definition parent").fill(alternate.id);
-  await page.getByRole("button", { name: "Add topic to draft" }).click();
-  await page.getByLabel("Audit reason").fill("Reparent topic");
-  await page.getByRole("button", { name: "Save draft", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("Draft saved");
-  await page.getByRole("button", { name: "Preview impact" }).click();
-  await page.getByRole("button", { name: "Publish topic changes", exact: true }).click();
-  await confirmAction(page, "Publish topic changes");
-  await expect(page.getByRole("status")).toContainText(/published/i);
-  const current: TopicRecord[] = (await (await request.get(`${userURL}/ui/api/topics/records?kind=topic&limit=200`, { headers })).json()).data.records;
-  expect(current.find((record) => record.definition?.key === "child")?.definition?.parent_id).toBe(alternate.id);
+  await addEdit(page, "Change Topic parent");
+  const response = await clickSave(page);
+  expect(response.status()).toBe(200);
+  const publication: TopicPublication = (await response.json()).data;
+  const payload: SaveTopicEdits = response.request().postDataJSON();
+  await expect(page.getByRole("status").filter({ hasText: "Topic changes saved." })).toBeVisible();
+
+  const replay = await request.post(`${topicsURL}/edits`, { headers: authorization(manager), data: payload });
+  expect(replay.status()).toBe(200);
+  expect((await replay.json()).data).toMatchObject({ id: publication.id, revision: publication.revision, existing: true });
+  expect((await readRecord(request, manager, child.id)).definition?.parent_id).toBe(alternate.id);
+
+  await tab(page, "Catalog").click();
+  await editChild.click();
+  await expect(page.getByLabel("Definition parent")).toHaveValue(alternate.id);
+  await page.getByLabel("Definition parent").fill("");
+  await addEdit(page, "Make child standalone");
+  expect((await clickSave(page)).status()).toBe(200);
+  expect((await readRecord(request, manager, child.id)).definition?.parent_id).toBeUndefined();
   await expectPageContained(page);
 });
 
-test("manager saves a cookie-authenticated draft across sign-out, handles a real conflict, previews and publishes", async ({ page, request }) => {
-  async function credential(role: string) {
-    const response = await request.post(`${controlURL}/control/api/teams/${teamID}/credentials`, { headers: { Authorization: `Bearer ${controlToken}` }, data: { name: `topic-browser-${randomUUID()}`, role, scopes: ["read", "write"], rate_limit: 300 } });
-    expect(response.ok()).toBeTruthy(); return (await response.json()).data;
-  }
-  const manager = await credential("manager");
-  const member = await credential("member");
+test("manager saves with cookie authentication and reviews a real version conflict", async ({ page, request }) => {
+  const team = await createTeam(request);
+  const manager = await createCredential(request, team, "manager");
+  const member = await createCredential(request, team, "member");
   const label = `Browser vocabulary ${randomUUID()}`;
-  const reason = `Browser correction ${randomUUID()}`;
-  const definitionKey = `browser-${randomUUID()}`;
-  async function login(key: string) {
-    await page.goto(`${userURL}/ui/`); await page.getByLabel("API key").fill(key);
-    await page.getByRole("button", { name: "Sign in", exact: true }).click();
-    await expect(page.getByLabel("Current workspace")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Refresh session" })).toBeEnabled();
-  }
-  await login(manager.api_key);
+  const reason = "Review browser vocabulary";
+  await signIn(page, manager);
   await navigate(page, "Topics");
-  await page.getByRole("tab", { name: "Drafts", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Topics", exact: true })).toBeVisible();
-  await page.getByLabel("Definition key").fill(definitionKey);
+  await page.getByRole("button", { name: "New topic", exact: true }).click();
+  await page.getByLabel("Definition key").fill(`browser-${randomUUID()}`);
   await page.getByLabel("Definition label").fill(label);
-  await page.getByLabel("Definition description").fill("Browser manager description");
-  await page.getByLabel("Audit reason").fill(reason);
-  await page.getByRole("button", { name: "Add topic to draft" }).click();
-  const firstCreation = page.waitForResponse((res) => res.request().method() === "POST" && res.url().endsWith("/drafts"));
-  await page.getByRole("button", { name: "Save draft", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("Draft saved");
-  await expectPageContained(page);
-  const firstResponse = await firstCreation;
-  expect(firstResponse.status()).toBe(200);
-  const firstDraft = (await firstResponse.json()).data;
-  const firstPayload = firstResponse.request().postDataJSON();
-  await page.getByRole("button", { name: "Discard draft", exact: true }).click();
-  await confirmAction(page, "Discard draft");
-  await expect(page.getByRole("status")).toContainText("Draft discarded");
-  await page.getByRole("button", { name: "New draft", exact: true }).click();
-  await page.getByLabel("Definition key").fill(definitionKey);
-  await page.getByLabel("Definition label").fill(label);
-  await page.getByLabel("Definition description").fill("Browser manager description");
-  await page.getByLabel("Audit reason").fill(reason);
-  await page.getByRole("button", { name: "Add topic to draft" }).click();
-  const nextCreation = page.waitForResponse((res) => res.request().method() === "POST" && res.url().endsWith("/drafts"));
-  await page.getByRole("button", { name: "Save draft", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("Draft saved");
-  const nextResponse = await nextCreation;
-  expect(nextResponse.status()).toBe(200);
-  const nextDraft = (await nextResponse.json()).data;
-  const nextPayload = nextResponse.request().postDataJSON();
-  expect({ ...nextPayload, operation_key: firstPayload.operation_key }).toEqual(firstPayload);
-  expect(nextPayload.operation_key).not.toBe(firstPayload.operation_key);
-  expect(nextDraft.id).not.toBe(firstDraft.id);
-  const noCSRF = await page.evaluate(async () => (await fetch("/ui/api/topics/drafts", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).status);
+  await page.getByLabel("Definition description").fill("Original browser description");
+  await addEdit(page, "Create Topic through the cookie session");
+  const creation = await clickSave(page);
+  expect(creation.status()).toBe(200);
+  expect(await creation.request().headerValue("authorization")).toBeNull();
+  expect(await creation.request().headerValue("x-dense-mem-csrf")).not.toBeNull();
+  const created: TopicPublication = (await creation.json()).data;
+  const id = created.records[0].id;
+  const noCSRF = await page.evaluate(async () => (await fetch("/ui/api/topics/edits", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+  })).status);
   expect(noCSRF).toBe(403);
+
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByLabel("API key")).toBeVisible();
-  await login(manager.api_key);
+  await signIn(page, manager);
   await navigate(page, "Topics");
-  await page.getByRole("tab", { name: "Drafts", exact: true }).click();
-  await page.getByRole("button", { name: new RegExp(`${reason} · open`) }).click();
-  await expect(page.getByLabel("Audit reason")).toHaveValue(reason);
   expect(await page.evaluate(() => sessionStorage.getItem("denseMem.userApiKey"))).toBeNull();
-  const headers = { Authorization: `Bearer ${manager.api_key}` };
-  const base = (await (await request.get(`${userURL}/ui/api/topics/status`, { headers })).json()).data.revision;
-  const body = { operation_key: randomUUID(), expected_version: 0, expected_revision: base, reason: "Intervening browser correction", edits: [{ action: "define", expected_version: 0, kind: "topic", definition: { key: `intervening-${randomUUID()}`, label: `Intervening ${randomUUID()}`, description: "Concurrency fixture" } }] };
-  const saved = await request.post(`${userURL}/ui/api/topics/drafts`, { headers, data: body }); expect(saved.status()).toBe(200);
-  const draft = (await saved.json()).data;
-  const published = await request.post(`${userURL}/ui/api/topics/drafts/${draft.id}/publish`, { headers, data: { operation_key: randomUUID(), expected_version: draft.version, expected_revision: draft.base_revision, reason: draft.reason } }); expect(published.status()).toBe(200);
-  await page.getByLabel("Audit reason").fill(`${reason} retained`);
-  await page.getByRole("button", { name: "Save draft", exact: true }).click();
-  await expect(page.getByRole("alert")).toContainText(/refresh the draft/i);
-  await expect(page.getByLabel("Audit reason")).toHaveValue(`${reason} retained`);
-  await expect(page.getByRole("button", { name: "Save draft", exact: true })).toBeDisabled();
-  await page.getByRole("button", { name: "Refresh draft before resubmitting" }).click();
-  await expect(page.getByRole("status")).toContainText("Draft refreshed");
-  await page.getByRole("button", { name: "Save draft", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("Draft saved");
-  await page.getByRole("button", { name: "Preview impact" }).click();
-  await expect(page.getByRole("heading", { name: "Impact preview", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Publish topic changes", exact: true }).click();
-  await confirmAction(page, "Publish topic changes");
-  await expect(page.getByRole("status")).toContainText(/published/i);
-  await page.getByRole("tab", { name: "Catalog", exact: true }).click();
-  await expect(page.getByRole("region", { name: "Topic catalog" }).getByText(label, { exact: true })).toBeVisible();
-  await page.getByRole("tab", { name: "Drafts", exact: true }).click();
-  await page.getByRole("button", { name: "New draft", exact: true }).click();
-  const queuedLabel = `Retained correction ${randomUUID()}`;
-  const queuedReason = `Retained audit reason ${randomUUID()}`;
-  await page.getByLabel("Definition key").fill(`queued-${randomUUID()}`);
-  await page.getByLabel("Definition label").fill(queuedLabel);
-  await page.getByLabel("Definition description").fill("Queued correction must survive target changes");
-  await page.getByLabel("Audit reason").fill(queuedReason);
-  await page.getByRole("button", { name: "Add topic to draft" }).click();
-  const unfinishedKey = `unfinished-${randomUUID()}`;
-  const unfinishedLabel = `Unfinished correction ${randomUUID()}`;
-  await page.getByLabel("Definition key").fill(unfinishedKey);
-  await page.getByLabel("Definition label").fill(unfinishedLabel);
-  const queuedSave = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith("/drafts"));
-  await page.getByRole("button", { name: "Save draft", exact: true }).click();
-  const savedQueue = await queuedSave;
-  expect(savedQueue.status()).toBe(200);
-  expect(savedQueue.request().postDataJSON().edits).toHaveLength(1);
-  expect(savedQueue.request().postDataJSON().edits[0].definition.label).toBe(queuedLabel);
-  await expect(page.getByRole("status")).toContainText("Draft saved");
-  await expect(page.getByLabel("Definition key")).toHaveValue(unfinishedKey);
-  await expect(page.getByLabel("Definition label")).toHaveValue(unfinishedLabel);
-  await page.getByRole("button", { name: "Add topic to draft" }).click();
-  await page.getByRole("tab", { name: "Catalog", exact: true }).click();
   await page.getByRole("button", { name: `Edit ${label}`, exact: true }).click();
-  await expect(page.getByRole("alertdialog")).toHaveCount(0);
-  await page.getByLabel("Definition description").fill("Unfinished editor fields");
-  await page.getByRole("tab", { name: "Catalog", exact: true }).click();
-  await page.getByRole("button", { name: `Edit ${label}`, exact: true }).click();
-  await confirmAction(page, "Cancel");
-  await expect(page.getByRole("tab", { name: "Catalog", exact: true })).toHaveAttribute("aria-selected", "true");
-  await page.getByRole("tab", { name: "Drafts", exact: true }).click();
-  await expect(page.getByLabel("Definition description")).toHaveValue("Unfinished editor fields");
-  await page.getByRole("tab", { name: "Catalog", exact: true }).click();
-  await page.getByRole("button", { name: `Edit ${label}`, exact: true }).click();
-  await confirmAction(page, "Discard edits");
-  await expect(page.getByLabel("Definition description")).toHaveValue("Browser manager description");
-  await expect(page.getByLabel("Audit reason")).toHaveValue(queuedReason);
-  await expect(page.getByRole("listitem").filter({ hasText: queuedLabel })).toBeVisible();
-  await expect(page.getByRole("listitem").filter({ hasText: unfinishedLabel })).toBeVisible();
+  await expect(page.getByLabel("Definition description")).toHaveValue("Original browser description");
+
+  await page.getByLabel("Definition description").fill("Conflicting browser edit");
+  await addEdit(page, reason);
+  const current = await readRecord(request, manager, id);
+  await saveEdits(request, manager, "Intervening revision", [
+    definitionEdit({ ...current.definition!, description: "Intervening description" }, current),
+  ]);
+  const rejected = await clickSave(page);
+  expect(rejected.status()).toBe(409);
+  await expect(page.getByRole("alert").filter({ hasText: /refresh the record/i })).toBeVisible();
+  await expect(page.getByLabel("Audit reason")).toHaveValue(reason);
+  await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+  expect((await readRecord(request, manager, id)).definition?.description).toBe("Intervening description");
+
+  await page.getByRole("button", { name: "Refresh records", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: /Topic records refreshed/ })).toBeVisible();
+  await expect(page.getByLabel("Definition description")).toHaveValue("Intervening description");
+  await expect(page.getByLabel("Audit reason")).toHaveValue(reason);
+  await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+  await page.getByLabel("Definition description").fill("Reviewed browser edit");
+  await addEdit(page, reason);
+  expect((await clickSave(page)).status()).toBe(200);
+  expect((await readRecord(request, manager, id)).definition?.description).toBe("Reviewed browser edit");
   await expectPageContained(page);
-  await page.getByRole("button", { name: "New draft", exact: true }).click();
-  await confirmAction(page, "Discard edits");
+
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await expect(page.getByLabel("API key")).toBeVisible();
-  await login(member.api_key);
+  await signIn(page, member);
   await expect(page.getByRole("link", { name: "Topics", exact: true })).toHaveCount(0);
-  const denied = await request.get(`${userURL}/ui/api/topics/status`, { headers: { Authorization: `Bearer ${member.api_key}` } }); expect(denied.status()).toBe(403);
+  const denied = await request.get(`${topicsURL}/status`, { headers: authorization(member) });
+  expect(denied.status()).toBe(403);
 });
 
-test("manager inspects shared sources, edits a catalog topic and rolls back its revision", async ({ page, request }) => {
-  test.setTimeout(60000);
-  const created = await request.post(`${controlURL}/control/api/teams/${teamID}/credentials`, {
-    headers: { Authorization: `Bearer ${controlToken}` },
-    data: { name: `topic-controls-${randomUUID()}`, role: "manager", scopes: ["read", "write"], rate_limit: 300 },
-  });
-  expect(created.status()).toBe(201);
-  const manager = (await created.json()).data;
-  const headers = { Authorization: `Bearer ${manager.api_key}` };
-  const catalog = await request.get(`${userURL}/ui/api/topics/records?kind=topic&limit=200`, { headers });
-  expect(catalog.status()).toBe(200);
-  const records: TopicRecord[] = (await catalog.json()).data.records;
-  const topic = records.find((item) => !item.retired && item.definition?.label === "Manager storage vocabulary")!;
+test("manager inspects shared sources and keeps both revisions in Topic history", async ({ page, request }) => {
+  const manager = await createCredential(request, teamID, "manager");
+  const records = await readTopics(request, manager);
+  const topic = records.find((record) => !record.retired && record.definition?.label === "Manager storage vocabulary")!;
   expect(topic?.definition).toBeTruthy();
   const original = topic.definition!;
-  async function readTopic() {
-    const response = await request.get(`${userURL}/ui/api/topics/records/${topic.id}`, { headers });
-    expect(response.status()).toBe(200);
-    return (await response.json()).data.definition;
-  }
-  async function tab(name: string) { await page.getByRole("tab", { name, exact: true }).click(); }
-  await page.goto(`${userURL}/ui/`);
-  await page.getByLabel("API key").fill(manager.api_key);
-  await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Refresh session" })).toBeEnabled();
+  const description = `Shared database facilities reviewed ${randomUUID()}`;
+  const reason = `Browser catalog edit ${randomUUID()}`;
+
+  await signIn(page, manager);
   await navigate(page, "Topics");
-  await tab("Sources");
+  await tab(page, "Sources").click();
   await expect(page.getByRole("heading", { name: "Shared sources", exact: true })).toBeVisible();
   for (const text of ["Atlas stores PostgreSQL data.", "Atlas uses PostgreSQL for data storage."]) {
     await expect(page.getByText(text, { exact: true })).toBeVisible();
   }
-  await expect(page.getByRole("checkbox", { name: /Select source/ })).toHaveCount(0);
-  await tab("Catalog");
-  await expect(page.getByRole("button", { name: /Correct grouping|Unpin definition/ })).toHaveCount(0);
-  await page.getByRole("button", { name: `Edit ${original.label}`, exact: true }).click();
-  await expect(page.getByLabel("Correction", { exact: true })).toHaveCount(0);
-  const description = `Shared database facilities reviewed ${randomUUID()}`;
-  const reason = `Browser catalog edit ${randomUUID()}`;
+
+  await tab(page, "Catalog").click();
+  const editTopic = page.getByRole("button", { name: `Edit ${original.label}`, exact: true });
+  await editTopic.click();
   await page.getByLabel("Definition description").fill(description);
-  await page.getByRole("button", { name: "Add topic to draft" }).click();
-  await page.getByLabel("Audit reason").fill(reason);
-  await page.getByRole("button", { name: "Save draft", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("Draft saved");
-  await page.getByRole("button", { name: "Preview impact" }).click();
-  await expect(page.getByRole("heading", { name: "Impact preview", exact: true })).toBeVisible();
-  const response = page.waitForResponse((res) => res.request().method() === "POST" && res.url().endsWith("/publish"));
-  await page.getByRole("button", { name: "Publish topic changes", exact: true }).click();
-  await confirmAction(page, "Publish topic changes");
-  const accepted = await response;
-  expect(accepted.status()).toBe(200);
-  const publication = (await accepted.json()).data.publication;
-  await expect(page.getByRole("status")).toContainText(/published/i);
-  expect((await readTopic()).description).toBe(description);
-  await tab("History");
-  const edited = page.getByRole("button", { name: new RegExp(`Revision.*${reason}$`) });
-  await edited.click();
-  const revisionHeading = page.getByRole("heading", { name: `Publication revision ${publication.revision}`, exact: true });
-  await expect(revisionHeading).toBeVisible();
-  await expect(page.getByLabel("Publication detail", { exact: true })).toContainText(original.label);
-  await expectPageContained(page);
-  const otherPublication = page.getByRole("button", { name: /^Revision \d+ · manager ·/ }).filter({ hasNotText: reason }).first();
-  await page.getByLabel("Rollback reason").fill("Keep the unsaved rollback reason");
-  await otherPublication.click();
+  await tab(page, "Catalog").click();
+  await editTopic.click();
   await confirmAction(page, "Cancel");
-  await expect(revisionHeading).toBeVisible();
-  await expect(page.getByLabel("Rollback reason")).toHaveValue("Keep the unsaved rollback reason");
-  await otherPublication.click();
-  await confirmAction(page, "Discard reason");
-  await expect(page.getByLabel("Rollback reason")).toHaveValue("");
-  await edited.click();
-  await page.getByLabel("Rollback reason").fill("Restore the original catalog definition");
-  await page.getByRole("button", { name: "Publish rollback", exact: true }).click();
-  await confirmAction(page, "Publish rollback");
-  await expect(page.getByRole("status")).toContainText("Rollback published");
-  expect(await readTopic()).toEqual(original);
-  await tab("History");
-  await edited.click();
-  await page.getByLabel("Rollback reason").fill("Stale rollback must conflict");
-  await page.getByRole("button", { name: "Publish rollback", exact: true }).click();
-  await confirmAction(page, "Publish rollback");
-  await expect(page.getByRole("alert").filter({ hasText: "refresh the draft" })).toBeVisible();
-  await page.getByRole("button", { name: "Refresh topics", exact: true }).click();
-  await expect(page.getByLabel("Rollback reason")).toHaveValue("Stale rollback must conflict");
-  await otherPublication.click();
-  await confirmAction(page, "Discard reason");
-  await expect(page.getByLabel("Rollback reason")).toHaveValue("");
+  await tab(page, "Edit").click();
+  await expect(page.getByLabel("Definition description")).toHaveValue(description);
+  await addEdit(page, reason);
+  const response = await clickSave(page);
+  expect(response.status()).toBe(200);
+  const publication: TopicPublication = (await response.json()).data;
+  expect((await readRecord(request, manager, topic.id)).definition?.description).toBe(description);
+
+  await tab(page, "Catalog").click();
+  await editTopic.click();
+  await page.getByLabel("Definition description").fill(original.description);
+  const restoreReason = `Restore original Topic description ${randomUUID()}`;
+  await addEdit(page, restoreReason);
+  const restored = await clickSave(page);
+  expect(restored.status()).toBe(200);
+  const restoration: TopicPublication = (await restored.json()).data;
+  expect((await readRecord(request, manager, topic.id)).definition).toEqual(original);
+
+  await tab(page, "History").click();
+  for (const [saved, auditReason] of [[publication, reason], [restoration, restoreReason]] as const) {
+    await page.getByRole("button", { name: `Revision ${saved.revision} · manager · ${auditReason}`, exact: true }).click();
+    await expect(page.getByRole("heading", { name: `Publication revision ${saved.revision}`, exact: true })).toBeVisible();
+    await expect(page.getByLabel("Publication detail", { exact: true })).toContainText(original.label);
+  }
+  await expectPageContained(page);
 });
