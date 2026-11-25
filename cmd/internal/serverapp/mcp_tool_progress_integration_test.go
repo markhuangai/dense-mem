@@ -154,10 +154,11 @@ func TestMCPToolProgressPostgres(t *testing.T) {
 	embedder := &toolProgressEmbedder{progressPostgresEmbedder: progressPostgresEmbedder{rememberProcessorIntegrationSearchEmbedder: rememberProcessorIntegrationSearchEmbedder{model: model, dimensions: dimensions}}}
 	transport := &toolProgressTransport{}
 	knowledge := knowledgepostgres.NewStore(app, rls)
+	traceStore := buildTraceStore(app, rls)
 	var logs toolProgressLog
 	logger := observability.NewWithHandler(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	bundle := buildApplicationBundle(applicationCompositionDependencies{
-		Knowledge: knowledge, RememberPersistence: knowledge, TraceStore: buildTraceStore(app, rls),
+		Knowledge: knowledge, RememberPersistence: knowledge, TraceStore: traceStore, MemoryPackReader: traceStore,
 		SessionRepository:    sessionpostgres.New(app, rls, knowledge.CommitEvidenceTx, knowledge.WithSubmissionLock),
 		RecallSearch:         recallpostgres.NewStore(app, rls, searchpostgres.NewStore(app, rls), recallpostgres.LoadRecallEvidenceConflictRecords),
 		RecallFeedbackEvents: recallpostgres.NewFeedbackStore(app, rls), Assessor: provider, SessionAssessor: provider,

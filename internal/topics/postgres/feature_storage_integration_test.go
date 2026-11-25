@@ -71,53 +71,29 @@ func TestFeatureStoragePostgresPreservesOrganizationDraftsAndIsolation(t *testin
 		return tx.Raw(`SELECT COALESCE(jsonb_agg(to_jsonb(row) ORDER BY id)::text,'[]') FROM private_memory_legal_holds row`).Row().Scan(&holds)
 	}))
 	ids := []string{topic.ID, left.ID, right.ID, peer.ID, group.ID, pin.ID}
-	historical := true
+	require.NoError(t, migrator.RunUp(context.Background()))
 	readTopics := func() topiccontract.TopicReadResult {
 		t.Helper()
 		var result topiccontract.TopicReadResult
 		ctx := f.actor(2, "member")
-		if historical {
-			require.NoError(t, f.rls.WithTeamTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
-				if err := tx.Exec(`CREATE TEMP VIEW topic_record_heads WITH (security_invoker=true) AS
-					SELECT h.*, (r.body#>>'{assignment,source,id}')::uuid AS evidence_id, (r.body#>>'{assignment,definition_id}')::uuid AS topic_id
-					FROM ontology_record_heads h JOIN ontology_revision_records r USING(team_id,shared_space_id,space_generation,record_id,version);
-					CREATE TEMP VIEW topic_revision_records WITH (security_invoker=true) AS SELECT * FROM ontology_revision_records;
-					CREATE TEMP VIEW topic_source_dependencies WITH (security_invoker=true) AS SELECT * FROM ontology_source_dependencies;`).Error; err != nil {
-					return err
-				}
-				var err error
-				result, err = f.store.ReadEvidenceTopics(ctx, tx, f.team, topiccontract.TopicReadInput{TopicIDs: []string{topic.ID}})
-				if err != nil {
-					return err
-				}
-				return tx.Exec("DROP VIEW pg_temp.topic_record_heads, pg_temp.topic_revision_records, pg_temp.topic_source_dependencies").Error
-			}))
-		} else {
-			require.NoError(t, f.rls.WithTeamReadOnlyRepeatableTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
-				var err error
-				result, err = f.store.ReadEvidenceTopics(ctx, tx, f.team, topiccontract.TopicReadInput{TopicIDs: []string{topic.ID}})
-				return err
-			}))
-		}
+		require.NoError(t, f.rls.WithTeamReadOnlyRepeatableTx(ctx, f.app, f.team, func(tx *gorm.DB) error {
+			var err error
+			result, err = f.store.ReadEvidenceTopics(ctx, tx, f.team, topiccontract.TopicReadInput{TopicIDs: []string{topic.ID}})
+			return err
+		}))
 		return result
 	}
 	topics := readTopics()
 	require.Len(t, topics.Topics, 1)
-	require.Len(t, topics.Topics[0].EvidenceIDs, 3)
-	measure := func(label string) {
-		t.Helper()
-		samples := make([]time.Duration, 20)
-		for index := range samples {
-			start := time.Now()
-			require.Equal(t, topics, readTopics())
-			samples[index] = time.Since(start)
-		}
-		sort.Slice(samples, func(i, j int) bool { return samples[i] < samples[j] })
-		t.Logf("feature_storage_topic_fixture phase=%s samples=20 p50_us=%d p95_us=%d", label, samples[9].Microseconds(), samples[18].Microseconds())
-	}
-	measure("before")
-	require.NoError(t, migrator.RunUp(context.Background()))
-	historical = false
+	require.Equal(t, f.space, topics.SpaceID)
+	require.Equal(t, f.generation, topics.Generation)
+	require.Empty(t, topics.Rejected)
+	require.Equal(t, topic.ID, topics.Topics[0].ID)
+	require.Equal(t, original[topic.ID].Version, topics.Topics[0].Version)
+	require.Equal(t, topic.Definition.Label, topics.Topics[0].Name)
+	require.Equal(t, topic.Definition.Description, topics.Topics[0].Description)
+	require.ElementsMatch(t, []string{a.ID, b.ID, otherOwner.ID}, topics.Topics[0].EvidenceIDs)
+	require.ElementsMatch(t, []string{left.ID, right.ID, peer.ID}, topics.Topics[0].AssignmentIDs)
 	organizer, calls := organizationFixtureServiceWithIdentity(t, f, nil, nil, "historical-fixture-model", assessor.DefaultSemanticAssessmentLimits())
 	recalled, err := organizer.Organize(context.Background(), f.team, topiccontract.OrganizationInput{OperationKey: originalReceipt.OperationKey, Sources: []topiccontract.SourceHandle{a}})
 	require.NoError(t, err)
@@ -134,21 +110,29 @@ func TestFeatureStoragePostgresPreservesOrganizationDraftsAndIsolation(t *testin
 	actualDraft, err := manager.Draft(f.actor(0, "manager"), draft.ID)
 	require.NoError(t, err)
 	require.Equal(t, draft, actualDraft)
-	replay, err := manager.SaveDraft(f.actor(0, "manager"), "", input)
+	replay, err := manager.ReplayDraft(f.actor(0, "manager"), "", "save", input.OperationKey, input)
 	require.NoError(t, err)
 	require.Equal(t, draft, replay)
 	for _, owner := range []int{1, 2} {
 		_, err = manager.Draft(f.actor(owner, "manager"), draft.ID)
 		require.ErrorIs(t, err, topiccontract.ErrNotFound)
 	}
-	measure("after")
-	catalogPage, err := manager.Records(f.actor(0, "manager"), topiccontract.Topic, "", 20)
+	samples := make([]time.Duration, 20)
+	for index := range samples {
+		start := time.Now()
+		require.Equal(t, topics, readTopics())
+		samples[index] = time.Since(start)
+	}
+	sort.Slice(samples, func(i, j int) bool { return samples[i] < samples[j] })
+	t.Logf("feature_storage_topic_fixture phase=after samples=20 p50_us=%d p95_us=%d", samples[9].Microseconds(), samples[18].Microseconds())
+	current, err := manager.Record(f.actor(0, "manager"), topic.ID, 0)
 	require.NoError(t, err)
 	renamed := *topic.Definition
 	renamed.Label = "Editable after historic pin"
-	edit, err := manager.SaveDraft(f.actor(0, "manager"), "", managementInput(catalogPage.Revision, topiccontract.ManagementEdit{Action: "define", RecordID: topic.ID, ExpectedVersion: 1, Kind: topiccontract.Topic, Definition: &renamed}))
-	require.NoError(t, err)
-	_, err = manager.CommandDraft(f.actor(0, "manager"), edit.ID, "publish", managementCommand(edit))
+	_, err = manager.SaveEdits(f.actor(0, "manager"), topiccontract.SaveEditsInput{
+		OperationKey: uuid.NewString(), Reason: "Edit a migrated Topic",
+		Edits: []topiccontract.ManagementEdit{{Action: "define", RecordID: topic.ID, ExpectedVersion: current.EditVersion, Kind: topiccontract.Topic, Definition: &renamed}},
+	})
 	require.NoError(t, err)
 	retainedPin, err := manager.Record(f.actor(0, "manager"), pin.ID, 1)
 	require.NoError(t, err)

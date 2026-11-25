@@ -118,6 +118,7 @@ func newOntologyFixtureWithMode(t *testing.T, historical, maintenance bool) *ont
 		GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO ontology_app;
 		ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO ontology_app;
 		GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO ontology_app;
+		ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE,SELECT ON SEQUENCES TO ontology_app;
 		GRANT EXECUTE ON FUNCTION dense_mem_active_space_generation(UUID,UUID) TO ontology_app;
 		GRANT EXECUTE ON FUNCTION dense_mem_lock_memory_space(UUID,UUID) TO ontology_app`).Error)
 	parsed, err := url.Parse(dsn)

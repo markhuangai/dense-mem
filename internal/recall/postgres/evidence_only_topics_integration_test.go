@@ -170,7 +170,8 @@ func TestEvidenceOnlyPostgresTopicLogDiagnosis(t *testing.T) {
 	f := newRecallOntologyFixture(t)
 	const credential, presentedCredential = "topic-credential-canary", "topic-request-credential-canary"
 	topic := topiccontract.Record{ID: uuid.NewString(), Kind: topiccontract.Topic, Definition: &topiccontract.Definition{Key: "diagnosis", Label: "Diagnosis", Description: "Topic diagnosis admitted detail. " + credential + " " + presentedCredential}}
-	records := []topiccontract.Record{topic}
+	retired := topiccontract.Record{ID: uuid.NewString(), Kind: topiccontract.Topic, Definition: &topiccontract.Definition{Key: "retired", Label: "Retired topic"}}
+	records := []topiccontract.Record{topic, retired}
 	evidenceIDs, assignmentIDs := []string{}, []string{}
 	for index := range 60 {
 		source := f.evidence(t, index%2, fmt.Sprintf("Topic diagnosis admitted Evidence %d.", index), nil)
@@ -179,6 +180,8 @@ func TestEvidenceOnlyPostgresTopicLogDiagnosis(t *testing.T) {
 		evidenceIDs, assignmentIDs = append(evidenceIDs, source.ID), append(assignmentIDs, assignment.ID)
 	}
 	f.publication(t, records...)
+	retired.Version, retired.Retired = 1, true
+	f.publication(t, retired)
 	path := filepath.Join(t.TempDir(), "topics.jsonl")
 	output, err := os.Create(path)
 	require.NoError(t, err)
@@ -196,8 +199,10 @@ func TestEvidenceOnlyPostgresTopicLogDiagnosis(t *testing.T) {
 	require.Len(t, selected.RelatedTopics, 1)
 	require.Equal(t, 60, selected.RelatedTopics[0].EligibleEvidenceCount)
 	missing := uuid.NewString()
-	_, err = api.Recall(ctx, recall.RecallRequest{TopicIDs: []string{missing}})
-	require.ErrorIs(t, err, recallcontract.ErrTopicUnavailable)
+	for _, unavailable := range []string{missing, retired.ID} {
+		_, err = api.Recall(ctx, recall.RecallRequest{TopicIDs: []string{unavailable}})
+		require.ErrorIs(t, err, recallcontract.ErrTopicUnavailable)
+	}
 	f.search.recall.WithTopics(nil)
 	degraded, err := api.Recall(ctx, recall.RecallRequest{Query: "diagnosis"})
 	require.NoError(t, err)
@@ -247,7 +252,8 @@ func TestEvidenceOnlyPostgresTopicLogDiagnosis(t *testing.T) {
 		require.Equal(t, hex.EncodeToString(digest[:]), chunks[0].SHA256)
 		payloads[id] = []byte(reconstructed.String())
 	}
-	filter, hints, rejected, optional := false, false, false, false
+	filter, hints, optional := false, false, false
+	rejected := make(map[string]string)
 	for _, record := range summaries {
 		require.Equal(t, f.team, record["team_id"])
 		captureID, ok := record["diagnostic_capture_id"].(string)
@@ -290,16 +296,17 @@ func TestEvidenceOnlyPostgresTopicLogDiagnosis(t *testing.T) {
 			if record["recall_id"] == degraded.RecallID {
 				optional = true
 			} else if record["requested_ids"] != nil {
-				rejected = true
 				var selection topiccontract.TopicReadResult
 				require.NoError(t, json.Unmarshal(payloads[captureID], &selection))
-				require.Equal(t, "unavailable", selection.Rejected[missing])
+				for id, reason := range selection.Rejected {
+					rejected[id] = reason
+				}
 			}
 		}
 	}
 	require.True(t, filter)
 	require.True(t, hints)
-	require.True(t, rejected)
+	require.Equal(t, map[string]string{missing: "unavailable", retired.ID: "unavailable"}, rejected)
 	require.True(t, optional)
 }
 

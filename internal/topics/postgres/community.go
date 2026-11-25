@@ -18,6 +18,11 @@ const communityWorkReady = `work.ready_at<=statement_timestamp() AND NOT EXISTS(
 	AND batch.community_topic_id=work.topic_id AND batch.status='running' AND batch.lease_until>statement_timestamp()
 )`
 
+const latestCommunityOutcome = `LEFT JOIN LATERAL (SELECT status FROM community_placement_outcomes AS result
+    WHERE (result.team_id,result.shared_space_id,result.space_generation,result.topic_id,result.topic_version)=
+        (current.team_id,current.shared_space_id,current.space_generation,current.topic_id,current.definition_version)
+    ORDER BY created_at DESC,outcome_id LIMIT 1) AS latest ON true`
+
 func (s *Store) ClaimCommunity(ctx context.Context, turn topic.MaintenanceTurn, windowID string, now time.Time) (*topic.CommunityInput, *topic.MaintenanceClaim, error) {
 	var input *topic.CommunityInput
 	err := s.withScope(ctx, turn.TeamID, true, func(tx *gorm.DB, fence scope) error {
@@ -258,17 +263,19 @@ func attachCommunityPlacement(tx *gorm.DB, fence scope, views []topic.RecordView
 	if len(ids) == 0 {
 		return nil
 	}
-	rows, err := tx.Raw(`SELECT topic_id::text,version,placement,COALESCE(parent_topic_id::text,'')
-        FROM topics WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?
-            AND topic_id=ANY(?::uuid[]) AND NOT retired`, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(ids)).Rows()
+	rows, err := tx.Raw(`SELECT current.topic_id::text,current.version,current.placement,
+        COALESCE(current.parent_topic_id::text,''),COALESCE(latest.status,'')
+        FROM topics AS current `+latestCommunityOutcome+`
+        WHERE current.team_id=?::uuid AND current.shared_space_id=?::uuid AND current.space_generation=?
+            AND current.topic_id=ANY(?::uuid[]) AND NOT current.retired`, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(ids)).Rows()
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id, placement, parent string
+		var id, placement, parent, outcome string
 		var version int64
-		if err := rows.Scan(&id, &version, &placement, &parent); err != nil {
+		if err := rows.Scan(&id, &version, &placement, &parent, &outcome); err != nil {
 			return err
 		}
 		index := positions[id]
@@ -277,7 +284,9 @@ func attachCommunityPlacement(tx *gorm.DB, fence scope, views []topic.RecordView
 		definition := *view.Definition
 		definition.ParentID = parent
 		view.Definition = &definition
-		if placement != "declared" {
+		if outcome == "failed" || outcome == "ambiguous" {
+			view.CommunityPlacement = outcome
+		} else if placement != "declared" {
 			view.CommunityParentID, view.CommunityPlacement = parent, placement
 		}
 	}

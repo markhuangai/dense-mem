@@ -218,10 +218,7 @@ func (s *Store) MaintenanceStatus(ctx context.Context, now time.Time) (topic.Mai
             FROM topics AS current JOIN teams AS team ON team.id=current.team_id AND team.status='active' AND team.deleted_at IS NULL
             JOIN memory_spaces AS space ON space.team_id=current.team_id AND space.id=current.shared_space_id
                 AND space.generation=current.space_generation AND space.lifecycle_state='active' AND space.kind='team_shared'
-            LEFT JOIN LATERAL (SELECT status FROM community_placement_outcomes AS result
-                WHERE (result.team_id,result.shared_space_id,result.space_generation,result.topic_id,result.topic_version)=
-                    (current.team_id,current.shared_space_id,current.space_generation,current.topic_id,current.definition_version)
-                ORDER BY created_at DESC,outcome_id LIMIT 1) AS latest ON true
+            `+latestCommunityOutcome+`
             WHERE NOT current.retired`).Row().Scan(&result.Communities.Placed, &result.Communities.Standalone, &result.Communities.Pending, &result.Communities.Failed); err != nil {
 			return err
 		}

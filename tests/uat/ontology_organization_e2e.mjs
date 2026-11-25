@@ -176,19 +176,8 @@ try {
     assert(unavailable.result?.isError && unavailable.result.structuredContent.reason_code === "topic_unavailable", "foreign and missing topics must share bounded rejection");
     assert(!JSON.stringify(unavailable.result).includes(id));
   }
-  const topicManager = (await control(`/teams/${teamID}/credentials`, { name: "Retired topic acceptance", role: "manager", scopes: ["read", "write"], rate_limit: 300 })).data;
-  const revision = (await organization("/status", topicManager.api_key)).revision;
-  const retiredKey = `retired-topic-${randomUUID()}`;
-  const draft = await organization("/drafts", topicManager.api_key, {
-    operation_key: randomUUID(), expected_version: 0, expected_revision: revision, reason: "Retired topic visibility fixture",
-    edits: [{ action: "define", expected_version: 0, kind: "topic", definition: { key: retiredKey, label: "Retired fixture topic", description: "Temporary unassigned topic for retirement acceptance" } }],
-  });
-  const published = await organization(`/drafts/${draft.id}/publish`, topicManager.api_key, { operation_key: randomUUID(), expected_version: draft.version, expected_revision: revision, reason: draft.reason });
-  const retiredTopic = (await organization("/records?kind=topic&limit=200", topicManager.api_key)).records.find((record) => record.definition?.key === retiredKey);
-  assert(retiredTopic, "published retirement fixture topic must be available");
-  await organization(`/publications/${published.publication.id}/rollback`, topicManager.api_key, { operation_key: randomUUID(), expected_revision: (await organization("/status", topicManager.api_key)).revision, reason: "Retire unused fixture topic" });
-  const retiredResult = await rpc("recall_memory", { topic_ids: [retiredTopic.id] }, reader.api_key);
-  assert(retiredResult.result?.isError && retiredResult.result.structuredContent.reason_code === "topic_unavailable", "retired topic must fail explicit filtering");
+  const topicManager = (await control(`/teams/${teamID}/credentials`, { name: "Topic revision acceptance", role: "manager", scopes: ["read", "write"], rate_limit: 300 })).data;
+  credentialTeams.set(topicManager.api_key, teamID);
   for (const temporalField of ["valid_at", "known_at"]) {
     const temporal = await mcp("recall_memory", { topic_ids: topicIDs, limit: 50, [temporalField]: new Date().toISOString() }, reader.api_key);
     assert(temporal.results.some((item) => sourceIDs.includes(item.evidence_id)), "temporal Evidence must use current direct topic membership");
@@ -249,9 +238,9 @@ try {
     assert.equal(counts.matching_result_count + counts.additional_evidence_count, topic.eligible_evidence_count);
   }
   assert(!selection.Diagnostics.eligible_ids.some((id) => [privateID, foreignID].includes(id)), "topic diagnostic eligibility must retain isolation");
-  for (const id of [...unavailableTopicIDs, retiredTopic.id]) {
+  for (const id of unavailableTopicIDs) {
     const rejectedLog = topicRecords.find((row) => row.msg === "recall_topic_degraded" && row.requested_ids?.includes(id) && topicPayloads.get(row.diagnostic_capture_id)?.Rejected?.[id] === "unavailable");
-    assert(rejectedLog && rejectedLog.level === "WARN" && rejectedLog.reason, "missing, foreign, and retired topic reasons must be diagnosable from stdout");
+    assert(rejectedLog && rejectedLog.level === "WARN" && rejectedLog.reason, "missing and foreign topic reasons must be diagnosable from stdout");
   }
   console.log(JSON.stringify({ status: "ok", scenario: "ontology_organization", window_id: status.window.id, counts: status.counts, durable_command_replay: true, operator_isolation: true, grouped_recall: true, original_sources_retained: true, private_and_foreign_isolation: true, foreground_multi_membership: true, community_parent_verified: true, recall_organization_provider_tokens: 0, foreground_abstention: true, atomic_retry: true }));
 } catch (error) {
@@ -426,7 +415,6 @@ async function staleAssignmentRevision(writer, manager) {
   const { records } = await organization("/records?kind=topic&limit=200", manager);
   const topic = records.find((record) => record.definition?.label === "memory-storage");
   assert(topic, "a revision fence requires an existing Topic");
-  const { revision } = await organization("/status", manager);
   const before = canonicalFingerprints();
   const reason = "Update storage vocabulary during an in-flight assignment";
   await fixtureMode("hold");
@@ -441,11 +429,9 @@ async function staleAssignmentRevision(writer, manager) {
           assert.equal(health.status, 200);
           return (await health.json()).active_ontology_requests === 1;
         }, "foreground Topic provider hold", 12);
-        const draft = await organization("/drafts", manager, { operation_key: randomUUID(), expected_version: 0,
-          expected_revision: revision, reason, edits: [{ action: "define", kind: "topic", record_id: topic.id,
-            expected_version: topic.version, definition: { ...topic.definition, description: reason } }] });
-        await organization(`/drafts/${draft.id}/publish`, manager, {
-          operation_key: randomUUID(), expected_version: draft.version, expected_revision: revision, reason,
+        await organization("/edits", manager, {
+          operation_key: randomUUID(), reason, edits: [{ action: "define", kind: "topic", record_id: topic.id,
+            expected_version: topic.edit_version, definition: { ...topic.definition, description: reason } }],
         });
       } finally {
         await fixtureMode("normal");

@@ -135,7 +135,8 @@ async function topicHierarchyAcceptance(profileID, deniedActors) {
   const correlationID = randomUUID();
   const rejection = await fetch(`${userURL}/ui/api/topics/edits`, { method: "POST", headers: { Authorization: `Bearer ${manager}`, "Content-Type": "application/json", "X-Correlation-ID": correlationID }, body: JSON.stringify(staleInput) });
   assert.equal(rejection.status, 409);
-  operations.push({ correlationID, teamID, profileID, credentials, reason: "record_version", outcomeEvent: "topic_semantic_manager_rejected",
+  operations.push({ correlationID, teamID, profileID, credentials, operationKey: staleInput.operation_key, input: staleInput,
+    reason: "record_version", outcomeEvent: "topic_semantic_manager_rejected",
     expectedVersion: correction.expected_version, observedVersion: current.edit_version ?? current.version });
   const { parent_id, ...standalone } = current.definition;
   assert.equal(parent_id, parentID);

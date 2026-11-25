@@ -101,7 +101,7 @@ func TestCommunityPlacementChecksRevisionsAndAccountsForProviderWork(t *testing.
 	require.EqualValues(t, 1, status.Usage.UnavailableUsageAttempts)
 
 	t.Run("manager publication rolls back when a later edge closes a mixed cycle", testCommunityMixedHierarchyPublicationRollback)
-	t.Run("parent revision cannot expose a cycle", testCommunityInvalidationRollback)
+	t.Run("parent metadata revision preserves effective edges", testCommunityParentRevision)
 	t.Run("rejected hierarchy placement is deferred", testCommunityHierarchyRejectionDeferred)
 	t.Run("admitted decision outlives the preparation lease", testCommunityDecisionRenewsLease)
 }
@@ -223,6 +223,10 @@ func testCommunityHierarchyRejectionDeferred(t *testing.T) {
 	require.Equal(t, "failed", disposition)
 	require.Equal(t, "community_hierarchy_conflict", failure)
 	require.True(t, deferred)
+	failed, err := f.store.GetRecord(f.actor(1, "member"), f.team, parent.ID, 0)
+	require.NoError(t, err)
+	require.Equal(t, "failed", failed.CommunityPlacement)
+	require.Empty(t, failed.Definition.ParentID)
 
 	progress, err = service.RunTurn(ctx)
 	require.NoError(t, err)
@@ -231,12 +235,23 @@ func testCommunityHierarchyRejectionDeferred(t *testing.T) {
 	view, err := f.store.GetRecord(manager, f.team, child.ID, 0)
 	require.NoError(t, err)
 	require.Equal(t, parent.ID, view.CommunityParentID)
+	require.Equal(t, parent.ID, view.Definition.ParentID)
 	status, err := f.store.MaintenanceStatus(ctx, time.Now())
 	require.NoError(t, err)
 	require.EqualValues(t, 1, status.Communities.Failed)
 	require.Zero(t, status.ActiveWork)
 	require.EqualValues(t, 2, status.Usage.Attempts)
 	require.Zero(t, status.Usage.UnreconciledAttempts)
+
+	failed.Definition.Description = "Updated database vocabulary"
+	_, err = managementService(f).SaveEdits(manager, contract.SaveEditsInput{
+		OperationKey: "revise-after-placement-failure", Reason: "Update database vocabulary",
+		Edits: []contract.ManagementEdit{{Action: "define", RecordID: parent.ID, Kind: contract.Topic, ExpectedVersion: failed.EditVersion, Definition: failed.Definition}},
+	})
+	require.NoError(t, err)
+	current, err := f.store.GetRecord(manager, f.team, parent.ID, 0)
+	require.NoError(t, err)
+	require.Empty(t, current.CommunityPlacement, "the failure belongs to the previous Topic revision")
 }
 
 func testCommunityMixedHierarchyPublicationRollback(t *testing.T) {
@@ -270,7 +285,10 @@ func testCommunityMixedHierarchyPublicationRollback(t *testing.T) {
 	placedView, err := f.store.GetRecord(manager, f.team, placed.ID, 0)
 	require.NoError(t, err)
 	require.Equal(t, placedParent.ID, placedView.CommunityParentID)
-	require.Empty(t, placedView.Definition.ParentID)
+	require.Equal(t, placedParent.ID, placedView.Definition.ParentID)
+	original, err := f.store.GetRecord(manager, f.team, placed.ID, 1)
+	require.NoError(t, err)
+	require.Empty(t, original.Definition.ParentID)
 
 	before, err := f.store.ListRecords(manager, f.team, contract.Topic, "", 10)
 	require.NoError(t, err)
@@ -292,11 +310,11 @@ func testCommunityMixedHierarchyPublicationRollback(t *testing.T) {
 	require.Equal(t, before, after)
 	accepted, err := f.store.PublishManager(manager, f.team, testPublication(operation, seed.Revision, legal))
 	require.NoError(t, err)
-	require.Equal(t, seed.Revision+1, accepted.Revision)
+	require.Greater(t, accepted.Revision, seed.Revision)
 	require.Equal(t, []contract.RevisionRef{{ID: legalChild.ID, Version: 2}}, accepted.Records)
 }
 
-func testCommunityInvalidationRollback(t *testing.T) {
+func testCommunityParentRevision(t *testing.T) {
 	ctx := t.Context()
 	f := newOntologyFixture(t)
 	manager := f.actor(0, "manager")
@@ -330,27 +348,17 @@ func testCommunityInvalidationRollback(t *testing.T) {
 
 	const operation = "edit-parent-description"
 	communityParent.Definition.Description = "PostgreSQL operations and administration."
-	edit := contract.Change{Record: communityParent, ExpectedVersion: 1}
-	_, err = f.store.PublishManager(manager, f.team, testPublication(operation, seed.Revision, edit))
-	require.ErrorIs(t, err, contract.ErrConflict)
-	var rejection *contract.PublicationRejection
-	require.ErrorAs(t, err, &rejection)
-	require.Equal(t, "community_hierarchy_conflict", rejection.Reason)
-	require.Equal(t, child.ID, rejection.RecordID)
-	require.Equal(t, definitionParent.ID, rejection.ParentID)
+	result, err := f.store.PublishManager(manager, f.team, testPublication(operation, seed.Revision,
+		contract.Change{Record: communityParent, ExpectedVersion: 1}))
+	require.NoError(t, err)
+	require.Greater(t, result.Revision, seed.Revision)
 	view, err := f.store.GetRecord(manager, f.team, child.ID, 0)
 	require.NoError(t, err)
 	require.Equal(t, communityParent.ID, view.CommunityParentID)
-
-	definitionParent.Definition.Description = "PostgreSQL availability and recovery."
-	result, err := f.store.PublishManager(manager, f.team, testPublication(operation, seed.Revision,
-		edit, contract.Change{Record: definitionParent, ExpectedVersion: 1}))
+	require.Equal(t, communityParent.ID, view.Definition.ParentID)
+	view, err = f.store.GetRecord(manager, f.team, definitionParent.ID, 0)
 	require.NoError(t, err)
-	require.Equal(t, seed.Revision+1, result.Revision)
-	view, err = f.store.GetRecord(manager, f.team, child.ID, 0)
-	require.NoError(t, err)
-	require.Empty(t, view.CommunityParentID)
-	require.Equal(t, definitionParent.ID, view.Definition.ParentID)
+	require.Equal(t, child.ID, view.Definition.ParentID)
 }
 
 func TestConcurrentTopicProposalsReuseScopedName(t *testing.T) {
