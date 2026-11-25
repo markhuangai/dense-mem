@@ -139,8 +139,6 @@ func TestProfileResolution_HeaderScopedCanonicalRoutes(t *testing.T) {
 	routes := []string{
 		"/mcp",
 		"/ui/api/recall",
-		"/ui/api/dreaming/status",
-		"/ui/api/dreams",
 	}
 
 	for _, route := range routes {
@@ -194,13 +192,12 @@ func TestHeaderScopedProfileRouteRequiresPathBoundary(t *testing.T) {
 		path string
 		want bool
 	}{
-		{path: "/ui/api/dreaming", want: true},
-		{path: "/ui/api/dreaming/status", want: true},
-		{path: "/ui/api/dreaming-extra", want: false},
-		{path: "/ui/api/dreams", want: true},
-		{path: "/ui/api/dreams/dream-1", want: true},
-		{path: "/ui/api/dreams-extra", want: false},
+		{path: "/mcp", want: true},
+		{path: "/mcp-extra", want: false},
+		{path: "/ui/api/recall", want: true},
 		{path: "/ui/api/recallXYZ", want: false},
+		{path: "/ui/api/dreaming/status", want: false},
+		{path: "/ui/api/dreams/dream-1", want: false},
 		{path: "/ui/api/evidence", want: false},
 		{path: "/ui/api/relationships", want: false},
 		{path: "/ui/api/communities", want: false},

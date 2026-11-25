@@ -221,7 +221,7 @@ func TestSDKRootLoggerRoutesContextAndSanitizesSDKFields(t *testing.T) {
 	require.Len(t, records, 1)
 	require.Equal(t, "mcp_sdk_event", records[0]["msg"])
 	require.Equal(t, "trusted-correlation", records[0]["correlation_id"])
-	require.Contains(t, console.String(), "resolved-session")
+	require.Equal(t, "resolved-session", records[0]["transport.session_id"])
 	require.Contains(t, console.String(), "mcp SDK operation failed")
 	require.NotContains(t, console.String(), "provider")
 	require.NotContains(t, console.String(), "unexpected")
@@ -474,7 +474,7 @@ func TestSDKHTTPHandlerPreservesOversizedBodyForSDKValidation(t *testing.T) {
 	require.Equal(t, http.StatusRequestEntityTooLarge, response.Code)
 }
 
-func TestSDKHTTPHandlerValidatesBeforeToolLookup(t *testing.T) {
+func TestSDKHTTPHandlerValidatesEnvelopeBeforeToolLookup(t *testing.T) {
 	logger, _ := testLogger(t)
 	reg := registry.New()
 	require.NoError(t, reg.Register(registry.Tool{Name: "write_tool", RequiredScopes: []string{"write"}}))
@@ -514,7 +514,8 @@ func TestSDKHTTPHandlerValidatesBeforeToolLookup(t *testing.T) {
 	request.Header.Set("MCP-Protocol-Version", "2025-11-25")
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	require.NotContains(t, response.Body.String(), "tool not found")
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Contains(t, response.Body.String(), `"reason_code":"tool_not_available"`)
 }
 
 func TestSDKHTTPHandlerDoesNotAnswerInitializedNotification(t *testing.T) {

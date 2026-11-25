@@ -180,24 +180,28 @@ test("Client overlays retain ordinary settings and reserve a bounded request bud
     assert.ok(commandStart >= 0 && start > commandStart && end > start);
     const generator = join(fixture, "overlay.cjs");
     await writeFile(generator, stack.slice(start, end));
-    for (const name of ["google_adk_memory", "langchain_retriever", "python_client", "session_ingest", "synchronous_write", "synchronous_write_telemetry_disabled", "enterprise_exports"]) {
+    const traceWithoutTelemetry = ["synchronous_write_telemetry_disabled", "oauth_provider_compatibility", "ontology_management", "ontology_upgrade"];
+    for (const name of ["google_adk_memory", "langchain_retriever", "python_client", "session_ingest", "synchronous_write", "enterprise_exports", ...traceWithoutTelemetry]) {
       const destination = join(fixture, `${name}.yml`);
       await run(process.execPath, [
         generator, destination, "synchronous_write", "", "", "fixture-model", "1536",
         name, "adk-overlay-test", "30",
       ], { env: { DENSE_MEM_CI_HOSTED: "1", DENSE_MEM_E2E_EXPORT_PERFORMANCE: "1", DENSE_MEM_E2E_EXPORT_PERF_STATE: "disabled" } });
       const overlay = await readFile(destination, "utf8");
-      if (["langchain_retriever", "enterprise_exports"].includes(name)) {
-        assert.doesNotMatch(overlay, /SESSION_INGEST_ENABLED/);
-      } else {
+      if (["google_adk_memory", "python_client", "session_ingest", "synchronous_write", "synchronous_write_telemetry_disabled"].includes(name)) {
         assert.match(overlay, /SESSION_INGEST_ENABLED: "true"/);
+      } else {
+        assert.doesNotMatch(overlay, /SESSION_INGEST_ENABLED/);
       }
       if (["google_adk_memory", "langchain_retriever", "python_client"].includes(name)) {
         assert.match(overlay, /RATE_LIMIT_PER_MINUTE: "1000"/);
       } else {
         assert.doesNotMatch(overlay, /RATE_LIMIT_PER_MINUTE/);
       }
-      if (["python_client", "session_ingest", "synchronous_write", "synchronous_write_telemetry_disabled"].includes(name)) {
+      if (traceWithoutTelemetry.includes(name)) {
+        assert.match(overlay, /LOG_LEVEL: ""/);
+        assert.match(overlay, /TELEMETRY_ENABLED: "false"/);
+      } else if (["python_client", "session_ingest", "synchronous_write"].includes(name)) {
         assert.match(overlay, /LOG_LEVEL: "debug"/);
       } else {
         assert.doesNotMatch(overlay, /LOG_LEVEL/);
@@ -1079,10 +1083,9 @@ test("Grafana range panels use a scrape-safe lookback", async () => {
   }
 });
 
-test("ontology fixtures forward healthy embeddings upstream", () => {
+test("Topic fixtures forward healthy embeddings upstream", () => {
   assert.match(stack, /const fixtureEmbeddingProvider = [^;]*\["ontology_organization", "ontology_management", "ontology_upgrade"\]\.includes\(scenario\)/);
   assert.match(stack, /AI_API_URL: "http:\/\/synchronous-write-provider:8787\/v1"/);
-  assert.ok(stack.includes('if (scenario === "ontology_management") serverEnvironment.set("LOG_LEVEL", "debug");'));
   assert.match(stack, /DENSE_MEM_E2E_EMBEDDING_BASE_URL/);
   assert.match(stack, /DENSE_MEM_E2E_EMBEDDING_API_KEY/);
   assert.match(stack, /embedding_upstream\.mjs/);

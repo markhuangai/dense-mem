@@ -21,6 +21,7 @@ import (
 // The SDK treats every stateless POST as a session, so its routine lifecycle belongs at debug level.
 type sdkLifecycleLogHandler struct {
 	delegate slog.Handler
+	group    string
 }
 
 func (h sdkLifecycleLogHandler) Enabled(ctx context.Context, level slog.Level) bool {
@@ -40,7 +41,7 @@ func (h sdkLifecycleLogHandler) Handle(ctx context.Context, record slog.Record) 
 	}
 	clean := slog.NewRecord(record.Time, level, sdkMessageClass(record.Message), record.PC)
 	record.Attrs(func(attr slog.Attr) bool {
-		if attr := sdkLogAttr(attr); attr.Key != "" {
+		if attr := h.logAttr(attr); attr.Key != "" {
 			clean.AddAttrs(attr)
 		}
 		return true
@@ -51,15 +52,24 @@ func (h sdkLifecycleLogHandler) Handle(ctx context.Context, record slog.Record) 
 func (h sdkLifecycleLogHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	clean := make([]slog.Attr, 0, len(attrs))
 	for _, attr := range attrs {
-		if attr := sdkLogAttr(attr); attr.Key != "" {
+		if attr := h.logAttr(attr); attr.Key != "" {
 			clean = append(clean, attr)
 		}
 	}
-	return sdkLifecycleLogHandler{delegate: h.delegate.WithAttrs(clean)}
+	h.delegate = h.delegate.WithAttrs(clean)
+	return h
 }
 
 func (h sdkLifecycleLogHandler) WithGroup(name string) slog.Handler {
-	return sdkLifecycleLogHandler{delegate: h.delegate.WithGroup(name)}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return h
+	}
+	if h.group != "" {
+		h.group += "."
+	}
+	h.group += name
+	return h
 }
 
 func newSDKLogger(delegate *slog.Logger) *slog.Logger {
@@ -79,9 +89,13 @@ func sdkMessageClass(message string) string {
 	}
 }
 
-func sdkLogAttr(attr slog.Attr) slog.Attr {
+func (h sdkLifecycleLogHandler) logAttr(attr slog.Attr) slog.Attr {
 	switch attr.Key {
 	case "session_id":
+		if h.group != "" {
+			// Qualify SDK fields without nesting the root logger's trusted request context.
+			attr.Key = h.group + "." + attr.Key
+		}
 		return attr
 	case "error":
 		return slog.String("error", "mcp SDK operation failed")

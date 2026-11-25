@@ -1,6 +1,8 @@
 -- Lock/rewrite impact: validates scoped foreign keys and removes temporary fences.
 -- RLS impact: topology and history retain their scoped policies.
--- Recovery: restore the backup before reopening writes or roll forward afterward.
+-- Backfill: checks completed copy and verification receipts before removing the fences.
+-- Backward compatibility: reopen services with an application that uses relational Topics.
+-- Rollback: restore the verified backup before reopening writes or roll forward afterward.
 
 -- +goose Up
 -- +goose StatementBegin

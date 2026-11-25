@@ -145,12 +145,21 @@ func TestClientPreservesCancellationAndRequestTimeout(t *testing.T) {
 			var requests atomic.Int32
 			entered := make(chan struct{}, 1)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := r.ParseForm(); err != nil {
+					t.Errorf("read Prometheus request: %v", err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
 				requests.Add(1)
 				select {
 				case entered <- struct{}{}:
 				default:
 				}
-				<-r.Context().Done()
+				select {
+				case <-r.Context().Done():
+				case <-time.After(2 * time.Second):
+					t.Error("Prometheus request context did not cancel")
+				}
 			}))
 			defer server.Close()
 			call := func(ctx context.Context, timeout time.Duration) error {

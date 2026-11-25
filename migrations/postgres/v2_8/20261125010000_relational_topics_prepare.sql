@@ -1,7 +1,8 @@
 -- Lock/rewrite impact: bounded acquisition of writer-conflicting locks, no heap rewrite.
 -- RLS impact: new forced policies use the existing authenticated shared-space context.
 -- Backfill: the next migration copies and verifies ordered pages under this write fence.
--- Recovery: keep services offline and resume or restore the verified backup.
+-- Backward compatibility: the old layout remains in place and writes are fenced.
+-- Rollback: keep services offline and resume forward or restore the verified backup.
 
 -- +goose Up
 -- +goose StatementBegin
