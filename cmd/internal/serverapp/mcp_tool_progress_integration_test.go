@@ -33,6 +33,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	searchpostgres "github.com/markhuangai/dense-mem/internal/search/postgres"
 	session "github.com/markhuangai/dense-mem/internal/session/contract"
+	sessionpostgres "github.com/markhuangai/dense-mem/internal/session/postgres"
 	"github.com/markhuangai/dense-mem/internal/tools/registry"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -157,6 +158,7 @@ func TestMCPToolProgressPostgres(t *testing.T) {
 	logger := observability.NewWithHandler(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	bundle := buildApplicationBundle(applicationCompositionDependencies{
 		Knowledge: knowledge, RememberPersistence: knowledge, TraceStore: buildTraceStore(app, rls),
+		SessionRepository:    sessionpostgres.New(app, rls, knowledge.CommitEvidenceTx, knowledge.WithSubmissionLock),
 		RecallSearch:         recallpostgres.NewStore(app, rls, searchpostgres.NewStore(app, rls), recallpostgres.LoadRecallEvidenceConflictRecords),
 		RecallFeedbackEvents: recallpostgres.NewFeedbackStore(app, rls), Assessor: provider, SessionAssessor: provider,
 		GeneratorTransport: transport, SessionEnabled: true, RememberModel: "tool-progress-extraction", AssessmentLimits: assessor.DefaultSemanticAssessmentLimits(),

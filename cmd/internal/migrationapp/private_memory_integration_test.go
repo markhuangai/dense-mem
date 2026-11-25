@@ -121,6 +121,7 @@ func TestRunUpSerializesPrivateMigrationAndCancelsWaitingStarter(t *testing.T) {
 			t.Fatal("concurrent startup did not finish")
 		}
 	}
+	require.NoError(t, migrator.RunUpThroughEvidenceOnly(ctx))
 	report, err := privacypostgres.NewPrivateMemoryRepository(db, storage.NewRLS()).InspectPrivateMemoryMigration(ctx)
 	require.NoError(t, err)
 	require.Equal(t, "complete", report.Status)

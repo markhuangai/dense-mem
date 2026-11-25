@@ -61,7 +61,8 @@ func TestOntologyTeamConcurrencySettings(t *testing.T) {
 func TestOntologySettingsDefaultsValidationAndFreshReads(t *testing.T) {
 	now := time.Now().UTC()
 	repo := newAppConfigRepoStub(now, map[string]string{domain.AppConfigUpdateTimeKey: now.Format(time.RFC3339Nano)})
-	service := NewAppConfigService(repo, nil)
+	audit := &appConfigAuditStub{}
+	service := NewAppConfigService(repo, audit)
 	ctx := context.Background()
 	initial, err := service.TopicMaintenanceRuntimeConfig(ctx)
 	require.NoError(t, err)
@@ -76,6 +77,10 @@ func TestOntologySettingsDefaultsValidationAndFreshReads(t *testing.T) {
 	}
 	_, err = service.UpdateTopicMaintenanceSettings(ctx, map[string]string{domain.AppConfigTopicMaintenanceEnabled: "true", domain.AppConfigTopicMaintenanceCadenceHours: "24", domain.AppConfigTopicMaintenanceModel: "operator-model", domain.AppConfigTopicMaintenanceStartTime: "3:00"}, "control", "", "")
 	require.NoError(t, err)
+	require.Len(t, audit.entries, 1)
+	require.Equal(t, "topic_maintenance", audit.entries[0].EntityID)
+	require.Equal(t, initial.SettingsVersion, audit.entries[0].BeforePayload["update_time"])
+	require.Contains(t, audit.entries[0].AfterPayload["items"], map[string]string{"key": domain.AppConfigTopicMaintenanceEnabled, "value": "true"})
 	_, err = service.UpdateGeneralSettings(ctx, map[string]string{domain.AppConfigTimezone: "America/New_York"}, "control", "", "")
 	require.NoError(t, err)
 	updated, err := service.TopicMaintenanceRuntimeConfig(ctx)

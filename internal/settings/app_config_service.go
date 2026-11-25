@@ -676,7 +676,7 @@ func updateConfigSection[T any](ctx context.Context, service *AppConfigServiceIm
 				return nil, err
 			}
 			previous, beforeErr := project(before)
-			beforePayload := payload(nil)
+			var beforePayload map[string]any
 			if beforeErr == nil {
 				beforePayload = payload(&previous)
 			}

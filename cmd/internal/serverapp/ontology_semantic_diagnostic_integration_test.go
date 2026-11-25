@@ -59,10 +59,12 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 			publish := func(revision int64, changes ...contract.Change) (contract.PublicationResult, error) {
 				return store.PublishManager(ctx, team.String(), contract.Publication{OperationKey: uuid.NewString(), ExpectedRevision: revision, Reason: "Semantic diagnostic acceptance", Changes: changes})
 			}
+			var catalogRevision int64
 			console, _ := capture(func() {
 				result, err := publish(0, contract.Change{Record: parent}, contract.Change{Record: child})
 				require.NoError(t, err)
-				require.EqualValues(t, 1, result.Revision)
+				require.Positive(t, result.Revision)
+				catalogRevision = result.Revision
 			})
 			require.Contains(t, console, "topic_semantic_publication_committed")
 			require.Contains(t, console, "\"transaction_outcome\":\"committed\"")
@@ -71,7 +73,7 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 				expected     int64
 				change       contract.Change
 			}{
-				{"cycle", "hierarchy_cycle", 1, contract.Change{ExpectedVersion: 1, Record: func() contract.Record {
+				{"cycle", "hierarchy_cycle", catalogRevision, contract.Change{ExpectedVersion: 1, Record: func() contract.Record {
 					value := parent
 					definition := *parent.Definition
 					definition.ParentID = child.ID
@@ -79,8 +81,8 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 					return value
 				}()}},
 				{"stale_catalog", "catalog_revision", 0, contract.Change{Record: record("stale", parent.ID)}},
-				{"stale_record", "record_version", 1, contract.Change{ExpectedVersion: 0, Record: child}},
-				{"unavailable_parent", "parent_unavailable", 1, contract.Change{Record: record("unavailable-parent", uuid.NewString())}},
+				{"stale_record", "record_version", catalogRevision, contract.Change{ExpectedVersion: 0, Record: child}},
+				{"unavailable_parent", "parent_unavailable", catalogRevision, contract.Change{Record: record("unavailable-parent", uuid.NewString())}},
 			} {
 				t.Run(test.name, func(t *testing.T) {
 					console, records := capture(func() { _, err := publish(test.expected, test.change); require.Error(t, err) })
@@ -104,7 +106,11 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 						var rejection contract.PublicationRejection
 						require.NoError(t, json.Unmarshal(bodies["rejection:"], &rejection))
 						require.Equal(t, test.reason, rejection.Reason)
-						if strings.HasPrefix(test.name, "stale_") {
+						if test.name == "stale_catalog" {
+							require.Equal(t, "0", rejection.Expected)
+							require.Equal(t, fmt.Sprint(catalogRevision), rejection.Observed)
+						}
+						if test.name == "stale_record" {
 							require.Equal(t, "0", rejection.Expected)
 							require.Equal(t, "1", rejection.Observed)
 						}
@@ -117,7 +123,7 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 				})
 			}
 			service := application.NewManagementService(store, auditapp.New(auditpg.NewStore(app, rls)))
-			draft, err := service.SaveDraft(ctx, "", contract.SaveDraftInput{OperationKey: uuid.NewString(), ExpectedRevision: 1, Reason: "Audit failure acceptance", Edits: []contract.ManagementEdit{{Action: "define", Kind: contract.Topic, Definition: record("audit-child", parent.ID).Definition}}})
+			draft, err := service.SaveDraft(ctx, "", contract.SaveDraftInput{OperationKey: uuid.NewString(), ExpectedRevision: catalogRevision, Reason: "Audit failure acceptance", Edits: []contract.ManagementEdit{{Action: "define", Kind: contract.Topic, Definition: record("audit-child", parent.ID).Definition}}})
 			require.NoError(t, err)
 			require.NoError(t, admin.Exec(`CREATE FUNCTION reject_semantic_publication_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.operation='TOPIC_PUBLISH' THEN RAISE EXCEPTION 'fixture semantic audit rejection'; END IF; RETURN NEW; END $$;
 				CREATE TRIGGER reject_semantic_publication_audit BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION reject_semantic_publication_audit()`).Error)
@@ -126,7 +132,7 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 			})
 			console, _ = capture(func() {
 				service.WithPublicationDiagnostics(application.PublicationDiagnostics(root.ContextSlog(), protector))
-				_, err := service.CommandDraft(ctx, draft.ID, "publish", contract.DraftCommand{OperationKey: uuid.NewString(), ExpectedVersion: draft.Version, ExpectedRevision: 1, Reason: draft.Reason})
+				_, err := service.CommandDraft(ctx, draft.ID, "publish", contract.DraftCommand{OperationKey: uuid.NewString(), ExpectedVersion: draft.Version, ExpectedRevision: catalogRevision, Reason: draft.Reason})
 				require.ErrorIs(t, err, contract.ErrAuditUnavailable)
 			})
 			require.NoError(t, admin.Exec(`DROP TRIGGER reject_semantic_publication_audit ON audit_log; DROP FUNCTION reject_semantic_publication_audit()`).Error)
@@ -143,7 +149,7 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 				require.NoError(t, admin.Exec(`DROP TRIGGER IF EXISTS reject_semantic_publication_commit ON topic_publications; DROP FUNCTION IF EXISTS reject_semantic_publication_commit()`).Error)
 			})
 			console, _ = capture(func() {
-				_, err := publish(1, contract.Change{Record: record("commit-child", parent.ID)})
+				_, err := publish(catalogRevision, contract.Change{Record: record("commit-child", parent.ID)})
 				require.ErrorContains(t, err, "fixture semantic commit rejection")
 			})
 			require.NoError(t, admin.Exec(`DROP TRIGGER reject_semantic_publication_commit ON topic_publications; DROP FUNCTION reject_semantic_publication_commit()`).Error)
@@ -151,7 +157,7 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 			require.NotContains(t, console, "topic_semantic_publication_committed")
 			page, err := store.ListRecords(ctx, team.String(), "", "", 200)
 			require.NoError(t, err)
-			require.EqualValues(t, 1, page.Revision)
+			require.Equal(t, catalogRevision, page.Revision)
 			require.Len(t, page.Records, 2)
 			var publications int
 			require.NoError(t, admin.Raw(`SELECT count(*) FROM topic_publications WHERE team_id=?::uuid`, team).Row().Scan(&publications))
@@ -165,7 +171,7 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 			require.Zero(t, invisible.Total)
 			console, records := capture(func() {
 				pin := contract.Record{ID: uuid.NewString(), Kind: contract.OverrideKind, Override: &contract.Override{Action: contract.PinDefinition, TargetID: child.ID}}
-				_, err := publish(1, contract.Change{Record: pin})
+				_, err := publish(catalogRevision, contract.Change{Record: pin})
 				require.ErrorIs(t, err, contract.ErrOverride)
 			})
 			require.Contains(t, console, "topic_semantic_publication_rejected")
@@ -173,7 +179,7 @@ func TestOntologySemanticPublicationLogOnlyDiagnostics(t *testing.T) {
 			if level <= slog.LevelDebug {
 				require.Contains(t, string(ontologyPublicationPayloads(t, records)["input:"]), "pin_definition")
 			}
-			depthParent, depthRevision := "", int64(1)
+			depthParent, depthRevision := "", catalogRevision
 			var changes []contract.Change
 			for depth := 0; depth <= contract.MaxParentDepth; depth++ {
 				value := record(fmt.Sprintf("depth-%d", depth), depthParent)

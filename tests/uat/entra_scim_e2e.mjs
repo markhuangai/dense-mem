@@ -227,9 +227,9 @@ async function verifyDirectoryStorageError(connectorID) {
     "console did not associate the database failure with the activation request");
   assert(!JSON.stringify(events[0]).includes(controlToken), "directory diagnostic contains a credential");
   const event = events[0];
-  assert.equal(event.connector_id, connectorID);
-  assert.equal(event.preview_version, preview.version);
-  assert(event.elapsed_ms >= 0);
+  assert(event.connector_id === connectorID, "directory diagnostic has the wrong connector");
+  assert(event.preview_version === preview.version, "directory diagnostic has the wrong preview version");
+  assert(event.elapsed_ms >= 0, "directory diagnostic omitted elapsed time");
   const hash = createHash("sha256").update(JSON.stringify(event)).digest("hex");
   console.log(JSON.stringify({
     event: "directory_activation_diagnosed", correlation_id: correlationID, connector_id: connectorID,

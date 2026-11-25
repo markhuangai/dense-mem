@@ -615,14 +615,14 @@ restore_pre_cutover_backup() {
     AND to_regclass('public.topic_record_heads') IS NULL AND EXISTS(SELECT 1 FROM ontology_publications WHERE operation_key='feature-storage-progress')
     AND NOT EXISTS(SELECT 1 FROM v2_compatibility_markers WHERE marker_kind='topic_storage')" "$restored_database")"
   [[ "$schema" == "t" ]] || fail "restored database has the wrong physical layout or missing operation"
-  [[ "$(feature_storage_fixture_fingerprints ontology_record_revisions "$restored_database")" == "$before" ]] || fail "pre-cutover backup did not reproduce source history"
+  [[ "$(feature_storage_fixture_fingerprints ontology_revision_records "$restored_database")" == "$before" ]] || fail "pre-cutover backup did not reproduce source history"
 }
 
 run_ontology_upgrade_startup_matrix() {
   local source_dir="$1" project="$2" before archive observed=0 log_output state
   reset_identity_cleanup_database
   seed_ontology_upgrade_database "$source_dir" "$project" v2.8.1 || fail "v2.8.1 fixture seed failed"
-  before="$(feature_storage_fixture_fingerprints ontology_record_revisions)" || fail "v2.8.1 source snapshot failed"
+  before="$(feature_storage_fixture_fingerprints ontology_revision_records)" || fail "v2.8.1 source snapshot failed"
   archive="$(ontology_backup_command mktemp /tmp/topic-precutover.XXXXXXXX)" || fail "pre-cutover archive allocation failed"
   ontology_backup_command pg_dump -h 127.0.0.1 -U "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER" \
     --format=custom --file="$archive" "$DENSE_MEM_CI_IDENTITY_POSTGRES_DATABASE" || fail "pre-cutover backup failed"

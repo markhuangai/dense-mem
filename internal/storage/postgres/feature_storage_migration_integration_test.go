@@ -77,7 +77,7 @@ func TestFeatureStoragePostgresLargeRetainedRows(t *testing.T) {
 				t.Helper()
 				var fingerprint string
 				require.NoError(t, execPostgresTxMode(context.Background(), db, "system", func(tx *sql.Tx) error {
-					return tx.QueryRow(`SELECT encode(sha256(convert_to(to_jsonb(history)::text,'UTF8')),'hex')
+					return tx.QueryRow(`SELECT encode(sha256(convert_to((to_jsonb(history) - 'uses_attempt_capture')::text,'UTF8')),'hex')
 					 FROM remember_invocation_diagnostics history WHERE team_id=$1::uuid AND invocation_id=$2::uuid`, fixture.team, invocation).Scan(&fingerprint)
 				}))
 				return fingerprint
@@ -128,10 +128,16 @@ func TestFeatureStoragePostgresLargeRetainedRows(t *testing.T) {
 				require.NoError(t, NewMigratorWithDB(db).RunUp(context.Background()))
 				require.Equal(t, before, historyHash())
 				var complete int
+				var usesAttemptCapture bool
 				require.NoError(t, execPostgresTxMode(context.Background(), db, "system", func(tx *sql.Tx) error {
+					if err := tx.QueryRow(`SELECT uses_attempt_capture FROM remember_invocation_diagnostics
+					 WHERE team_id=$1::uuid AND invocation_id=$2::uuid`, fixture.team, invocation).Scan(&usesAttemptCapture); err != nil {
+						return err
+					}
 					return tx.QueryRow(`SELECT count(*) FROM data_migration_checkpoints WHERE migration_version=$1
 					 AND phase IN ('snapshot','verify') AND work_unit='remember_invocation_diagnostics' AND row_count=1 AND complete`, FeatureStorageDataVersion).Scan(&complete)
 				}))
+				require.False(t, usesAttemptCapture)
 				require.Equal(t, 2, complete)
 			}
 			require.Equal(t, evidence, featureStorageSnapshot(t, db, "evidence_fragments"))
