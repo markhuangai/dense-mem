@@ -134,7 +134,7 @@ func (s *DirectoryIdentityService) UpdateConnector(ctx context.Context, connecto
 		return nil, err
 	}
 	if current.Status == domain.DirectoryConnectorActive && directoryConnectorPolicyChanged(*current, connector) {
-		return nil, fmt.Errorf("%w: disable the connector before changing its group policy", ErrDirectoryResourceConflict)
+		return nil, fmt.Errorf("%w: disable the directory connector before changing its group policy", ErrDirectoryResourceConflict)
 	}
 	connector.ProviderID = current.ProviderID
 	connector.Status = current.Status

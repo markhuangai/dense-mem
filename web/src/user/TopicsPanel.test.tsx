@@ -1,10 +1,11 @@
 import userEvent from "@testing-library/user-event";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ConfirmationProvider } from "../ui/confirmation";
 import { UserApi, type UserSession } from "./api";
 import { TopicsPanel } from "./TopicsPanel";
 import { TopicEditor } from "./TopicEditor";
-import type { TopicCoverage, TopicDraft } from "./topic-types";
+import type { TopicCoverage, TopicDraft, TopicRecord, TopicSource } from "./topic-types";
 
 const session = { team: { id: "team-a" }, membership: { role: "manager", grants: ["read", "write"] } } as UserSession;
 const edit = { action: "define" as const, expected_version: 0, kind: "topic" as const, definition: { key: "storage", label: "Storage", description: "Durable storage", aliases: [] } };
@@ -12,17 +13,20 @@ const draft: TopicDraft = { id: "draft-a", version: 1, state: "open", base_revis
 
 const coverage: TopicCoverage = { observed_at: "2026-10-18T12:00:00Z", revision: 1, discovery_complete: false, coverage_complete: false, pending_markers: 0, counts: { eligible: 2, organized: 0, pending: 2, ambiguous: 0, failed: 0 } };
 
+function topicResponse(data: unknown) {
+  return new Response(JSON.stringify({ data }), { status: 200 });
+}
+
 function install(saved: TopicDraft[] = [], mutation?: (url: string, body: Record<string, unknown>) => Response, coverageStatus = coverage) {
-  const response = (data: unknown) => new Response(JSON.stringify({ data }), { status: 200 });
   const fetcher = vi.fn(async (url: string, options?: RequestInit) => {
     const body = options?.body ? JSON.parse(options.body as string) : {};
-    if (options?.method && options.method !== "GET") return mutation?.(url, body) ?? response(draft);
-    if (url.includes("/records")) return response({ records: [], revision: 1 });
-    if (url.includes("/status")) return response(coverageStatus);
-    if (url.includes("/publications")) return response({ publications: [] });
-    if (url.includes("/sources")) return response({ sources: [] });
-    if (new URL(url, "http://localhost").pathname.endsWith("/drafts")) return response({ drafts: saved });
-    return response(draft);
+    if (options?.method && options.method !== "GET") return mutation?.(url, body) ?? topicResponse(draft);
+    if (url.includes("/records")) return topicResponse({ records: [], revision: 1 });
+    if (url.includes("/status")) return topicResponse(coverageStatus);
+    if (url.includes("/publications")) return topicResponse({ publications: [] });
+    if (url.includes("/sources")) return topicResponse({ sources: [] });
+    if (new URL(url, "http://localhost").pathname.endsWith("/drafts")) return topicResponse({ drafts: saved });
+    return topicResponse(draft);
   });
   vi.stubGlobal("fetch", fetcher);
   return fetcher;
@@ -112,6 +116,119 @@ describe("TopicsPanel", () => {
     expect(screen.getByRole("region", { name: "Previous drafts" })).toBeInTheDocument();
     expect(screen.getByText(/Storage correction/)).toBeVisible();
     expect(screen.queryByRole("tab", { name: "Edit" })).not.toBeInTheDocument();
+  });
+
+  it("keeps catalog, shared Evidence, and history pagination independent", async () => {
+    const storage: TopicRecord = { id: "topic-a", kind: "topic", version: 1, retired: false, current: true, definition: edit.definition };
+    const archive = { ...storage, id: "topic-b", definition: { ...edit.definition, key: "archive", label: "Archive" } };
+    const source: TopicSource = { kind: "evidence", id: "source-a", version: 2, text: "Primary database source", truncated: true };
+    const olderDraft: TopicDraft = {
+      ...draft, id: "draft-b", reason: "Earlier grouping",
+      edits: [{ action: "group_together", expected_version: 1, members: [{ kind: "evidence", id: source.id, version: source.version }] }],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const { pathname, searchParams } = new URL(url, "http://localhost");
+      const cursor = searchParams.get("cursor");
+      switch (pathname) {
+        case "/ui/api/topics/records":
+          if (searchParams.get("kind") !== "topic") return topicResponse({ records: [storage], revision: 1 });
+          return topicResponse(cursor === "catalog-next"
+            ? { records: [archive], revision: 1 }
+            : { records: [storage], revision: 1, next_cursor: "catalog-next" });
+        case "/ui/api/topics/sources":
+          if (searchParams.get("kind") !== "evidence") throw new Error("Expected shared Evidence");
+          if (searchParams.get("q") !== "database") {
+            return topicResponse({ sources: [{ ...source, text: "Unfiltered source" }] });
+          }
+          return topicResponse(cursor === "source-next"
+            ? { sources: [{ ...source, id: "source-b", text: "Additional database source", truncated: false }] }
+            : { sources: [source], next_cursor: "source-next" });
+        case "/ui/api/topics/publications":
+          return topicResponse(searchParams.get("after") === "3"
+            ? { publications: [{ id: "publication-b", revision: 2, origin: "manager", reason: "Earlier review" }] }
+            : { publications: [{ id: "publication-a", revision: 3, origin: "manager", reason: "Current review" }], next_revision: 3 });
+        case "/ui/api/topics/drafts":
+          return topicResponse(cursor === "draft-next"
+            ? { drafts: [olderDraft] }
+            : { drafts: [draft], next_cursor: "draft-next" });
+        case "/ui/api/topics/status":
+          return topicResponse(coverage);
+        default:
+          throw new Error("Unexpected Topic request: " + pathname);
+      }
+    }));
+    render(<TopicsPanel api={new UserApi("key")} session={session} />);
+
+    await userEvent.selectOptions(await screen.findByLabelText("Catalog type"), "topic");
+    await userEvent.click(await screen.findByRole("button", { name: "Load more catalog records" }));
+    expect(await screen.findByText("Archive", { selector: "strong" })).toBeVisible();
+    expect(screen.getByText("Storage", { selector: "strong" })).toBeVisible();
+
+    await selectTab("Sources");
+    expect(screen.getByText(/Unfiltered source/)).toBeVisible();
+    await userEvent.type(screen.getByLabelText("Source text or ID"), "database");
+    await userEvent.click(screen.getByRole("button", { name: "Inspect sources" }));
+    expect(await screen.findByText(/Primary database source.*excerpt/)).toBeVisible();
+    expect(screen.queryByText(/Unfiltered source/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Load more sources" }));
+    expect(await screen.findByText("Additional database source")).toBeVisible();
+    expect(screen.getByText(/Primary database source/)).toBeVisible();
+
+    await selectTab("History");
+    await userEvent.click(screen.getByRole("button", { name: "Load more publications" }));
+    expect(await screen.findByRole("button", { name: /Earlier review/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /Current review/ })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Load more previous drafts" }));
+    const drafts = screen.getByRole("region", { name: "Previous drafts" });
+    expect(within(drafts).getByText(/Storage correction/)).toBeVisible();
+    await userEvent.click(await within(drafts).findByText(/Earlier grouping/));
+    expect(within(drafts).getByText("evidence source-a · version 2")).toBeVisible();
+  });
+
+  it("protects unfinished edits and lets a manager replace or remove a queued correction", async () => {
+    const storage: TopicRecord = { id: "topic-a", kind: "topic", version: 1, retired: false, current: true, definition: edit.definition };
+    const archive = { ...storage, id: "topic-b", definition: { ...edit.definition, key: "archive", label: "Archive" } };
+    const pages: Record<string, unknown> = {
+      "/ui/api/topics/records": { records: [storage, archive], revision: 1 },
+      "/ui/api/topics/status": coverage,
+      "/ui/api/topics/publications": { publications: [] },
+      "/ui/api/topics/sources": { sources: [] },
+      "/ui/api/topics/drafts": { drafts: [] },
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      const { pathname } = new URL(url, "http://localhost");
+      if (!(pathname in pages)) throw new Error("Unexpected Topic request: " + pathname);
+      return topicResponse(pages[pathname]);
+    }));
+    render(<ConfirmationProvider><TopicsPanel api={new UserApi("key")} session={session} /></ConfirmationProvider>);
+
+    await userEvent.click(await screen.findByRole("button", { name: "Edit Storage" }));
+    fireEvent.change(screen.getByLabelText("Definition label"), { target: { value: "Queued Storage" } });
+    fireEvent.change(screen.getByLabelText("Definition aliases"), { target: { value: "Database, Archive" } });
+    await userEvent.click(screen.getByRole("button", { name: "Add topic change" }));
+    expect(screen.getByText(/Queued Storage.*Database, Archive/)).toBeVisible();
+
+    fireEvent.change(screen.getByLabelText("Definition label"), { target: { value: "Revised Storage" } });
+    await selectTab("Catalog");
+    await userEvent.click(screen.getByRole("button", { name: "Edit Archive" }));
+    const confirm = await screen.findByRole("alertdialog", { name: "Discard editor changes?" });
+    await userEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    await selectTab("Edit");
+    expect(screen.getByLabelText("Definition label")).toHaveValue("Revised Storage");
+    expect(screen.getByText(/Queued Storage.*Database, Archive/)).toBeVisible();
+
+    await userEvent.click(screen.getByRole("button", { name: "Add topic change" }));
+    expect(screen.getByText(/Revised Storage.*Database, Archive/)).toBeVisible();
+    expect(screen.queryByText(/Queued Storage.*Database, Archive/)).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Audit reason"), { target: { value: "Clarify storage" } });
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    await userEvent.click(screen.getByRole("button", { name: "Remove correction 1" }));
+    expect(screen.queryByText(/Revised Storage.*Database, Archive/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+
+    await selectTab("Catalog");
+    await userEvent.click(screen.getByRole("button", { name: "New topic" }));
+    expect(screen.getByLabelText("Definition key")).toHaveValue("");
   });
 
   it("keeps historical override records readable in publication details", async () => {

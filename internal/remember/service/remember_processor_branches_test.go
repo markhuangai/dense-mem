@@ -372,8 +372,14 @@ func TestRememberProcessorRecordsAssessmentRejectionTrails(t *testing.T) {
 		require.Equal(t, "assessment", ledger.invocation.FailedPhase)
 		require.Equal(t, 1, provider.partitionCalls)
 		require.Zero(t, provider.assessCalls)
-		require.Contains(t, string(ledger.invocation.RequestBody), "admitted")
-		require.NotContains(t, string(ledger.invocation.RequestBody), "hash_only")
+		require.True(t, ledger.invocation.UsesAttemptCapture)
+		require.Equal(t, ledger.failure.Attempt.AttemptID, ledger.invocation.CanonicalAttemptID)
+		require.Empty(t, ledger.invocation.RequestBody)
+		require.NotEmpty(t, ledger.failure.Diagnostics)
+		capture := ledger.failure.Diagnostics[0]
+		require.Equal(t, "original_request", capture.Kind)
+		require.Equal(t, "captured", capture.CaptureState)
+		require.Equal(t, input.OriginalRequest, capture.RequestBody)
 	})
 }
 

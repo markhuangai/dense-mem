@@ -257,6 +257,8 @@ func (s *SSOService) validateOAuthBearer(ctx context.Context, token parsedOAuthA
 				s.oauth.mu.Unlock()
 				return nil, nil, ErrOAuthProviderUnavailable
 			}
+			// Share key material before publishing the new configuration snapshot.
+			validator.retainCompatibleJWKS(cached.validator, token.issuer)
 			if s.oauth.validators == nil {
 				s.oauth.validators = make(map[string]oauthValidatorEntry)
 			}
