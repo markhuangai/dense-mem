@@ -225,13 +225,13 @@ credential:
   to: "My credentials and permitted team actions"
   use: "Create or rotate by this credential ID. Rotation issues a replacement secret and keeps the same credential identity and private space."
   value: "30000000-0000-4000-8000-000000000002"
-draft-revision:
-  path: "base_revision"
+topic-edit-version:
+  path: "edits[].expected_version"
   type: "integer"
-  from: "User Portal · draft response"
-  to: "Preview and versioned publication"
-  use: "A draft records the catalog revision it started from. A stale preview or publish must be refreshed before the change can be accepted."
-  value: 12
+  from: "Current Topic · edit_version"
+  to: "Topic editor · Save"
+  use: "A changed version returns 409 so the manager can refresh and review the edit."
+  value: 3
 topic-id:
   path: "topic_id"
   type: "UUID"

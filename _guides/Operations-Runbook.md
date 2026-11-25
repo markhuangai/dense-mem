@@ -41,24 +41,11 @@ Migrations have no overall deadline by default (`POSTGRES_MIGRATION_TIMEOUT_SECO
 
 ### Destructive Migration Boundary
 
-Before the pending Evidence-only cutover, stop incompatible readers/writers and verify a matching restore-tested backup. Migration `20261110010000` removes retired graph data and resets derived organization in one transaction with inventory, hold, dependency, and retained-Evidence checks. A blocked check stops the upgrade; inspect the bounded failure before proceeding.
+For a database that still needs the Evidence-only cutover, use the released v2.8.0 upgrade procedure. Stop its application services and verify a matching restore-tested backup. Migration `20261110010000` removes retired graph data and resets derived organization in one transaction with inventory, hold, dependency, and retained-Evidence checks. A blocked check stops the upgrade; inspect the bounded failure before proceeding.
 
 Before destructive commit, transaction rollback preserves the prior state. After commit, restoration requires the matching backup; after new accepted writes, use forward recovery unless separately authorized. Ordinary rolling changes must remain compatible with the previous supported binary.
 
-Private attribution migration also runs automatically before serving. Its read-only diagnostic command is:
-
-```bash
-/app/server private-memory-preflight
-```
-
-When an operator deliberately invokes the existing migration command with a retained inspected fingerprint:
-
-```bash
-/app/server private-memory-migrate \
-  --source-fingerprint='<preflight-source-fingerprint>'
-```
-
-The standalone command writes its final status to stdout and uses a WARN-level console logger on stderr. Do not guess ownership to clear a preflight blocker. Partial migration remains a readiness failure. The deprecated maintenance-confirmation flag is not an activation requirement.
+For legacy attribution diagnostics and migration, use the commands and procedure shipped with released v2.8.0. Bring the database through that version before starting the current application.
 
 ### Evidence-Only Cutover
 
@@ -98,7 +85,7 @@ flowchart TB
 
 Install `deploy-staging-copy.sh` and its `sync.sh` dependency beside the staging Compose configuration before dispatching **Deploy staging**. The workflow runs through the protected `staging-migration` environment and passes the selected image revision and migration inventory to that host helper.
 
-Validation checks migration state, catalog compatibility, and Evidence preservation. Existing completed private attribution uses exact retained fingerprints; pending legacy attribution retains its supported identity remapping. A failed migration or deployment does not restart an older fallback image.
+Validation checks migration state, catalog compatibility, and Evidence preservation. The source database must have reached v2.8.0. Validate retained attribution with its recorded fingerprints. A failed migration or deployment does not restart an older fallback image.
 
 Prerelease publication performs its separate source-based production-copy rehearsal before publishing images. It does not start the staging application. The [deployment workflow](https://github.com/markhuangai/dense-mem/blob/41e278673679c1d9634cd63a68d13c74e8a46452/.github/workflows/deploy-stage.yml) owns invocation and image selection; [Development And Testing]({{ '/Development-And-Testing/#staging-validation' | relative_url }}) describes the verification boundaries.
 
@@ -188,10 +175,23 @@ See [Configuration]({{ '/Configuration/#topic-maintenance' | relative_url }}) an
 
 ## Topic Storage Upgrade
 
-1. Pause the old worker, drain leases, and verify provider usage reconciliation. Stop all old application writers.
-2. Record the source image and PostgreSQL schema version. Rehearse the [custom-format restore]({{ '/Operations-Runbook/#pre-cutover-custom-format-restore' | relative_url }}) in isolation. Verify scoped counts, canonical fingerprints, holds, and historical receipts.
-3. Start the compatible image with service traffic held. Follow migration phase, checkpoint, and fingerprint records in protected stdout. Startup opens listeners after the storage layout is verified.
-4. Verify Recall, catalog history, and preserved operator settings before reopening traffic. If interrupted, resume with the same compatible image and inspect its checkpoint verification. Restore the verified backup only within the pre-write recovery boundary. After new writes, recover forward.
+This procedure applies to images that include the relational Topics cutover. [Cutover migration](https://github.com/markhuangai/dense-mem/blob/8b94038237b7291fe5b1eb97958fa7b4cf4c3175/migrations/postgres/v2_8/20261125010002_relational_topics_cutover.sql)
+
+1. Check the database version and source image. This upgrade supports v2.8.0 and later, including interrupted migrations within that range. For a database below the floor, use the released v2.8.0 upgrade procedure first.
+2. Close application ingress. Pause the old worker, drain requests and leases, and verify that provider usage has been reconciled. Stop every application service and confirm that writers have disconnected.
+3. Verify a PostgreSQL backup by restoring it in isolation. Record the source version, scoped counts, canonical fingerprints, legal holds, and historical receipts.
+4. Start one compatible server with ingress held. Follow the protected stdout migration events for the version, phase, batch, row count, fingerprint, and outcome. The database fences writes until the migration reconciles the copy. Startup validates the completed migration before opening listeners.
+5. Check Topic history, direct Recall, and retained settings before reopening traffic. After interruption, resume with the same version and check the new receipts. Use the verified backup for recovery before reopening writes and forward repair afterward.
+
+After stopping the services in step 2, use a separate PostgreSQL operator session to identify any remaining application connections.
+
+```sql
+SELECT pid, usename, application_name, state
+FROM pg_stat_activity
+WHERE datname = current_database()
+  AND backend_type = 'client backend'
+  AND pid <> pg_backend_pid();
+```
 
 ## Evidence Conflicts
 

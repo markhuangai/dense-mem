@@ -2,13 +2,13 @@
 workflow: "manage-topics"
 order: 2
 anchor: "preview-the-resulting-catalog-changes"
-title: "Preview the resulting catalog changes"
-chapter: "Preview"
-figure: "Review and publish topic changes"
-caption: "Preview checks the proposed relationships and exposes the expected result."
+title: "Save the changes"
+chapter: "Save"
+figure: "Save Topic changes"
+caption: "Save the change and its audit reason."
 guide: "/Topics-And-Organization/#manager-workflow"
 question: "Inspect this step"
-details: ["Preview is read-only. If a relevant source or dependency changes after preview, reload the current context and review again."]
+details: ["The save checks each expected record version. If a record changed, refresh it and review the update."]
 ---
 
-Review the changes and apply the same dependency and permission checks expected at publication. Inspect the affected sources and definitions before publishing.
+Enter a reason and select Save. The edits, history, and audit commit together.
