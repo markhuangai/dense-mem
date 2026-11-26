@@ -48,12 +48,7 @@ func retryRelationalTopicPrepare(ctx context.Context, provider *goose.Provider, 
 				return err
 			}
 			const reason = "feature_storage_relational_topics_prepare_lock_timeout: table lock unavailable (SQLSTATE 55P03)"
-			if progress != nil {
-				progress.FeatureStorageDatabaseFailure(lockErr)
-				progress.SetFeatureTransactionOutcome("unconfirmed")
-				progress.FeatureStorageFailure("failed", reason)
-			}
-			return &MigrationFailure{Cause: errors.Join(err, lockErr), Reason: reason}
+			return reportRelationalTopicPrepareFailure(progress, errors.Join(err, lockErr), reason)
 		}
 
 		_, err := provider.UpTo(ctx, RelationalTopicPrepareVersion)
@@ -66,10 +61,22 @@ func retryRelationalTopicPrepare(ctx context.Context, provider *goose.Provider, 
 			return nil
 		case isRelationalTopicPrepareLock(err):
 			lockErr = err
-		case ctx.Err() == nil || !errors.Is(err, ctx.Err()):
+		case errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded:
+			const reason = "feature_storage_relational_topics_prepare_deadline_exceeded: preparation outcome unconfirmed"
+			return reportRelationalTopicPrepareFailure(progress, errors.Join(ctx.Err(), err), reason)
+		default:
 			return err
 		}
 	}
+}
+
+func reportRelationalTopicPrepareFailure(progress *MigrationProgress, err error, reason string) error {
+	if progress != nil {
+		progress.FeatureStorageDatabaseFailure(err)
+		progress.SetFeatureTransactionOutcome("unconfirmed")
+		progress.FeatureStorageFailure("failed", reason)
+	}
+	return &MigrationFailure{Cause: err, Reason: reason}
 }
 
 func relationalTopicDataMigration() *goose.Migration {
