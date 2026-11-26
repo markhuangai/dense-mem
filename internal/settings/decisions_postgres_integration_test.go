@@ -217,8 +217,11 @@ func TestDecisionBudgetPostgresProviderSwitchAndControl(t *testing.T) {
 	require.Equal(t, http.StatusUnprocessableEntity, rejected.Code)
 	cleared := controlRequest(e, http.MethodPatch, "/control/api/config/decisions", "decision-settings-control", `{"items":[{"key":"DECISION_MAX_INPUT_TOKENS","value":""}]}`)
 	require.Equal(t, http.StatusOK, cleared.Code, cleared.Body.String())
+	envelope.Data = domain.DecisionConfigSettings{}
 	require.NoError(t, json.Unmarshal(cleared.Body.Bytes(), &envelope))
+	require.Len(t, envelope.Data.Items, 8)
 	require.Empty(t, envelope.Data.Effective.ConfigurationError)
+	require.Empty(t, envelope.Data.Items[6].ValidationError)
 	require.Equal(t, "default", envelope.Data.Items[6].Source)
 	require.Equal(t, 32000, envelope.Data.Effective.Provider.MaxInputTokens)
 }
