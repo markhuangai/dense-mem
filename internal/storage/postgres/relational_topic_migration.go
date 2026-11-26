@@ -6,17 +6,69 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pressly/goose/v3"
 )
 
 const (
+	RelationalTopicPrepareVersion int64 = 20261125010000
 	RelationalTopicDataVersion    int64 = 20261125010001
 	RelationalTopicLayout               = "relational-topics-v1"
 	RelationalTopicCutoverVersion int64 = 20261125010002
 	relationalTopicDataFile             = "20261125010001_relational_topics_data.sql"
 )
+
+func isRelationalTopicPrepareLock(err error) bool {
+	var failure *goose.PartialError
+	return IsLockNotAvailable(err) && errors.As(err, &failure) &&
+		failure.Failed != nil && failure.Failed.Source != nil && failure.Failed.Source.Version == RelationalTopicPrepareVersion
+}
+
+func retryRelationalTopicPrepare(ctx context.Context, provider *goose.Provider, lockErr error) error {
+	retryCtx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	progress := MigrationProgressFromContext(ctx)
+	if progress != nil {
+		progress.SetMigrationVersion(RelationalTopicPrepareVersion)
+	}
+
+	// PostgreSQL maintenance can hold a conflicting lock even after application writers stop.
+	for attempts := int64(1); retryCtx.Err() == nil; attempts++ {
+		if progress != nil {
+			progress.Report("prepare_lock", "migration", "waiting", "attempts", "attempts", &attempts, nil)
+		}
+		select {
+		case <-retryCtx.Done():
+			continue
+		case <-ticker.C:
+		}
+
+		_, err := provider.UpTo(retryCtx, RelationalTopicPrepareVersion)
+		switch {
+		case err == nil:
+			if progress != nil {
+				attempts++
+				progress.Report("prepare_lock", "migration", "completed", "attempts", "attempts", &attempts, nil)
+			}
+			return nil
+		case isRelationalTopicPrepareLock(err):
+			lockErr = err
+		case retryCtx.Err() == nil || !errors.Is(err, retryCtx.Err()):
+			return err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return &MigrationFailure{
+		Cause:  lockErr,
+		Reason: "feature_storage_relational_topics_prepare_lock_timeout: table lock unavailable (SQLSTATE 55P03)",
+	}
+}
 
 func relationalTopicDataMigration() *goose.Migration {
 	return goose.NewGoMigration(RelationalTopicDataVersion, &goose.GoFunc{

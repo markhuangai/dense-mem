@@ -21,7 +21,7 @@ func progressAttrs(s postgres.MigrationSnapshot) []any {
 		switch s.MigrationVersion {
 		case postgres.TopicStorageDataVersion:
 			layout = postgres.TopicStorageLayout
-		case postgres.RelationalTopicDataVersion:
+		case postgres.RelationalTopicPrepareVersion, postgres.RelationalTopicDataVersion:
 			layout = postgres.RelationalTopicLayout
 		}
 		return []any{"migration_execution_id", s.ExecutionID, "migration_version", s.MigrationVersion, "executor_version", layout,

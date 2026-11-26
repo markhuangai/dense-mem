@@ -105,10 +105,42 @@ func testCurrentTopicWriterDrain(t *testing.T) {
 	require.NoError(t, admin.Raw(`SELECT to_regclass('public.topics') IS NOT NULL`).Row().Scan(&applied))
 	require.False(t, applied, "startup must not install the fence while a current-layout writer is live")
 	setLease(false)
-	results := make(chan error, 2)
-	for range 2 {
-		go func() { results <- RunUp(ctx, db, time.Minute, newRecordingLogger()) }()
+
+	blocker := admin.WithContext(ctx).Begin()
+	require.NoError(t, blocker.Error)
+	t.Cleanup(func() { _ = blocker.Rollback().Error })
+	require.NoError(t, blocker.Exec(`LOCK TABLE operation_logs IN SHARE UPDATE EXCLUSIVE MODE`).Error)
+	waitForPrepareRetry := func(logger *recordingLogger) {
+		t.Helper()
+		require.Eventually(t, func() bool {
+			for _, entry := range logger.entriesSnapshot() {
+				if entry.message == "relational_topic_migration_progress" && entry.attrs["phase"] == "prepare_lock" && entry.attrs["state"] == "waiting" {
+					attempts, _ := entry.attrs["completed"].(*int64)
+					if attempts != nil && *attempts >= 2 {
+						return true
+					}
+				}
+			}
+			return false
+		}, 8*time.Second, 20*time.Millisecond)
 	}
+	lockCtx, cancelLockWait := context.WithCancel(ctx)
+	defer cancelLockWait()
+	lockLogs := newRecordingLogger()
+	go func() { waiting <- RunUp(lockCtx, db, time.Minute, lockLogs) }()
+	waitForPrepareRetry(lockLogs)
+	cancelLockWait()
+	require.ErrorIs(t, <-waiting, context.Canceled)
+	require.NoError(t, admin.Raw(`SELECT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname='offline_upgrade_fence')`).Row().Scan(&applied))
+	require.False(t, applied, "failed preparation attempts must roll back the write fence")
+
+	results := make(chan error, 2)
+	prepareLogs := newRecordingLogger()
+	for range 2 {
+		go func() { results <- RunUp(ctx, db, time.Minute, prepareLogs) }()
+	}
+	waitForPrepareRetry(prepareLogs)
+	require.NoError(t, blocker.Rollback().Error)
 	for range 2 {
 		require.NoError(t, <-results)
 	}
