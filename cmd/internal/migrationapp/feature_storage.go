@@ -21,7 +21,7 @@ func reportFeatureStorageProgress(ctx context.Context, logger infoLogger, s post
 	switch s.MigrationVersion {
 	case postgres.TopicStorageDataVersion:
 		event = "topic_storage_migration"
-	case postgres.RelationalTopicDataVersion:
+	case postgres.RelationalTopicPrepareVersion, postgres.RelationalTopicDataVersion:
 		event = "relational_topic_migration"
 	}
 	switch s.State {

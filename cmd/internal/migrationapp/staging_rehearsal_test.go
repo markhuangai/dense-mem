@@ -96,7 +96,7 @@ func rehearseStagingMigrations(t *testing.T, migrationCtx context.Context, db *g
 		require.NoError(t, err)
 		logger := observability.NewWithProtector(slog.LevelDebug, observability.NewCredentialProtector(dsn, connection.Password))
 		if err := migrationapp.RunUp(migrationCtx, db, 30*time.Minute, logger.Slog()); err != nil {
-			t.Fatal("staging migration rehearsal failed while applying migrations; database details suppressed")
+			t.Fatalf("staging migration rehearsal failed while applying migrations: %s", storagepostgres.MigrationFailureReason(err))
 		}
 		require.Equal(t, before, stagingEvidenceFingerprints(t, migrationCtx, db), "Evidence identity/content/provenance changed through startup migration")
 	} else if err := serverapp.RunPrivateMemoryMigration(migrationCtx, []string{
