@@ -116,7 +116,7 @@ These startup settings are independent; enabled decision providers never inherit
 
 TypeSafe configuration is capped at 64000 request / 32000 question tokens by default, or 262000 for both with explicit long-context opt-in. These are configured request ceilings, not measurements of provider capability or latency.
 
-**Settings → Decisions** stores six independent preferences.
+**Settings → Decisions** stores six independent preferences and optional input budget overrides.
 
 | Capability | Key |
 | --- | --- |
@@ -125,6 +125,12 @@ TypeSafe configuration is capped at 64000 request / 32000 question tokens by def
 | Recall | `DECISION_RECALL_RERANKING_ENABLED` |
 
 Missing preferences default true after successful settings load. Effective enablement requires a configured Decision provider. Explicit false persists. On refresh failure the last valid snapshot is marked stale. Required work fails when no valid snapshot is available.
+
+Set `DECISION_MAX_INPUT_TOKENS` for a request and `DECISION_MAX_QUESTION_INPUT_TOKENS` for its shared state plus one question. Each override must be a positive integer, and the question limit cannot exceed the request limit. Clearing an override restores its startup `AI_DECISION_*` value. New operations use the saved settings within five seconds.
+
+The portal displays the effective limits and any saved value that exceeds the active provider's ceiling. Correct or clear an invalid override before starting Decision work. OpenAI's model input capacity does not establish its Decisions endpoint limit. Requests are bounded to 64 MiB, and operator diagnostics explicitly report when the 16 MiB capture limit prevents retaining a payload.
+
+These runtime settings describe [application revision `5525662de19a`](https://github.com/markhuangai/dense-mem/blob/5525662de19a0bee41caefb93b141377cb2870cd/adr/0022-authoritative-decision-api-and-runtime-token-budgets.md). Check the application revision in your deployment before using them.
 
 ## Recall Search Modes
 

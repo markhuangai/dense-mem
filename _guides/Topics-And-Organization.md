@@ -21,9 +21,9 @@ flowchart TB
   Maintenance --> Placement["Choose a broader Topic or leave it standalone"]
 ```
 
-Remember can assign several direct Topics to each Evidence item. It sends a scoped shortlist of up to 20 existing Topics. When the optional Decision API is enabled for Topic assignment, it checks each candidate and checks for uncovered meaning. Structured generation handles uncertainty, uncovered meaning, and absent candidates. It can select existing Topics and propose new ones in the same response. A valid unclear result remains searchable as uncategorized. A required provider failure returns a typed error before publication.
+Remember can assign several direct Topics to each Evidence item. It sends a scoped shortlist of up to 20 existing Topics. When the optional Decision API is enabled for Topic assignment, candidates with a match probability of at least 0.80 are selected. An uncovered probability of at least 0.80 invokes structured generation for missing subjects. With no matches and an uncovered probability below 0.80, the Evidence remains searchable as uncategorized. Generation also handles absent candidates. A required provider or input-budget failure returns a typed error before publication.
 
-The scheduler also revisits older eligible Evidence when inputs change or an assessment is due. Community placement chooses an active broader Topic or records a standalone result. Evidence equivalence is evaluated independently and preserves each passage's exact text and provenance.
+The scheduler also revisits older eligible Evidence when inputs change or an assessment is due. When enabled, a Community Decision places a Topic under its selected parent at a probability of at least 0.80 and otherwise records a standalone result. Evidence equivalence is evaluated independently and preserves each passage's exact text and provenance. The Decision thresholds describe [application revision `5525662de19a`](https://github.com/markhuangai/dense-mem/blob/5525662de19a0bee41caefb93b141377cb2870cd/adr/0022-authoritative-decision-api-and-runtime-token-budgets.md) and depend on the deployed application revision.
 
 ## Discover And Follow A Topic
 
