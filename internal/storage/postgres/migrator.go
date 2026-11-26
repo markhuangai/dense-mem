@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
@@ -335,14 +336,7 @@ func migrationDown(ctx context.Context, db *sql.DB) error {
 
 // RunUp runs all pending up migrations.
 func (m *Migrator) RunUp(ctx context.Context) error {
-	releasePool := reserveMigrationPool(m.db)
-	defer releasePool()
-	provider, err := newRuntimeMigrationProvider(m.dir, m.db, true)
-	if err != nil {
-		return err
-	}
-
-	if _, err := provider.Up(ctx); err != nil {
+	if err := m.RunUpTo(ctx, math.MaxInt64); err != nil {
 		return fmt.Errorf("failed to run up migrations: %w", err)
 	}
 
@@ -381,6 +375,16 @@ func (m *Migrator) RunUpTo(ctx context.Context, version int64) error {
 	provider, err := newRuntimeMigrationProvider(m.dir, m.db, true)
 	if err != nil {
 		return err
+	}
+	_, err = provider.UpTo(ctx, version)
+	if !isRelationalTopicPrepareLock(err) {
+		return err
+	}
+	if err := retryRelationalTopicPrepare(ctx, provider, err); err != nil {
+		return err
+	}
+	if version == RelationalTopicPrepareVersion {
+		return nil
 	}
 	_, err = provider.UpTo(ctx, version)
 	return err

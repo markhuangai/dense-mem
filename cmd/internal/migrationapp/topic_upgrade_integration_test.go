@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	auditapp "github.com/markhuangai/dense-mem/internal/audit"
 	auditpostgres "github.com/markhuangai/dense-mem/internal/audit/postgres"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
@@ -14,6 +16,7 @@ import (
 	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	topicspostgres "github.com/markhuangai/dense-mem/internal/topics/postgres"
 	"github.com/stretchr/testify/require"
+	gormpostgres "gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -62,16 +65,12 @@ func TestRunUpAutomaticallyRecoversStoppedOntology(t *testing.T) {
 func TestRunUpOntologyWaitAndConcurrentStarters(t *testing.T) {
 	t.Run("below floor preserves the source", testBelowFloorTopicStartup)
 	t.Run("current layout drains before relational cutover", testCurrentTopicWriterDrain)
+	t.Run("preparation deadline during version read preserves the committed fence", testRelationalTopicPrepareDeadlineAfterCommit)
 }
 
 func testCurrentTopicWriterDrain(t *testing.T) {
 	ctx := t.Context()
-	db, admin := openOntologyUpgradeRuntimeDB(t)
-	migrator, err := storage.NewMigrator(db)
-	require.NoError(t, err)
-	require.NoError(t, migrator.PrepareEvidenceOnlyMigration(ctx))
-	seedProgressMigration(t, db, 1, 0)
-	require.NoError(t, migrator.RunUpTo(ctx, 20261124010004))
+	db, admin := openRelationalTopicPrepareFixture(t)
 	setLease := func(live bool) {
 		t.Helper()
 		require.NoError(t, storage.NewRLS().WithSystemTx(ctx, admin, func(tx *gorm.DB) error {
@@ -105,16 +104,172 @@ func testCurrentTopicWriterDrain(t *testing.T) {
 	require.NoError(t, admin.Raw(`SELECT to_regclass('public.topics') IS NOT NULL`).Row().Scan(&applied))
 	require.False(t, applied, "startup must not install the fence while a current-layout writer is live")
 	setLease(false)
-	results := make(chan error, 2)
-	for range 2 {
-		go func() { results <- RunUp(ctx, db, time.Minute, newRecordingLogger()) }()
+
+	blocker := lockTopicPreparation(t, admin)
+	lockCtx, cancelLockWait := context.WithCancel(ctx)
+	defer cancelLockWait()
+	lockLogs := newRecordingLogger()
+	go func() { waiting <- RunUp(lockCtx, db, 0, lockLogs) }()
+	waitForPrepareRetry(t, lockLogs)
+	cancelLockWait()
+	require.ErrorIs(t, <-waiting, context.Canceled)
+	require.NoError(t, admin.Raw(`SELECT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname='offline_upgrade_fence')`).Row().Scan(&applied))
+	require.False(t, applied, "failed preparation attempts must roll back the write fence")
+
+	timeoutLogs := newProgressLog(t)
+	const timeoutReason = "feature_storage_relational_topics_prepare_lock_timeout: table lock unavailable (SQLSTATE 55P03)"
+	err := RunUp(ctx, db, 6*time.Second, timeoutLogs.logger)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Equal(t, timeoutReason, storage.MigrationFailureReason(err))
+	var terminal map[string]any
+	for _, event := range timeoutLogs.records(t) {
+		if event["msg"] == "relational_topic_migration_failed" {
+			require.Nil(t, terminal, "preparation must emit one terminal failure")
+			terminal = event
+		}
 	}
+	require.NotNil(t, terminal, "a held lock must produce a protected terminal record")
+	require.Equal(t, "ERROR", terminal["level"])
+	require.Equal(t, "prepare_lock", terminal["phase"])
+	require.Equal(t, "failed", terminal["state"])
+	require.Equal(t, timeoutReason, terminal["failure_reason"])
+	require.Equal(t, "55P03", terminal["sqlstate"])
+	require.Equal(t, float64(storage.RelationalTopicPrepareVersion), terminal["migration_version"])
+	require.Equal(t, "attempts", terminal["metric"])
+	require.Greater(t, terminal["completed"], float64(1))
+	require.NotEmpty(t, terminal["migration_execution_id"])
+	require.Equal(t, "resume_matching_application_after_resolving_reported_cause", terminal["recovery_action"])
+	require.NoError(t, admin.Raw(`SELECT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname='offline_upgrade_fence')
+		OR EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=? AND is_applied)`, storage.RelationalTopicPrepareVersion).Row().Scan(&applied))
+	require.False(t, applied, "expired preparation must leave no write fence or applied version")
+
+	results := make(chan error, 2)
+	for _, timeout := range []time.Duration{0, 3 * time.Minute} {
+		prepareLogs := newRecordingLogger()
+		go func() { results <- RunUp(ctx, db, timeout, prepareLogs) }()
+		waitForPrepareRetry(t, prepareLogs)
+	}
+	select {
+	case err := <-results:
+		t.Fatalf("migration returned while the preparation lock was held: %v", err)
+	case <-time.After(65 * time.Second):
+	}
+	require.NoError(t, blocker.Rollback().Error)
 	for range 2 {
 		require.NoError(t, <-results)
 	}
 	pool, err := db.DB()
 	require.NoError(t, err)
 	require.NoError(t, storage.ValidateStartupMigrationState(ctx, pool, storage.MigrationsDir()))
+}
+
+func openRelationalTopicPrepareFixture(t *testing.T) (*gorm.DB, *gorm.DB) {
+	t.Helper()
+	ctx := t.Context()
+	db, admin := openOntologyUpgradeRuntimeDB(t)
+	migrator, err := storage.NewMigrator(db)
+	require.NoError(t, err)
+	require.NoError(t, migrator.PrepareEvidenceOnlyMigration(ctx))
+	seedProgressMigration(t, db, 1, 0)
+	require.NoError(t, migrator.RunUpTo(ctx, 20261124010004))
+	return db, admin
+}
+
+func lockTopicPreparation(t *testing.T, admin *gorm.DB) *gorm.DB {
+	t.Helper()
+	blocker := admin.WithContext(t.Context()).Begin()
+	require.NoError(t, blocker.Error)
+	t.Cleanup(func() { _ = blocker.Rollback().Error })
+	require.NoError(t, blocker.Exec(`LOCK TABLE operation_logs IN SHARE UPDATE EXCLUSIVE MODE`).Error)
+	return blocker
+}
+
+func waitForPrepareRetry(t *testing.T, logger *recordingLogger) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		for _, entry := range logger.entriesSnapshot() {
+			if entry.message == "relational_topic_migration_progress" && entry.attrs["phase"] == "prepare_lock" && entry.attrs["state"] == "waiting" {
+				attempts, _ := entry.attrs["completed"].(*int64)
+				if attempts != nil && *attempts >= 2 {
+					return true
+				}
+			}
+		}
+		return false
+	}, 8*time.Second, 20*time.Millisecond)
+}
+
+type gooseVersionReadBarrier struct {
+	started chan struct{}
+	proceed chan struct{}
+}
+
+func (barrier gooseVersionReadBarrier) TraceQueryStart(ctx context.Context, _ *pgx.Conn, query pgx.TraceQueryStartData) context.Context {
+	if query.SQL == "SELECT max(version_id) FROM goose_db_version" {
+		close(barrier.started)
+		select {
+		case <-barrier.proceed:
+		case <-ctx.Done():
+		}
+	}
+	return ctx
+}
+
+func (gooseVersionReadBarrier) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+func testRelationalTopicPrepareDeadlineAfterCommit(t *testing.T) {
+	ctx := t.Context()
+	db, admin := openRelationalTopicPrepareFixture(t)
+	prepareBlocker := lockTopicPreparation(t, admin)
+	config, err := pgx.ParseConfig(db.Dialector.(*gormpostgres.Dialector).DSN)
+	require.NoError(t, err)
+	barrier := gooseVersionReadBarrier{started: make(chan struct{}), proceed: make(chan struct{})}
+	config.Tracer = barrier
+	pool := stdlib.OpenDB(*config)
+	t.Cleanup(func() { require.NoError(t, pool.Close()) })
+	traced, err := gorm.Open(gormpostgres.New(gormpostgres.Config{Conn: pool}), &gorm.Config{})
+	require.NoError(t, err)
+
+	result := make(chan error, 1)
+	logs := newRecordingLogger()
+	go func() { result <- RunUp(ctx, traced, 10*time.Second, logs) }()
+	waitForPrepareRetry(t, logs)
+	require.NoError(t, prepareBlocker.Rollback().Error)
+	select {
+	case <-barrier.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Goose did not start its post-commit version read")
+	}
+	var committed bool
+	require.NoError(t, admin.Raw(`SELECT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=? AND is_applied)
+		AND EXISTS(SELECT 1 FROM pg_trigger WHERE tgname='offline_upgrade_fence')`, storage.RelationalTopicPrepareVersion).Row().Scan(&committed))
+	require.True(t, committed, "preparation must commit before the blocked version read")
+
+	versionReadBlocker := admin.WithContext(ctx).Begin()
+	require.NoError(t, versionReadBlocker.Error)
+	t.Cleanup(func() { _ = versionReadBlocker.Rollback().Error })
+	require.NoError(t, versionReadBlocker.Exec(`LOCK TABLE goose_db_version IN ACCESS EXCLUSIVE MODE`).Error)
+	close(barrier.proceed)
+	err = <-result
+	require.NoError(t, versionReadBlocker.Rollback().Error)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.False(t, storage.IsLockNotAvailable(err))
+	const reason = "feature_storage_relational_topics_prepare_deadline_exceeded: preparation outcome unconfirmed"
+	require.Equal(t, reason, storage.MigrationFailureReason(err))
+	var failures []logEntry
+	for _, entry := range logs.entriesSnapshot() {
+		if entry.message == "relational_topic_migration_failed" {
+			failures = append(failures, entry)
+		}
+	}
+	require.Len(t, failures, 1)
+	require.Equal(t, reason, failures[0].attrs["failure_reason"])
+	require.Equal(t, "unconfirmed", failures[0].attrs["transaction_outcome"])
+	require.NotEqual(t, "55P03", failures[0].attrs["sqlstate"])
+	require.NoError(t, RunUp(ctx, db, time.Minute, newRecordingLogger()))
+	dbPool, err := db.DB()
+	require.NoError(t, err)
+	require.NoError(t, storage.ValidateStartupMigrationState(ctx, dbPool, storage.MigrationsDir()))
 }
 
 func testBelowFloorTopicStartup(t *testing.T) {

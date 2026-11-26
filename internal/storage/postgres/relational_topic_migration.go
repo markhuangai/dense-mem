@@ -6,17 +6,78 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pressly/goose/v3"
 )
 
 const (
+	RelationalTopicPrepareVersion int64 = 20261125010000
 	RelationalTopicDataVersion    int64 = 20261125010001
 	RelationalTopicLayout               = "relational-topics-v1"
 	RelationalTopicCutoverVersion int64 = 20261125010002
 	relationalTopicDataFile             = "20261125010001_relational_topics_data.sql"
 )
+
+func isRelationalTopicPrepareLock(err error) bool {
+	var failure *goose.PartialError
+	return IsLockNotAvailable(err) && errors.As(err, &failure) &&
+		failure.Failed != nil && failure.Failed.Source != nil && failure.Failed.Source.Version == RelationalTopicPrepareVersion
+}
+
+func retryRelationalTopicPrepare(ctx context.Context, provider *goose.Provider, lockErr error) error {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	progress := MigrationProgressFromContext(ctx)
+	if progress != nil {
+		progress.SetMigrationVersion(RelationalTopicPrepareVersion)
+	}
+
+	// PostgreSQL maintenance can hold a conflicting lock even after application writers stop.
+	for attempts := int64(1); ; attempts++ {
+		if progress != nil {
+			progress.Report("prepare_lock", "migration", "waiting", "attempts", "attempts", &attempts, nil)
+		}
+		select {
+		case <-ctx.Done():
+		case <-ticker.C:
+		}
+		if err := ctx.Err(); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return err
+			}
+			const reason = "feature_storage_relational_topics_prepare_lock_timeout: table lock unavailable (SQLSTATE 55P03)"
+			return reportRelationalTopicPrepareFailure(progress, errors.Join(err, lockErr), reason)
+		}
+
+		_, err := provider.UpTo(ctx, RelationalTopicPrepareVersion)
+		switch {
+		case err == nil:
+			if progress != nil {
+				attempts++
+				progress.Report("prepare_lock", "migration", "completed", "attempts", "attempts", &attempts, nil)
+			}
+			return nil
+		case isRelationalTopicPrepareLock(err):
+			lockErr = err
+		case errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded:
+			const reason = "feature_storage_relational_topics_prepare_deadline_exceeded: preparation outcome unconfirmed"
+			return reportRelationalTopicPrepareFailure(progress, errors.Join(ctx.Err(), err), reason)
+		default:
+			return err
+		}
+	}
+}
+
+func reportRelationalTopicPrepareFailure(progress *MigrationProgress, err error, reason string) error {
+	if progress != nil {
+		progress.FeatureStorageDatabaseFailure(err)
+		progress.SetFeatureTransactionOutcome("unconfirmed")
+		progress.FeatureStorageFailure("failed", reason)
+	}
+	return &MigrationFailure{Cause: err, Reason: reason}
+}
 
 func relationalTopicDataMigration() *goose.Migration {
 	return goose.NewGoMigration(RelationalTopicDataVersion, &goose.GoFunc{
