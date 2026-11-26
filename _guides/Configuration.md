@@ -130,7 +130,7 @@ Set `DECISION_MAX_INPUT_TOKENS` for a request and `DECISION_MAX_QUESTION_INPUT_T
 
 The portal displays the effective limits and any saved value that exceeds the active provider's ceiling. Correct or clear an invalid override before starting Decision work. OpenAI's model input capacity does not establish its Decisions endpoint limit. Requests are bounded to 64 MiB, and operator diagnostics explicitly report when the 16 MiB capture limit prevents retaining a payload.
 
-These runtime settings describe [application revision `9b12233d4e7d`](https://github.com/markhuangai/dense-mem/blob/9b12233d4e7d3763c03f3a55a4477e5b46f0fdfa/adr/0022-authoritative-decision-api-and-runtime-token-budgets.md). Check the application revision in your deployment before using them.
+These runtime settings describe [application revision `5525662de19a`](https://github.com/markhuangai/dense-mem/blob/5525662de19a0bee41caefb93b141377cb2870cd/adr/0022-authoritative-decision-api-and-runtime-token-budgets.md). Check the application revision in your deployment before using them.
 
 ## Recall Search Modes
 
