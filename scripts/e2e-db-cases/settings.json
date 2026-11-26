@@ -3,6 +3,13 @@
   "capability": "settings",
   "cases": [
     {
+      "id": "settings/TestDecisionBudgetPostgresProviderSwitchAndControl",
+      "package": "./internal/settings",
+      "run": "^TestDecisionBudgetPostgresProviderSwitchAndControl$",
+      "phase": "precheck",
+      "source": "internal/settings/decisions_postgres_integration_test.go"
+    },
+    {
       "id": "settings/TestDecisionSettingsRefreshWaitHonorsCancellation",
       "package": "./internal/settings",
       "run": "^TestDecisionSettingsRefreshWaitHonorsCancellation$",

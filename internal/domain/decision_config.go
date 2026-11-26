@@ -3,12 +3,14 @@ package domain
 import "time"
 
 const (
-	AppConfigDecisionDeduplication      = "DECISION_DEDUPLICATION_ENABLED"
-	AppConfigDecisionSecurity           = "DECISION_SECURITY_REVIEW_ENABLED"
-	AppConfigDecisionConflict           = "DECISION_CONFLICT_REVIEW_ENABLED"
-	AppConfigDecisionReranking          = "DECISION_RECALL_RERANKING_ENABLED"
-	AppConfigDecisionTopicAssignment    = "DECISION_TOPIC_ASSIGNMENT_ENABLED"
-	AppConfigDecisionCommunityPlacement = "DECISION_COMMUNITY_PLACEMENT_ENABLED"
+	AppConfigDecisionDeduplication          = "DECISION_DEDUPLICATION_ENABLED"
+	AppConfigDecisionSecurity               = "DECISION_SECURITY_REVIEW_ENABLED"
+	AppConfigDecisionConflict               = "DECISION_CONFLICT_REVIEW_ENABLED"
+	AppConfigDecisionReranking              = "DECISION_RECALL_RERANKING_ENABLED"
+	AppConfigDecisionTopicAssignment        = "DECISION_TOPIC_ASSIGNMENT_ENABLED"
+	AppConfigDecisionCommunityPlacement     = "DECISION_COMMUNITY_PLACEMENT_ENABLED"
+	AppConfigDecisionMaxInputTokens         = "DECISION_MAX_INPUT_TOKENS"
+	AppConfigDecisionMaxQuestionInputTokens = "DECISION_MAX_QUESTION_INPUT_TOKENS"
 )
 
 type DecisionTasks struct {
@@ -30,21 +32,23 @@ type DecisionProviderStatus struct {
 }
 
 type DecisionRuntimeConfig struct {
-	Revision       string                 `json:"revision"`
-	Provider       DecisionProviderStatus `json:"provider"`
-	Preferences    DecisionTasks          `json:"preferences"`
-	Effective      DecisionTasks          `json:"effective"`
-	Overrides      DecisionTasks          `json:"overrides"`
-	Stale          bool                   `json:"stale"`
-	LastVerifiedAt time.Time              `json:"last_verified_at"`
+	Revision           string                 `json:"revision"`
+	Provider           DecisionProviderStatus `json:"provider"`
+	Preferences        DecisionTasks          `json:"preferences"`
+	Effective          DecisionTasks          `json:"effective"`
+	Overrides          DecisionTasks          `json:"overrides"`
+	Stale              bool                   `json:"stale"`
+	LastVerifiedAt     time.Time              `json:"last_verified_at"`
+	ConfigurationError string                 `json:"configuration_error,omitempty"`
 }
 
 type DecisionConfigItem struct {
-	Key            string    `json:"key"`
-	Value          string    `json:"value"`
-	EffectiveValue string    `json:"effective_value"`
-	Source         string    `json:"source"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	Key             string    `json:"key"`
+	Value           string    `json:"value"`
+	EffectiveValue  string    `json:"effective_value"`
+	Source          string    `json:"source"`
+	UpdatedAt       time.Time `json:"updated_at"`
+	ValidationError string    `json:"validation_error,omitempty"`
 }
 
 type DecisionConfigSettings struct {

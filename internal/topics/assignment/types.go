@@ -4,7 +4,7 @@ package assignment
 import "errors"
 
 const MaxTopics = 20
-const PolicyVersion = "topic-assignment-v1"
+const PolicyVersion = "topic-assignment-v2"
 
 var ErrStale = errors.New("topic assignment input changed")
 var ErrStorage = errors.New("topic assignment storage unavailable")

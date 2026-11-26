@@ -1,14 +1,19 @@
 package topics
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
+	"strconv"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
@@ -75,7 +80,7 @@ func (f communityDecisionFixture) Decide(context.Context, modelprovider.Decision
 	return modelprovider.DecisionResult{Answers: map[string]modelprovider.DecisionAnswer{"parent": f.answer}}, f.err
 }
 
-func TestCommunityPlacementDecisionFallsBackOnlyOnUncertaintyOrBudget(t *testing.T) {
+func TestCommunityPlacementDecisionUsesAuthoritativeThreshold(t *testing.T) {
 	parent := uuid.NewString()
 	input := contract.CommunityInput{
 		Topic:      contract.CommunityCandidate{ID: uuid.NewString(), Version: 1, Name: "Rollback drills"},
@@ -89,24 +94,34 @@ func TestCommunityPlacementDecisionFallsBackOnlyOnUncertaintyOrBudget(t *testing
 	}{
 		{name: "clear parent", choice: parent, parentProbability: .999, method: "decision", status: "placed", expectedParent: parent},
 		{name: "clear standalone", choice: "standalone", parentProbability: .001, method: "decision", status: "standalone"},
-		{name: "uncertain", choice: parent, parentProbability: .7, method: "generation", status: "standalone"},
-		{name: "budget", err: modelprovider.ErrDecisionInputBudgetExceeded, method: "generation", status: "standalone"},
+		{name: "threshold parent", choice: parent, parentProbability: .8, method: "decision", status: "placed", expectedParent: parent},
+		{name: "below threshold", choice: parent, parentProbability: .799, method: "decision", status: "standalone"},
+		{name: "budget", err: modelprovider.ErrDecisionInputBudgetExceeded},
 		{name: "outage", err: unavailable},
 		{name: "invalid parent", choice: "foreign", parentProbability: .999},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			teamID := uuid.NewString()
+			ctx := observability.WithExchangeScope(t.Context(), observability.ExchangeScope{TeamID: teamID})
 			confidence := 1.0
 			provider := communityDecisionFixture{err: tc.err, answer: modelprovider.DecisionAnswer{
 				Type: modelprovider.DecisionChoice, Choice: tc.choice, Confidence: &confidence,
 				Probabilities: map[string]float64{parent: tc.parentProbability, "standalone": 1 - tc.parentProbability},
 			}}
 			generation := &communityTestTransport{bodies: []string{"{\"parent_id\":\"\"}"}}
-			service := CommunityAssessor{Decisions: provider, Settings: provider, Transport: generation}
-			outcome, err := service.Assess(t.Context(), uuid.NewString(), input, "fixture")
+			service := CommunityAssessor{Decisions: provider, Settings: provider, Transport: generation, Logger: logger, contextWindow: 1}
+			outcome, err := service.Assess(ctx, uuid.NewString(), input, "fixture")
 			if tc.method == "" {
 				require.ErrorContains(t, err, "community placement decision")
 				if tc.err != nil {
 					require.ErrorIs(t, err, tc.err)
+				}
+				if errors.Is(tc.err, modelprovider.ErrDecisionInputBudgetExceeded) {
+					require.Contains(t, logs.String(), `"reason_code":"decision_input_budget_exceeded"`)
+					require.Contains(t, logs.String(), `"generation_triggered":false`)
+					require.Contains(t, logs.String(), `"team_id":"`+teamID+`"`)
 				}
 				require.Zero(t, generation.calls)
 				return
@@ -116,6 +131,12 @@ func TestCommunityPlacementDecisionFallsBackOnlyOnUncertaintyOrBudget(t *testing
 			require.Equal(t, tc.status, outcome.Status)
 			require.Equal(t, tc.expectedParent, outcome.ParentID)
 			require.Equal(t, tc.method == "generation", generation.calls == 1)
+			require.Contains(t, logs.String(), `"team_id":"`+teamID+`"`)
+			require.Contains(t, logs.String(), `"policy_mode":"authoritative_closed_set"`)
+			require.Contains(t, logs.String(), `"threshold":0.8`)
+			require.Contains(t, logs.String(), `"choice":"`+tc.choice+`"`)
+			require.Contains(t, logs.String(), fmt.Sprintf(`"winner_probability":%s`, strconv.FormatFloat(map[string]float64{parent: tc.parentProbability, "standalone": 1 - tc.parentProbability}[tc.choice], 'f', -1, 64)))
+			require.Contains(t, logs.String(), `"generation_triggered":false`)
 		})
 	}
 }

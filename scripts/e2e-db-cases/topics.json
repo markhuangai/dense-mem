@@ -213,6 +213,13 @@
       "source": "internal/topics/postgres/organization_integration_test.go"
     },
     {
+      "id": "repository/TestOntologyMaintenanceConcurrentDecisionBatchAccounting",
+      "package": "./internal/topics/postgres",
+      "run": "^TestOntologyMaintenanceConcurrentDecisionBatchAccounting$",
+      "phase": "precheck",
+      "source": "internal/topics/postgres/maintenance_integration_test.go"
+    },
+    {
       "id": "repository/TestOntologyMaintenanceGlobalAccounting",
       "package": "./internal/topics/postgres",
       "run": "^TestOntologyMaintenanceGlobalAccounting$",

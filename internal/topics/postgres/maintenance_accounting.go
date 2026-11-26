@@ -51,7 +51,8 @@ func (s *Store) AdmitMaintenanceAttempt(ctx context.Context, claim topic.Mainten
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		if int64(input)+int64(output) > window.Policy.ContextWindowTokens {
+		if claim.DecisionMaxInputTokens > 0 && int64(input) > claim.DecisionMaxInputTokens ||
+			claim.DecisionMaxInputTokens == 0 && int64(input)+int64(output) > window.Policy.ContextWindowTokens {
 			return topic.ErrConfiguration
 		}
 		renewedUntil := now.Add(claim.AttemptLease)

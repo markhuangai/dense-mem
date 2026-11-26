@@ -1,9 +1,12 @@
 package topics
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"testing"
 
 	"github.com/google/uuid"
@@ -70,9 +73,10 @@ func TestMaintenanceAssignmentUsesWindowGenerationSettings(t *testing.T) {
 				decisionCalls++
 				require.NoError(t, modelprovider.ValidateDecisionRequest(request))
 				uncertain := 0.5
+				uncovered := 0.85
 				return modelprovider.DecisionResult{Answers: map[string]modelprovider.DecisionAnswer{
 					"match_0":   {Type: modelprovider.DecisionPredicate, Probability: &uncertain},
-					"uncovered": {Type: modelprovider.DecisionPredicate, Probability: &uncertain},
+					"uncovered": {Type: modelprovider.DecisionPredicate, Probability: &uncovered},
 				}}, nil
 			})
 			settings := &domain.DecisionRuntimeConfig{Effective: domain.DecisionTasks{TopicAssignment: useDecisions}}
@@ -145,6 +149,57 @@ func TestAssignmentUncoveredSubjectAndPriorInputs(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, genCalls)
 	require.Equal(t, 2, decisionCalls)
+}
+
+func TestAssignmentAuthoritativeDecisionRoutingAndLogs(t *testing.T) {
+	topic := assignment.Topic{ID: uuid.NewString(), Version: 1, Label: "Database"}
+	for _, tc := range []struct {
+		name                string
+		match, uncovered    float64
+		decisionErr         error
+		matches, generation int
+	}{
+		{name: "match", match: .85, uncovered: .20, matches: 1},
+		{name: "uncategorized", match: .20, uncovered: .20},
+		{name: "uncovered", match: .85, uncovered: .85, generation: 1},
+		{name: "budget", decisionErr: modelprovider.ErrDecisionInputBudgetExceeded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			calls := 0
+			generate := testTransport(func(_ context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+				calls++
+				var input assignmentRequest
+				require.NoError(t, json.Unmarshal([]byte(request.Messages[1].Content), &input))
+				body, err := json.Marshal(modelAnswer{RequestID: input.RequestID, Status: "uncategorized", Matches: []modelMatch{}, Proposals: []assignment.Proposal{}})
+				return modelprovider.StructuredResult{Content: string(body)}, err
+			})
+			decide := testDecisions(func(context.Context, modelprovider.DecisionRequest) (modelprovider.DecisionResult, error) {
+				return modelprovider.DecisionResult{Answers: map[string]modelprovider.DecisionAnswer{
+					"match_0":   {Type: modelprovider.DecisionPredicate, Probability: &tc.match},
+					"uncovered": {Type: modelprovider.DecisionPredicate, Probability: &tc.uncovered},
+				}}, tc.decisionErr
+			})
+			service := NewAssignmentService(testCatalog{topic}, testConfig(true), generate, decide, assessor.DefaultSemanticAssessmentLimits(), "fixture", logger)
+			scope := assignment.Scope{TeamID: uuid.NewString(), SpaceID: uuid.NewString(), Generation: 1, OperationID: uuid.NewString()}
+			settings := &domain.DecisionRuntimeConfig{Revision: "settings-1", Effective: domain.DecisionTasks{TopicAssignment: true}}
+			outcomes, err := service.Prepare(t.Context(), scope, []assignment.Slice{{Text: "Database evidence."}}, settings)
+			if tc.decisionErr != nil {
+				require.ErrorIs(t, err, tc.decisionErr)
+				require.Contains(t, logs.String(), `"reason_code":"decision_input_budget_exceeded"`)
+				require.Contains(t, logs.String(), `"generation_triggered":false`)
+			} else {
+				require.NoError(t, err)
+				require.Len(t, outcomes[0].Matches, tc.matches)
+				require.Contains(t, logs.String(), `"policy_mode":"authoritative_closed_set"`)
+				require.Contains(t, logs.String(), `"settings_version":"settings-1"`)
+				require.Contains(t, logs.String(), fmt.Sprintf(`"generation_triggered":%t`, tc.generation > 0))
+			}
+			require.Contains(t, logs.String(), `"team_id":"`+scope.TeamID+`"`)
+			require.Equal(t, tc.generation, calls)
+		})
+	}
 }
 
 func TestAssignmentAllowsAbstentionAndRejectsUngroundedOrMalformedResponses(t *testing.T) {

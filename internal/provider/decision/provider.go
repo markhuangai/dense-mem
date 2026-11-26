@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,15 +18,20 @@ import (
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	"golang.org/x/sync/errgroup"
 )
 
-const completeAttempts = 2
+const (
+	completeAttempts = 2
+	bpeBoundarySlack = 16
+)
 
 type Provider struct {
 	config    config.DecisionProviderConfig
 	client    *http.Client
 	gate      modelprovider.ConcurrencyGate
 	tokenizer string
+	counter   *modelprovider.TokenCounter
 	logger    observability.LogProvider
 	protector observability.DiagnosticProtector
 	metrics   observability.DiscoverabilityMetrics
@@ -38,7 +44,8 @@ func New(cfg config.DecisionProviderConfig, tokenizer string, client *http.Clien
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	if _, err := modelprovider.CountTokens("", tokenizer); err != nil {
+	counter, err := modelprovider.NewTokenCounter(tokenizer)
+	if err != nil {
 		return nil, fmt.Errorf("decision tokenizer: %w", err)
 	}
 	if logger == nil || protector == nil {
@@ -54,7 +61,7 @@ func New(cfg config.DecisionProviderConfig, tokenizer string, client *http.Clien
 	if cfg.Provider == "typesafe" {
 		path = "/systemone"
 	}
-	return &Provider{config: cfg, client: &copyClient, gate: modelprovider.NewConcurrencyGate(cfg.MaxConcurrency), tokenizer: tokenizer, logger: logger, protector: protector, metrics: metrics, endpoint: strings.TrimRight(cfg.APIURL, "/") + path}, nil
+	return &Provider{config: cfg, client: &copyClient, gate: modelprovider.NewConcurrencyGate(cfg.MaxConcurrency), tokenizer: tokenizer, counter: counter, logger: logger, protector: protector, metrics: metrics, endpoint: strings.TrimRight(cfg.APIURL, "/") + path}, nil
 }
 
 type batch struct {
@@ -64,9 +71,16 @@ type batch struct {
 }
 
 func (p *Provider) Decide(ctx context.Context, request modelprovider.DecisionRequest) (result modelprovider.DecisionResult, err error) {
+	effective := *p
+	if request.MaxInputTokens != 0 || request.MaxQuestionInputTokens != 0 || request.ConfigurationError != "" {
+		effective.config.MaxInputTokens = request.MaxInputTokens
+		effective.config.MaxQuestionInputTokens = request.MaxQuestionInputTokens
+	}
+	p = &effective
 	started := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(p.config.TimeoutSeconds)*time.Second)
 	defer cancel()
+	ctx = requestctx.WithSynchronizedProgress(ctx)
 	attrs := p.attributes(request)
 	p.log(ctx, slog.LevelInfo, "decision.task.started", append(attrs, attr("action", "evaluate"))...)
 	defer func() {
@@ -86,6 +100,17 @@ func (p *Provider) Decide(ctx context.Context, request modelprovider.DecisionReq
 	if err = modelprovider.ValidateDecisionRequest(request); err != nil {
 		return result, p.failure("invalid decision request", "request_invalid", 0, err)
 	}
+	if err = config.ValidateDecisionTokenBudgets(p.config.Provider, p.config.LongContextEnabled, p.config.MaxInputTokens, p.config.MaxQuestionInputTokens); err != nil || request.ConfigurationError != "" {
+		if err == nil {
+			err = errors.New(request.ConfigurationError)
+		}
+		reason := "exceeds_provider_ceiling"
+		if p.config.MaxQuestionInputTokens > p.config.MaxInputTokens {
+			reason = "question_exceeds_request"
+		}
+		p.log(ctx, slog.LevelError, "decision.configuration.invalid", append(attrs, attr("reason_code", reason), attr("error", err.Error()))...)
+		return result, p.failure("invalid effective decision token budgets", "request_invalid", 0, err)
+	}
 	for _, group := range request.Groups {
 		for _, question := range group.Questions {
 			if err = ctx.Err(); err != nil {
@@ -102,20 +127,40 @@ func (p *Provider) Decide(ctx context.Context, request modelprovider.DecisionReq
 		p.log(ctx, slog.LevelWarn, "decision.context.rejected", append(attrs, attr("action", "reject_before_dispatch"), attr("reason_code", "configured_context_limit"), attr("error", err.Error()))...)
 		return result, p.failure("decision request exceeds configured limits or cannot be encoded", "request_invalid", 0, err)
 	}
+	attrs = append(attrs, attr("batch_count", len(batches)))
 	for attempt := 1; attempt <= completeAttempts; attempt++ {
+		type batchResult struct {
+			result  modelprovider.DecisionResult
+			receipt modelprovider.DecisionReceipt
+			err     error
+		}
+		batchResults := make([]batchResult, len(batches))
+		var group errgroup.Group
+		group.SetLimit(p.config.MaxConcurrency)
+		for index, item := range batches {
+			if index >= p.config.MaxConcurrency {
+				requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "provider_wait", Batch: index + 1, Batches: len(batches)})
+			}
+			group.Go(func() error {
+				partial, receipt, callErr := p.call(ctx, item, attrs, index+1, attempt)
+				batchResults[index] = batchResult{partial, receipt, callErr}
+				return nil
+			})
+		}
+		_ = group.Wait()
 		answers := make(map[string]modelprovider.DecisionAnswer)
 		var attemptErr error
-		for index, batch := range batches {
-			var partial modelprovider.DecisionResult
-			var receipt modelprovider.DecisionReceipt
-			partial, receipt, attemptErr = p.call(ctx, batch, attrs, index+1, attempt)
-			result.Receipts = append(result.Receipts, receipt)
-			if attemptErr != nil {
-				break
+		for _, item := range batchResults {
+			result.Receipts = append(result.Receipts, item.receipt)
+			if item.err != nil && (attemptErr == nil || onlyMalformed(attemptErr) && !onlyMalformed(item.err)) {
+				attemptErr = item.err
 			}
-			for name, answer := range partial.Answers {
+			for name, answer := range item.result.Answers {
 				answers[name] = answer
 			}
+		}
+		if err = ctx.Err(); err != nil {
+			return result, err
 		}
 		if attemptErr == nil {
 			if err = ctx.Err(); err != nil {
@@ -124,7 +169,7 @@ func (p *Provider) Decide(ctx context.Context, request modelprovider.DecisionReq
 			result.Answers = answers
 			return result, nil
 		}
-		if !errors.Is(attemptErr, modelprovider.ErrVerifierMalformedResponse) || attempt == completeAttempts || ctx.Err() != nil {
+		if !onlyMalformed(attemptErr) || attempt == completeAttempts || ctx.Err() != nil {
 			return result, attemptErr
 		}
 		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "provider_regeneration", Attempt: attempt + 1, Total: completeAttempts})
@@ -134,41 +179,122 @@ func (p *Provider) Decide(ctx context.Context, request modelprovider.DecisionReq
 }
 
 func (p *Provider) pack(ctx context.Context, groups []modelprovider.DecisionGroup) ([]batch, error) {
-	var batches []batch
-	for len(groups) > 0 {
-		encoded, err := p.encodeBatch(ctx, groups[:1])
+	emptyBody, emptyPrefix, _, _, err := encodePreparedBatch(p.config.Provider, p.config.Model, nil)
+	if err != nil {
+		return nil, err
+	}
+	basePrefixTokens, err := p.inputTokens(ctx, emptyPrefix)
+	if err != nil {
+		return nil, err
+	}
+	baseSuffixTokens, err := p.inputTokens(ctx, emptyBody[len(emptyPrefix):])
+	if err != nil {
+		return nil, err
+	}
+	prepared := make([]preparedDecisionGroup, 0, len(groups))
+	for _, group := range groups {
+		input, err := json.Marshal(group.Input)
 		if err != nil {
 			return nil, err
 		}
-		count := 1
-		for low, high := 2, len(groups); low <= high; {
-			middle := low + (high-low)/2
-			next, err := p.encodeBatch(ctx, groups[:middle])
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		entry, err := json.Marshal(map[string]json.RawMessage{group.ID: input})
+		if err != nil {
+			return nil, err
+		}
+		wire := entry[1 : len(entry)-1]
+		if p.config.Provider == "openai" {
+			encoded, err := json.Marshal(string(wire))
+			if err != nil {
+				return nil, err
+			}
+			wire = encoded[1 : len(encoded)-1]
+		}
+		item := preparedDecisionGroup{id: group.ID, wire: wire}
+		_, prefix, _, _, err := encodePreparedBatch(p.config.Provider, p.config.Model, []preparedDecisionGroup{item})
+		if err != nil {
+			return nil, err
+		}
+		prefixTokens, err := p.inputTokens(ctx, prefix)
+		if err != nil {
+			return nil, err
+		}
+		item.prefixTokens = prefixTokens - basePrefixTokens
+		for _, question := range group.Questions {
+			preparedQuestion, err := encodePreparedQuestion(p.config.Provider, group.ID, question)
+			if err != nil {
+				return nil, err
+			}
+			preparedQuestion.suffixTokens, err = p.inputTokens(ctx, preparedQuestion.suffix)
+			if err != nil {
+				return nil, err
+			}
+			item.questionTokens += preparedQuestion.suffixTokens - baseSuffixTokens
+			item.questionBytes += len(preparedQuestion.wire)
+			item.maxSuffixTokens = max(item.maxSuffixTokens, preparedQuestion.suffixTokens)
+			item.questions = append(item.questions, preparedQuestion)
+		}
+		prepared = append(prepared, item)
+	}
+	var batches []batch
+	for len(prepared) > 0 {
+		count, questionCount := 0, 0
+		wireBytes, prefixEstimate, questionEstimate, maxSuffix := len(emptyBody), basePrefixTokens, 0, 0
+		for _, item := range prepared {
+			nextQuestions := questionCount + len(item.questions)
+			nextWire := wireBytes + len(item.wire) + item.questionBytes + max(0, nextQuestions-1) - max(0, questionCount-1)
+			nextPrefix := prefixEstimate + item.prefixTokens
+			if count > 0 {
+				nextWire++
+				nextPrefix++
+			}
+			nextQuestionEstimate := questionEstimate + item.questionTokens + max(0, nextQuestions-1) - max(0, questionCount-1)
+			nextMaxSuffix := max(maxSuffix, item.maxSuffixTokens)
+			requestEstimate := nextPrefix + baseSuffixTokens + nextQuestionEstimate
+			questionLimitEstimate := nextPrefix + nextMaxSuffix
+			exceeds := nextQuestions > modelprovider.DecisionMaxBatchQuestions || nextWire > modelprovider.MaxDecisionRequestWireBytes ||
+				requestEstimate > p.config.MaxInputTokens && requestEstimate-p.config.MaxInputTokens > bpeBoundarySlack ||
+				questionLimitEstimate > p.config.MaxQuestionInputTokens && questionLimitEstimate-p.config.MaxQuestionInputTokens > bpeBoundarySlack
+			if exceeds && count > 0 {
+				break
+			}
+			count++
+			questionCount, wireBytes, prefixEstimate, questionEstimate, maxSuffix = nextQuestions, nextWire, nextPrefix, nextQuestionEstimate, nextMaxSuffix
+			if exceeds {
+				break
+			}
+		}
+		var encoded batch
+		for {
+			encoded, err = p.encodePreparedBatch(ctx, prepared[:count])
+			if err == nil {
+				break
+			}
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			if err != nil {
-				high = middle - 1
-				continue
+			if count == 1 {
+				return nil, err
 			}
-			encoded, count = next, middle
-			low = middle + 1
+			count--
 		}
 		batches = append(batches, encoded)
-		groups = groups[count:]
+		prepared = prepared[count:]
 	}
 	return batches, nil
 }
 
-func (p *Provider) encodeBatch(ctx context.Context, groups []modelprovider.DecisionGroup) (batch, error) {
+func (p *Provider) encodePreparedBatch(ctx context.Context, groups []preparedDecisionGroup) (batch, error) {
 	if err := ctx.Err(); err != nil {
 		return batch{}, err
 	}
-	body, questions, err := encodeRequest(p.config.Provider, p.config.Model, groups)
+	body, prefix, questions, largest, err := encodePreparedBatch(p.config.Provider, p.config.Model, groups)
 	if err != nil {
 		return batch{}, err
 	}
-	if len(body) > modelprovider.MaxProviderDiagnosticBodyBytes || len(questions) > modelprovider.DecisionMaxBatchQuestions {
+	if len(body) > modelprovider.MaxDecisionRequestWireBytes {
 		return batch{}, fmt.Errorf("decision batch exceeds body or question limit")
 	}
 	tokens, err := p.inputTokens(ctx, body)
@@ -178,31 +304,32 @@ func (p *Provider) encodeBatch(ctx context.Context, groups []modelprovider.Decis
 	if tokens > p.config.MaxInputTokens {
 		return batch{}, &modelprovider.DecisionInputBudgetError{Scope: "request", Observed: tokens, Limit: p.config.MaxInputTokens}
 	}
-	for _, group := range groups {
-		for _, question := range group.Questions {
-			if err := ctx.Err(); err != nil {
-				return batch{}, err
-			}
-			one := make([]modelprovider.DecisionGroup, len(groups))
-			copy(one, groups)
-			for i := range one {
-				one[i].Questions = nil
-				if one[i].ID == group.ID {
-					one[i].Questions = []modelprovider.DecisionQuestion{question}
+	prefixTokens, err := p.inputTokens(ctx, prefix)
+	if err != nil {
+		return batch{}, err
+	}
+	single := make([]byte, 0, len(prefix)+len(largest.suffix))
+	single = append(single, prefix...)
+	single = append(single, largest.suffix...)
+	count, err := p.inputTokens(ctx, single)
+	if err != nil {
+		return batch{}, err
+	}
+	if count != prefixTokens+largest.suffixTokens {
+		for _, group := range groups {
+			for _, question := range group.questions {
+				single = append(single[:0], prefix...)
+				single = append(single, question.suffix...)
+				measured, err := p.inputTokens(ctx, single)
+				if err != nil {
+					return batch{}, err
 				}
-			}
-			single, _, encodeErr := encodeRequest(p.config.Provider, p.config.Model, one)
-			if encodeErr != nil {
-				return batch{}, encodeErr
-			}
-			count, countErr := p.inputTokens(ctx, single)
-			if countErr != nil {
-				return batch{}, countErr
-			}
-			if count > p.config.MaxQuestionInputTokens {
-				return batch{}, &modelprovider.DecisionInputBudgetError{Scope: "shared state plus question", Observed: count, Limit: p.config.MaxQuestionInputTokens}
+				count = max(count, measured)
 			}
 		}
+	}
+	if count > p.config.MaxQuestionInputTokens {
+		return batch{}, &modelprovider.DecisionInputBudgetError{Scope: "shared state plus question", Observed: count, Limit: p.config.MaxQuestionInputTokens}
 	}
 	return batch{body: body, questions: questions, tokens: tokens}, nil
 }
@@ -211,7 +338,7 @@ func (p *Provider) inputTokens(ctx context.Context, body []byte) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	count, err := modelprovider.CountTokens(string(body), p.tokenizer)
+	count, err := p.counter.Count(string(body))
 	if ctx.Err() != nil {
 		return 0, ctx.Err()
 	}
@@ -222,8 +349,11 @@ func (p *Provider) call(ctx context.Context, batch batch, common []observability
 	started := time.Now()
 	diagnostics := &modelprovider.CallDiagnostics{}
 	receipt = modelprovider.DecisionReceipt{Provider: p.config.Provider, RequestedModel: p.config.Model, RequestHash: digest(batch.body), Batch: index, Attempt: attempt, QuestionCount: len(batch.questions), EstimatedInputTokens: batch.tokens, Tokenizer: p.tokenizer, Diagnostics: diagnostics}
-	fields := append(append([]observability.LogAttr{}, common...), attr("batch", index), attr("attempt", attempt), attr("question_count", len(batch.questions)), attr("estimated_input_tokens", batch.tokens), attr("tokenizer", p.tokenizer), attr("token_count_kind", "estimate"))
+	fields := append(append([]observability.LogAttr{}, common...), attr("batch", index), attr("attempt", attempt), attr("question_count", len(batch.questions)), attr("request_wire_bytes", len(batch.body)), attr("estimated_input_tokens", batch.tokens), attr("tokenizer", p.tokenizer), attr("token_count_kind", "estimate"))
 	exchange := modelprovider.ProviderExchange{Component: "decision", Model: p.config.Model, RequestBody: batch.body, RequestContentType: "application/json", StartedAt: started, CaptureState: "captured"}
+	if len(batch.body) > modelprovider.MaxProviderDiagnosticBodyBytes {
+		exchange.CaptureState, exchange.CaptureReason = "unavailable", "body_budget_exceeded"
+	}
 	defer func() {
 		exchange.CompletedAt = time.Now()
 		level := slog.LevelInfo
@@ -249,7 +379,7 @@ func (p *Provider) call(ctx context.Context, batch batch, common []observability
 		}
 		p.payload(ctx, "request", exchange.RequestBody, fields)
 		p.payload(ctx, "response", exchange.ResponseBody, fields)
-		finished := append(append([]observability.LogAttr{}, fields...), attr("action", "complete_exchange"), attr("status", exchange.StatusCode), attr("resolved_model", receipt.Model), attr("provider_request_id", receipt.ProviderRequestID), attr("usage", observability.DecisionLogValue(receipt.Usage)), attr("diagnostics", observability.DecisionLogValue(diagnostics)), attr("total_ms", time.Since(started).Milliseconds()), attr("capture_state", exchange.CaptureState))
+		finished := append(append([]observability.LogAttr{}, fields...), attr("action", "complete_exchange"), attr("status", exchange.StatusCode), attr("resolved_model", receipt.Model), attr("provider_request_id", receipt.ProviderRequestID), attr("usage", observability.DecisionLogValue(receipt.Usage)), attr("diagnostics", observability.DecisionLogValue(diagnostics)), attr("total_ms", time.Since(started).Milliseconds()), attr("capture_state", exchange.CaptureState), attr("capture_reason", exchange.CaptureReason))
 		if err != nil {
 			finished = append(finished, attr("error", err.Error()), attr("reason_code", failureReason(err)))
 		}
@@ -297,7 +427,7 @@ func (p *Provider) call(ctx context.Context, batch batch, common []observability
 		return result, receipt, err
 	}
 	diagnostics.FailurePhase = "request"
-	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "provider_request", Attempt: attempt, Total: completeAttempts})
+	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "provider_request", Attempt: attempt, Total: completeAttempts, Batch: index})
 	httpStarted := time.Now()
 	response, err := p.client.Do(request)
 	httpMS := time.Since(httpStarted).Milliseconds()
@@ -418,10 +548,28 @@ func failureReason(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "deadline"
 	}
-	if errors.Is(err, modelprovider.ErrVerifierMalformedResponse) {
+	if onlyMalformed(err) {
 		return "malformed_response"
 	}
 	return modelprovider.ProviderFailureDetails(err).Class
+}
+
+func onlyMalformed(err error) bool {
+	if err == nil {
+		return false
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, cause := range joined.Unwrap() {
+			if !onlyMalformed(cause) {
+				return false
+			}
+		}
+		return true
+	}
+	if cause := errors.Unwrap(err); cause != nil {
+		return onlyMalformed(cause)
+	}
+	return errors.Is(err, modelprovider.ErrVerifierMalformedResponse)
 }
 
 func (p *Provider) attributes(request modelprovider.DecisionRequest) []observability.LogAttr {

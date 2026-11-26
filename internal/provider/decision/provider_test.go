@@ -39,6 +39,13 @@ func (input packingCancellationInput) MarshalJSON() ([]byte, error) {
 	return []byte(`{}`), nil
 }
 
+type countedPackingInput struct{ calls *atomic.Int32 }
+
+func (input countedPackingInput) MarshalJSON() ([]byte, error) {
+	input.calls.Add(1)
+	return json.Marshal("Database evidence with punctuation, quotes, and unicode 日本語.")
+}
+
 func TestCancellationDuringPackingDoesNotDispatch(t *testing.T) {
 	for _, vendor := range []string{"openai", "typesafe"} {
 		t.Run(vendor, func(t *testing.T) {
@@ -146,6 +153,222 @@ func TestPackingPreservesGroupsAndExactSerializedLimits(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestPackingFourHundredGroupsMatchesVendorWireAndTokenCounts(t *testing.T) {
+	for _, vendor := range []string{"openai", "typesafe"} {
+		for _, encoding := range []string{"o200k_base", "cl100k_base", "p50k_base", "p50k_edit", "r50k_base"} {
+			t.Run(vendor+"/"+encoding, func(t *testing.T) {
+				var logs bytes.Buffer
+				p := fixtureProvider(t, vendor, "http://fixture.invalid", &logs)
+				p.tokenizer = encoding
+				var err error
+				p.counter, err = modelprovider.NewTokenCounter(encoding)
+				if err != nil {
+					t.Fatal(err)
+				}
+				p.config.MaxInputTokens, p.config.MaxQuestionInputTokens = 250000, 250000
+				groups := make([]modelprovider.DecisionGroup, 400)
+				for i := range groups {
+					groups[i] = modelprovider.DecisionGroup{ID: fmt.Sprintf("group_%03d", i), Input: map[string]string{"text": "Unicode 日本語, quotes \" and <data>"}, Questions: []modelprovider.DecisionQuestion{{Name: fmt.Sprintf("question_%03d", i), Type: modelprovider.DecisionPredicate, Instructions: "Evaluate exact evidence."}}}
+				}
+				batches, err := p.pack(t.Context(), groups)
+				if err != nil || len(batches) != 1 {
+					t.Fatalf("packing: batches=%d err=%v", len(batches), err)
+				}
+				want, _, err := encodeRequest(vendor, p.config.Model, groups)
+				if err != nil || !bytes.Equal(want, batches[0].body) {
+					t.Fatalf("prepared wire differs from the vendor encoder: %v", err)
+				}
+				count, err := modelprovider.CountTokens(string(want), encoding)
+				if err != nil || count != batches[0].tokens {
+					t.Fatalf("serialized token count: got=%d want=%d err=%v", batches[0].tokens, count, err)
+				}
+				for _, single := range singleQuestionBodies(t, vendor, want) {
+					count, err := modelprovider.CountTokens(string(single), encoding)
+					if err != nil || count > p.config.MaxQuestionInputTokens {
+						t.Fatalf("single-question token count: %d, %v", count, err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestPackingFourHundredGroupsPreencodesOnceAcrossBatches(t *testing.T) {
+	for _, vendor := range []string{"openai", "typesafe"} {
+		t.Run(vendor, func(t *testing.T) {
+			var logs bytes.Buffer
+			var encodings atomic.Int32
+			p := fixtureProvider(t, vendor, "http://fixture.invalid", &logs)
+			groups := make([]modelprovider.DecisionGroup, 400)
+			for i := range groups {
+				groups[i] = modelprovider.DecisionGroup{ID: fmt.Sprintf("group_%03d", i), Input: countedPackingInput{calls: &encodings}, Questions: []modelprovider.DecisionQuestion{{Name: fmt.Sprintf("question_%03d", i), Type: modelprovider.DecisionPredicate, Instructions: "Is the evidence relevant?"}}}
+			}
+			wire, _, err := encodeRequest(vendor, p.config.Model, groups[:25])
+			if err != nil {
+				t.Fatal(err)
+			}
+			limit, err := modelprovider.CountTokens(string(wire), p.tokenizer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.config.MaxInputTokens, p.config.MaxQuestionInputTokens = limit, limit
+			encodings.Store(0)
+			batches, err := p.pack(t.Context(), groups)
+			if err != nil || len(batches) < 2 || encodings.Load() != 400 {
+				t.Fatalf("packing groups: batches=%d encodings=%d err=%v", len(batches), encodings.Load(), err)
+			}
+			seen := map[string]bool{}
+			for _, packed := range batches {
+				count, err := modelprovider.CountTokens(string(packed.body), p.tokenizer)
+				if err != nil || count != packed.tokens || count > limit {
+					t.Fatalf("invalid batch size: count=%d err=%v", count, err)
+				}
+				for _, question := range packed.questions {
+					if seen[question.Name] {
+						t.Fatalf("duplicate question %s", question.Name)
+					}
+					seen[question.Name] = true
+				}
+			}
+			if len(seen) != 400 {
+				t.Fatalf("packed %d questions", len(seen))
+			}
+		})
+	}
+}
+
+func TestTypeSafePackingPreservesChoiceNamedQuestions(t *testing.T) {
+	var logs bytes.Buffer
+	p := fixtureProvider(t, "typesafe", "http://fixture.invalid", &logs)
+	groups := []modelprovider.DecisionGroup{{ID: "group", Input: "evidence", Questions: []modelprovider.DecisionQuestion{{Name: "choice", Type: modelprovider.DecisionChoice, Instructions: "Choose one.", Choices: []modelprovider.DecisionOption{{Value: "a", Description: "First"}, {Value: "questions", Description: "Second"}}}}}}
+	batches, err := p.pack(t.Context(), groups)
+	if err != nil || len(batches) != 1 {
+		t.Fatalf("packing: %v", err)
+	}
+	want, _, err := encodeRequest("typesafe", p.config.Model, groups)
+	if err != nil || !bytes.Equal(want, batches[0].body) {
+		t.Fatalf("choice value corrupted TypeSafe wire encoding: %v", err)
+	}
+}
+
+func TestConcurrentDecisionFailuresPreserveRateLimit(t *testing.T) {
+	var calls atomic.Int32
+	ready := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Questions []struct {
+				Name string `json:"name"`
+			} `json:"questions"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		if calls.Add(1) == 2 {
+			close(ready)
+		}
+		select {
+		case <-ready:
+		case <-r.Context().Done():
+			return
+		}
+		if request.Questions[0].Name == "question_0" {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_, _ = io.WriteString(w, `{"model":"fixture","answers":[]}`)
+	}))
+	defer server.Close()
+	var logs bytes.Buffer
+	p := fixtureProvider(t, "openai", server.URL, &logs)
+	p.config.MaxConcurrency = 2
+	p.gate = modelprovider.NewConcurrencyGate(2)
+	groups := make([]modelprovider.DecisionGroup, 2)
+	limit := 0
+	for i := range groups {
+		groups[i] = modelprovider.DecisionGroup{ID: fmt.Sprintf("group_%d", i), Input: strings.Repeat("evidence context ", 300), Questions: []modelprovider.DecisionQuestion{{Name: fmt.Sprintf("question_%d", i), Type: modelprovider.DecisionPredicate, Instructions: "Is the evidence relevant?"}}}
+		body, _, err := encodeRequest("openai", p.config.Model, groups[i:i+1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		count, err := modelprovider.CountTokens(string(body), p.tokenizer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		limit = max(limit, count)
+	}
+	p.config.MaxInputTokens, p.config.MaxQuestionInputTokens = limit, limit
+	var stages []string
+	ctx := requestctx.WithProgressObserver(t.Context(), func(_ context.Context, update requestctx.ProgressUpdate) { stages = append(stages, update.Stage) })
+	result, err := p.Decide(ctx, modelprovider.DecisionRequest{Workload: "fixture", OperationID: "mixed-batches", Groups: groups})
+	if !errors.Is(err, modelprovider.ErrVerifierRateLimit) || calls.Load() != 2 || len(result.Answers) != 0 || len(result.Receipts) != 2 {
+		t.Fatalf("mixed failures: calls=%d receipts=%d err=%v", calls.Load(), len(result.Receipts), err)
+	}
+	if strings.Contains(logs.String(), "decision.validation.regenerate") || !strings.Contains(logs.String(), `"reason_code":"rate_limited"`) {
+		t.Fatal("mixed failure did not preserve the rate-limit outcome in logs")
+	}
+	if len(stages) < 2 {
+		t.Fatalf("missing provider progress: %v", stages)
+	}
+}
+
+func TestDecisionRuntimeBudgetAppliesToReportedUsage(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		response := strings.Replace(openAIAnswers, `"input_tokens":100`, `"input_tokens":50000`, 1)
+		response = strings.Replace(response, `"total_tokens":100`, `"total_tokens":50000`, 1)
+		_, _ = io.WriteString(w, response)
+	}))
+	defer server.Close()
+	var logs bytes.Buffer
+	p := fixtureProvider(t, "openai", server.URL, &logs)
+	request := fixtureRequest()
+	request.MaxInputTokens, request.MaxQuestionInputTokens = 922000, 922000
+	if _, err := p.Decide(t.Context(), request); err != nil || calls.Load() != 1 {
+		t.Fatalf("runtime budget above startup limit failed: calls=%d err=%v", calls.Load(), err)
+	}
+	request.MaxQuestionInputTokens = 922001
+	if _, err := p.Decide(t.Context(), request); err == nil || calls.Load() != 1 {
+		t.Fatalf("invalid runtime budget dispatched: calls=%d err=%v", calls.Load(), err)
+	}
+	if !strings.Contains(logs.String(), "decision.configuration.invalid") || !strings.Contains(logs.String(), "question_exceeds_request") {
+		t.Fatal("invalid effective limits missing from logs")
+	}
+}
+
+func TestLargeDecisionExchangeReportsCaptureOmission(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var wire struct {
+			Input     string                           `json:"input"`
+			Questions []modelprovider.DecisionQuestion `json:"questions"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&wire); err != nil {
+			t.Error(err)
+			return
+		}
+		if len(wire.Input) <= modelprovider.MaxProviderDiagnosticBodyBytes || len(wire.Questions) != 3 {
+			t.Error("large Decision wire request is incomplete")
+			return
+		}
+		_, _ = io.WriteString(w, openAIAnswers)
+	}))
+	defer server.Close()
+	var logs bytes.Buffer
+	p := fixtureProvider(t, "openai", server.URL, &logs)
+	p.config.TimeoutSeconds = 120
+	request := fixtureRequest()
+	request.MaxInputTokens, request.MaxQuestionInputTokens = 922000, 922000
+	request.Groups[0].Input = strings.Repeat(strings.Repeat(" ", 128)+"a", 132000)
+	_, err := p.Decide(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(logs.String(), `"capture_state":"unavailable"`) || !strings.Contains(logs.String(), `"capture_reason":"body_budget_exceeded"`) || strings.Contains(logs.String(), p.config.APIKey) {
+		t.Fatal("large exchange capture state or credential protection was lost")
 	}
 }
 
@@ -393,6 +616,7 @@ func TestCancellationDeadlineAndLocalLimits(t *testing.T) {
 	}
 	before := calls.Load()
 	p.config.MaxInputTokens = 1
+	p.config.MaxQuestionInputTokens = 1
 	if _, err := p.Decide(context.Background(), fixtureRequest()); err == nil || calls.Load() != before {
 		t.Fatal("oversized request dispatched")
 	}

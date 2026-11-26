@@ -1,9 +1,11 @@
 package http
 
 import (
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -11,7 +13,15 @@ import (
 	"github.com/labstack/echo/v5"
 	"github.com/labstack/echo/v5/middleware"
 	"github.com/markhuangai/dense-mem/internal/httperr"
+	"github.com/markhuangai/dense-mem/internal/observability"
 )
+
+type channelLogWriter chan string
+
+func (w channelLogWriter) Write(value []byte) (int, error) {
+	w <- string(value)
+	return len(value), nil
+}
 
 func TestHTTPServerLogURIAndAnonymousProbeBoundaries(t *testing.T) {
 	if requestLogURI(nil) != "" {
@@ -54,7 +64,8 @@ func TestHTTPServerLogURIAndAnonymousProbeBoundaries(t *testing.T) {
 
 func TestRunServerHandlesStartFailureAndInterrupt(t *testing.T) {
 	e := echo.New()
-	logger := &captureLogProvider{}
+	logs := make(channelLogWriter, 4)
+	logger := observability.NewWithHandler(slog.NewTextHandler(logs, nil))
 	timer := time.AfterFunc(50*time.Millisecond, func() {
 		process, err := os.FindProcess(os.Getpid())
 		if err == nil {
@@ -65,7 +76,12 @@ func TestRunServerHandlesStartFailureAndInterrupt(t *testing.T) {
 	if err := RunServer(NewHTTPServer(e, logger), "invalid-address", logger); err != nil {
 		t.Fatalf("RunServer: %v", err)
 	}
-	if logger.msg != "shutting down server" && logger.msg != "server start error" {
-		t.Fatalf("RunServer logger = %q", logger.msg)
+	select {
+	case message := <-logs:
+		if !strings.Contains(message, "shutting down server") && !strings.Contains(message, "server start error") {
+			t.Fatalf("RunServer logger = %q", message)
+		}
+	default:
+		t.Fatal("RunServer did not log shutdown or start failure")
 	}
 }

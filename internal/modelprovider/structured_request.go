@@ -75,3 +75,24 @@ func CountTokens(text string, tokenizerName string) (int, error) {
 	}
 	return count, nil
 }
+
+type TokenCounter struct {
+	name  string
+	codec tokenizer.Codec
+}
+
+func NewTokenCounter(name string) (*TokenCounter, error) {
+	codec, err := tokenizer.Get(tokenizer.Encoding(strings.TrimSpace(name)))
+	if err != nil {
+		return nil, fmt.Errorf("tokenizer %q: %w", name, err)
+	}
+	return &TokenCounter{name: name, codec: codec}, nil
+}
+
+func (c *TokenCounter) Count(text string) (int, error) {
+	count, err := c.codec.Count(text)
+	if err != nil {
+		return 0, fmt.Errorf("count tokens with %q: %w", c.name, err)
+	}
+	return count, nil
+}
