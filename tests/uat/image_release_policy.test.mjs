@@ -827,7 +827,9 @@ test("manual staging deployment budget leaves time for image transfer and failur
   const graceSeconds = Number(deadline[1]);
   const operationSeconds = Number(deadline[2]) * 60;
   const preparation = definition.steps.slice(0, definition.steps.indexOf(execution));
-  for (const step of [...actionSteps(definition, "actions/checkout"), actionStep(definition, "actions/setup-go")]) {
+  const setupGo = actionStep(definition, "actions/setup-go");
+  assert.equal(setupGo.with.cache, false, "staging Go setup must disable the post-job cache save");
+  for (const step of [...actionSteps(definition, "actions/checkout"), setupGo]) {
     assert.ok(preparation.includes(step), "checkout and Go setup must precede deployment");
   }
   for (const step of preparation) assert.ok(Number(step["timeout-minutes"]) > 0, "preparation must be bounded");
