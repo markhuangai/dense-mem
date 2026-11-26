@@ -295,7 +295,7 @@ func buildAppConfigCache(entries map[string]domain.AppConfigEntry, checkedAt tim
 	if !ok || strings.TrimSpace(updateEntry.Value) == "" {
 		return nil, fmt.Errorf("%w: update_time is required", ErrInvalidAppConfig)
 	}
-	if _, err := decisionSettingsFromEntries(entries, domain.DecisionProviderStatus{}); err != nil {
+	if _, err := decisionSettingsFromEntries(entries, DecisionSettingsOptions{}); err != nil {
 		return nil, err
 	}
 	general, err := generalRuntimeConfigFromEntries(entries)

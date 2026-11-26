@@ -236,7 +236,7 @@ export function DecisionConfigPanel({ api }: { api: ControlApi }) {
       {config.effective.configuration_error && <div className="banner error" role="alert">{config.effective.configuration_error}</div>}
       {config.effective.stale && <div className="banner error" role="alert">Settings refresh failed. Showing the last verified settings from {formatDate(config.effective.last_verified_at)}.</div>}
     </>}
-    renderItem={(item, value, onChange) => {
+    renderItem={(item, value, onChange, loading) => {
       if (item.key === "DECISION_MAX_INPUT_TOKENS" || item.key === "DECISION_MAX_QUESTION_INPUT_TOKENS") {
         return <>
           <div className="setting-row">
@@ -245,10 +245,10 @@ export function DecisionConfigPanel({ api }: { api: ControlApi }) {
               <p id={`${item.key}-help`}>Effective limit {item.effective_value} tokens</p>
             </div>
             <div className="button-row">
-              <Input id={item.key} type="number" min={1} inputMode="numeric" value={value}
+              <Input id={item.key} type="number" min={1} inputMode="numeric" value={value} disabled={loading}
                 placeholder={item.effective_value} aria-describedby={`${item.key}-help`}
                 aria-invalid={item.validation_error ? true : undefined} onChange={(event) => onChange(event.target.value)} />
-              <Button type="button" variant="ghost" onClick={() => onChange("")} disabled={value === ""}>Clear override</Button>
+              <Button type="button" variant="ghost" onClick={() => onChange("")} disabled={loading || value === ""}>Clear override</Button>
             </div>
           </div>
           {item.validation_error && <p className="field-error span" role="alert">{item.validation_error}</p>}
@@ -283,7 +283,7 @@ function RuntimeConfigPanel<T extends RuntimeConfig>({
   load: () => Promise<T>;
   save: (input: RuntimeConfigInput) => Promise<T>;
   detail?: (config: T) => ReactNode;
-  renderItem?: (item: ConfigItem, value: string, onChange: (value: string) => void) => ReactNode;
+  renderItem?: (item: ConfigItem, value: string, onChange: (value: string) => void, loading: boolean) => ReactNode;
   changedOnly?: boolean;
 }) {
   const transition = useViewTransition();
@@ -362,7 +362,7 @@ function RuntimeConfigPanel<T extends RuntimeConfig>({
             <legend>{group}</legend>
             {items.map((item) => {
               const onChange = (value: string) => setDraft((current) => ({ ...current, [item.key]: value }));
-              return <Fragment key={item.key}>{renderItem?.(item, draft[item.key] ?? "", onChange) ?? <ConfigField item={item} value={draft[item.key] ?? ""} onChange={onChange} />}</Fragment>;
+              return <Fragment key={item.key}>{renderItem?.(item, draft[item.key] ?? "", onChange, loading) ?? <ConfigField item={item} value={draft[item.key] ?? ""} onChange={onChange} />}</Fragment>;
             })}
           </fieldset>)}
           <div className="button-row span">

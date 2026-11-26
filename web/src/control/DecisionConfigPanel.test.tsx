@@ -71,6 +71,36 @@ describe("Decision preferences", () => {
     expect(JSON.parse(String(fetcher.mock.calls[2][1]?.body))).toEqual({ items: [{ key: "DECISION_MAX_INPUT_TOKENS", value: "" }] });
   });
 
+  it("prevents capacity edits while a refresh is in flight", async () => {
+    const current = snapshot();
+    current.items[4] = { ...current.items[4], value: "40000", effective_value: "40000", source: "override" };
+    let finishRefresh: (response: Response) => void = () => {};
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ data: current }))
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { finishRefresh = resolve; }))
+      .mockRejectedValueOnce(new Error("refresh unavailable"));
+    vi.stubGlobal("fetch", fetcher);
+    render(<DecisionConfigPanel api={new ControlApi("http://localhost", "fixture-control")} />);
+    const requestBudget = await screen.findByLabelText("Maximum request input tokens");
+    const questionBudget = screen.getByLabelText("Maximum input tokens per question");
+    const clearRequest = screen.getAllByRole("button", { name: "Clear override" })[0];
+    expect(requestBudget).toBeEnabled();
+    expect(clearRequest).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "Refresh decision config" }));
+    await waitFor(() => expect(requestBudget).toBeDisabled());
+    expect(questionBudget).toBeDisabled();
+    expect(clearRequest).toBeDisabled();
+    finishRefresh(jsonResponse({ data: current }));
+    await waitFor(() => expect(requestBudget).toBeEnabled());
+    expect(questionBudget).toBeEnabled();
+    expect(clearRequest).toBeEnabled();
+    expect(requestBudget).toHaveValue(40000);
+    fireEvent.click(screen.getByRole("button", { name: "Refresh decision config" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("refresh unavailable");
+    expect(requestBudget).toBeEnabled();
+    expect(clearRequest).toBeEnabled();
+  });
+
   it("shows loading, failed save, and stale snapshot states without losing edits", async () => {
     let resolve: (response: Response) => void = () => {};
     const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>((done) => { resolve = done; })).mockRejectedValueOnce(new Error("configuration unavailable"));

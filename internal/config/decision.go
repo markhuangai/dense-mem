@@ -8,15 +8,16 @@ import (
 )
 
 type DecisionProviderConfig struct {
-	Provider               string
-	APIURL                 string
-	APIKey                 string `json:"-"`
-	Model                  string
-	MaxInputTokens         int
-	MaxQuestionInputTokens int
-	TimeoutSeconds         int
-	MaxConcurrency         int
-	LongContextEnabled     bool
+	Provider                     string
+	APIURL                       string
+	APIKey                       string `json:"-"`
+	Model                        string
+	MaxInputTokens               int
+	MaxQuestionInputTokens       int
+	QuestionInputInheritsRequest bool `json:"-"`
+	TimeoutSeconds               int
+	MaxConcurrency               int
+	LongContextEnabled           bool
 }
 
 func (c DecisionProviderConfig) Configured() bool {
@@ -56,6 +57,7 @@ func loadDecisionProviderConfig() (DecisionProviderConfig, error) {
 	}
 	if c.Provider == "openai" && strings.TrimSpace(os.Getenv("AI_DECISION_MAX_QUESTION_INPUT_TOKENS")) == "" {
 		c.MaxQuestionInputTokens = c.MaxInputTokens
+		c.QuestionInputInheritsRequest = true
 	}
 	c.LongContextEnabled, err = parseBoolOrDefault("AI_DECISION_LONG_CONTEXT_ENABLED", false)
 	if err != nil {

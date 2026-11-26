@@ -30,8 +30,13 @@ func TestDecisionConfigurationDefaultsAndExplicitCredentials(t *testing.T) {
 	}
 	t.Setenv("AI_DECISION_API_KEY", "decision-test-credential")
 	cfg, err = loadDecisionProviderConfig()
-	if err != nil || !cfg.Configured() || cfg.TimeoutSeconds != 10 || cfg.MaxConcurrency != 4 || cfg.MaxQuestionInputTokens != 32000 {
+	if err != nil || !cfg.Configured() || cfg.TimeoutSeconds != 10 || cfg.MaxConcurrency != 4 || cfg.MaxQuestionInputTokens != 32000 || !cfg.QuestionInputInheritsRequest {
 		t.Fatalf("configured provider defaults: %+v, %v", cfg, err)
+	}
+	t.Setenv("AI_DECISION_MAX_QUESTION_INPUT_TOKENS", "32000")
+	explicit, err := loadDecisionProviderConfig()
+	if err != nil || explicit.QuestionInputInheritsRequest || explicit.MaxQuestionInputTokens != 32000 {
+		t.Fatalf("explicit equal question limit must not inherit: %v", err)
 	}
 	encoded, err := json.Marshal(cfg)
 	if err != nil || strings.Contains(string(encoded), "decision-test-credential") {

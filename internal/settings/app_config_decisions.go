@@ -21,8 +21,9 @@ type DecisionConfigService interface {
 }
 
 type DecisionSettingsOptions struct {
-	Provider domain.DecisionProviderStatus
-	Logger   observability.LogProvider
+	Provider                     domain.DecisionProviderStatus
+	QuestionInputInheritsRequest bool
+	Logger                       observability.LogProvider
 }
 
 func NewAppConfigServiceWithDecisions(repo settingscontract.AppConfigRepository, audit ConfigAuditPreparer, options DecisionSettingsOptions) *AppConfigServiceImpl {
@@ -40,7 +41,7 @@ func (s *AppConfigServiceImpl) GetDecisionSettings(ctx context.Context) (*domain
 		s.decisionLog(ctx, slog.LevelError, "decision.settings.unavailable", observability.LogAttr{Key: "reason_code", Value: "no_valid_snapshot"}, observability.LogAttr{Key: "error", Value: err.Error()})
 		return nil, err
 	}
-	settings, err := decisionSettingsFromEntries(cache.entries, s.decisionOptions.Provider)
+	settings, err := decisionSettingsFromEntries(cache.entries, s.decisionOptions)
 	if err != nil {
 		s.decisionLog(ctx, slog.LevelError, "decision.settings.invalid", observability.LogAttr{Key: "error", Value: err.Error()})
 		return nil, err
@@ -79,7 +80,7 @@ func (s *AppConfigServiceImpl) UpdateDecisionSettings(ctx context.Context, value
 	updated, changed, err := updateConfigSection(ctx, s,
 		configSectionUpdate{"decisions", values, actorRole, clientIP, correlationID},
 		func(entries map[string]domain.AppConfigEntry) (domain.DecisionConfigSettings, error) {
-			projected, err := decisionSettingsFromEntries(entries, s.decisionOptions.Provider)
+			projected, err := decisionSettingsFromEntries(entries, s.decisionOptions)
 			if err == nil && projected.Effective.ConfigurationError != "" {
 				return projected, fmt.Errorf("%w: %s", ErrInvalidAppConfig, projected.Effective.ConfigurationError)
 			}
@@ -124,7 +125,8 @@ func validateDecisionValues(values map[string]string) error {
 	return nil
 }
 
-func decisionSettingsFromEntries(entries map[string]domain.AppConfigEntry, provider domain.DecisionProviderStatus) (domain.DecisionConfigSettings, error) {
+func decisionSettingsFromEntries(entries map[string]domain.AppConfigEntry, options DecisionSettingsOptions) (domain.DecisionConfigSettings, error) {
+	provider := options.Provider
 	settings := domain.DecisionConfigSettings{UpdateTime: entries[domain.AppConfigUpdateTimeKey].Value, Items: []domain.DecisionConfigItem{}, Effective: domain.DecisionRuntimeConfig{Provider: provider, Revision: entries[domain.AppConfigUpdateTimeKey].Value}}
 	prefs, effective, overrides := &settings.Effective.Preferences, &settings.Effective.Effective, &settings.Effective.Overrides
 	targets := []struct{ preference, effective, override *bool }{{&prefs.Deduplication, &effective.Deduplication, &overrides.Deduplication}, {&prefs.SecurityReview, &effective.SecurityReview, &overrides.SecurityReview}, {&prefs.ConflictReview, &effective.ConflictReview, &overrides.ConflictReview}, {&prefs.RecallReranking, &effective.RecallReranking, &overrides.RecallReranking}, {&prefs.TopicAssignment, &effective.TopicAssignment, &overrides.TopicAssignment}, {&prefs.CommunityPlacement, &effective.CommunityPlacement, &overrides.CommunityPlacement}}
@@ -140,7 +142,6 @@ func decisionSettingsFromEntries(entries map[string]domain.AppConfigEntry, provi
 		*targets[i].preference, *targets[i].effective, *targets[i].override = preference, provider.Configured && preference, exists
 		settings.Items = append(settings.Items, domain.DecisionConfigItem{Key: key, Value: entry.Value, EffectiveValue: strconv.FormatBool(provider.Configured && preference), Source: source, UpdatedAt: entry.UpdatedAt})
 	}
-	startupInput, startupQuestion := provider.MaxInputTokens, provider.MaxQuestionInputTokens
 	for _, field := range []struct {
 		key    string
 		target *int
@@ -159,7 +160,7 @@ func decisionSettingsFromEntries(entries map[string]domain.AppConfigEntry, provi
 		}
 		settings.Items = append(settings.Items, domain.DecisionConfigItem{Key: field.key, Value: entry.Value, Source: source, UpdatedAt: entry.UpdatedAt})
 	}
-	if provider.Provider == "openai" && startupInput == startupQuestion && strings.TrimSpace(entries[domain.AppConfigDecisionMaxQuestionInputTokens].Value) == "" {
+	if provider.Provider == "openai" && options.QuestionInputInheritsRequest && strings.TrimSpace(entries[domain.AppConfigDecisionMaxQuestionInputTokens].Value) == "" {
 		provider.MaxQuestionInputTokens = provider.MaxInputTokens
 	}
 	settings.Effective.Provider = provider

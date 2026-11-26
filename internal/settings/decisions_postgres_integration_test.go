@@ -22,7 +22,7 @@ import (
 )
 
 func decisionServiceForPostgres(db *gorm.DB, rls *storagepostgres.RLS, provider string) *settings.AppConfigServiceImpl {
-	return settings.NewAppConfigServiceWithDecisions(settingspostgres.NewAppConfigRepository(db, rls), auditapp.New(auditpostgres.NewStore(db, rls)), settings.DecisionSettingsOptions{Provider: domain.DecisionProviderStatus{Configured: provider != "disabled", Provider: provider, Model: map[string]string{"openai": "gpt-6-luna", "typesafe": "jev-1.14.0"}[provider], MaxInputTokens: 32000, MaxQuestionInputTokens: 32000}})
+	return settings.NewAppConfigServiceWithDecisions(settingspostgres.NewAppConfigRepository(db, rls), auditapp.New(auditpostgres.NewStore(db, rls)), settings.DecisionSettingsOptions{Provider: domain.DecisionProviderStatus{Configured: provider != "disabled", Provider: provider, Model: map[string]string{"openai": "gpt-6-luna", "typesafe": "jev-1.14.0"}[provider], MaxInputTokens: 32000, MaxQuestionInputTokens: 32000}, QuestionInputInheritsRequest: provider == "openai"})
 }
 
 func preserveDecisionConfig(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS) func() {
@@ -201,6 +201,11 @@ func TestDecisionBudgetPostgresProviderSwitchAndControl(t *testing.T) {
 	updated, err := openAI.UpdateDecisionSettings(context.Background(), map[string]string{domain.AppConfigDecisionMaxInputTokens: "922000"}, "control", "", "budget-provider-switch")
 	require.NoError(t, err)
 	require.Equal(t, 922000, updated.Effective.Provider.MaxQuestionInputTokens)
+	explicit := settings.NewAppConfigServiceWithDecisions(settingspostgres.NewAppConfigRepository(db, rls), nil, settings.DecisionSettingsOptions{Provider: domain.DecisionProviderStatus{Configured: true, Provider: "openai", Model: "gpt-6-luna", MaxInputTokens: 32000, MaxQuestionInputTokens: 32000}})
+	explicitSettings, err := explicit.DecisionRuntimeConfig(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 922000, explicitSettings.Provider.MaxInputTokens)
+	require.Equal(t, 32000, explicitSettings.Provider.MaxQuestionInputTokens)
 	typeSafe := decisionServiceForPostgres(db, rls, "typesafe")
 	e, err := densehttp.NewControlPortalServerWithServices(&config.Config{ControlPortalToken: "decision-settings-control"}, nil, nil, nil, densehttp.ControlPortalServices{Config: typeSafe, Decisions: typeSafe}, densehttp.HealthConfig{}, nil, nil)
 	require.NoError(t, err)

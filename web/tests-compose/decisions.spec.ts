@@ -41,6 +41,7 @@ for (const width of [1440, 768, 390]) {
     await requestBudget.fill("40000");
     await page.getByRole("button", { name: "Save config", exact: true }).click();
     await expect(page.getByText("Effective limit 40000 tokens").first()).toBeVisible();
+    await expect(page.getByText("Effective limit 32000 tokens")).toBeVisible();
     await requestBudget.locator("..").getByRole("button", { name: "Clear override" }).click();
     await page.getByRole("button", { name: "Save config", exact: true }).click();
     await expect(page.getByRole("status")).toContainText("Changes saved");

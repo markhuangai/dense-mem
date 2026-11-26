@@ -101,7 +101,7 @@ func TestDecisionBudgetOverridesAndProviderSwitch(t *testing.T) {
 	logger := observability.NewWithHandler(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	repo := newAppConfigRepoStub(time.Now(), nil)
 	openAI := domain.DecisionProviderStatus{Configured: true, Provider: "openai", Model: "decision-model", MaxInputTokens: 32000, MaxQuestionInputTokens: 32000}
-	svc := NewAppConfigServiceWithDecisions(repo, nil, DecisionSettingsOptions{Provider: openAI, Logger: logger})
+	svc := NewAppConfigServiceWithDecisions(repo, nil, DecisionSettingsOptions{Provider: openAI, QuestionInputInheritsRequest: true, Logger: logger})
 	initial, err := svc.GetDecisionSettings(ctx)
 	require.NoError(t, err)
 	require.Len(t, initial.Items, 8)
@@ -134,6 +134,41 @@ func TestDecisionBudgetOverridesAndProviderSwitch(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
 	_, err = unconfigured.UpdateDecisionSettings(ctx, map[string]string{domain.AppConfigDecisionMaxQuestionInputTokens: "101"}, "control", "", "")
 	require.ErrorIs(t, err, ErrInvalidAppConfig)
+}
+
+func TestDecisionRequestOverrideRespectsQuestionLimitOrigin(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		inherited bool
+		want      int
+	}{
+		{name: "inherited", inherited: true, want: 64000},
+		{name: "explicit equal", want: 32000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			repo := newAppConfigRepoStub(time.Now(), nil)
+			provider := domain.DecisionProviderStatus{Configured: true, Provider: "openai", MaxInputTokens: 32000, MaxQuestionInputTokens: 32000}
+			svc := NewAppConfigServiceWithDecisions(repo, nil, DecisionSettingsOptions{Provider: provider, QuestionInputInheritsRequest: tc.inherited})
+			updated, err := svc.UpdateDecisionSettings(ctx, map[string]string{domain.AppConfigDecisionMaxInputTokens: "64000"}, "control", "", "")
+			require.NoError(t, err)
+			require.Equal(t, 64000, updated.Effective.Provider.MaxInputTokens)
+			require.Equal(t, tc.want, updated.Effective.Provider.MaxQuestionInputTokens)
+			updated, err = svc.UpdateDecisionSettings(ctx, map[string]string{domain.AppConfigDecisionMaxQuestionInputTokens: "48000"}, "control", "", "")
+			require.NoError(t, err)
+			require.Equal(t, 48000, updated.Effective.Provider.MaxQuestionInputTokens)
+			updated, err = svc.UpdateDecisionSettings(ctx, map[string]string{domain.AppConfigDecisionMaxQuestionInputTokens: ""}, "control", "", "")
+			require.NoError(t, err)
+			require.Equal(t, tc.want, updated.Effective.Provider.MaxQuestionInputTokens)
+			updated, err = svc.UpdateDecisionSettings(ctx, map[string]string{domain.AppConfigDecisionMaxInputTokens: "16000"}, "control", "", "")
+			if tc.inherited {
+				require.NoError(t, err)
+				require.Equal(t, 16000, updated.Effective.Provider.MaxQuestionInputTokens)
+			} else {
+				require.ErrorIs(t, err, ErrInvalidAppConfig)
+			}
+		})
+	}
 }
 
 func TestDecisionSettingsRejectNonBooleanAndUnknownValues(t *testing.T) {
