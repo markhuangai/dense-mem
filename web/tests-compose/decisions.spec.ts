@@ -50,6 +50,8 @@ for (const width of [1440, 768, 390]) {
     await expect(page.getByRole("alert")).toContainText("must not exceed");
     await page.getByRole("button", { name: "Refresh decision config" }).click();
     await confirmAction(page, "Discard changes");
+    await expect(requestBudget).toHaveValue("");
+    await expect(questionBudget).toHaveValue("");
     await page.route("**/control/api/config/decisions", async (route) => {
       if (route.request().method() === "PATCH") await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ message: "Decision settings unavailable" }) });
       else await route.continue();

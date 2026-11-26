@@ -78,6 +78,7 @@ func (p *Provider) Decide(ctx context.Context, request modelprovider.DecisionReq
 	}
 	p = &effective
 	started := time.Now()
+	parentCtx := ctx
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(p.config.TimeoutSeconds)*time.Second)
 	defer cancel()
 	ctx = requestctx.WithSynchronizedProgress(ctx)
@@ -133,43 +134,75 @@ func (p *Provider) Decide(ctx context.Context, request modelprovider.DecisionReq
 			result  modelprovider.DecisionResult
 			receipt modelprovider.DecisionReceipt
 			err     error
+			started bool
 		}
 		batchResults := make([]batchResult, len(batches))
+		queueCtx, stopPending := context.WithCancel(ctx)
 		var group errgroup.Group
 		group.SetLimit(p.config.MaxConcurrency)
 		for index, item := range batches {
+			if queueCtx.Err() != nil {
+				break
+			}
 			if index >= p.config.MaxConcurrency {
 				requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "provider_wait", Batch: index + 1, Batches: len(batches)})
 			}
 			group.Go(func() error {
-				partial, receipt, callErr := p.call(ctx, item, attrs, index+1, attempt)
-				batchResults[index] = batchResult{partial, receipt, callErr}
+				started := time.Now()
+				if err := modelprovider.AcquireConcurrency(queueCtx, p.gate); err != nil {
+					return nil
+				}
+				defer modelprovider.ReleaseConcurrency(p.gate)
+				if queueCtx.Err() != nil {
+					return nil
+				}
+				partial, receipt, callErr := p.call(ctx, item, attrs, index+1, attempt, started)
+				batchResults[index] = batchResult{partial, receipt, callErr, true}
+				if callErr != nil && !onlyMalformed(callErr) {
+					stopPending()
+				}
 				return nil
 			})
 		}
 		_ = group.Wait()
+		stopPending()
 		answers := make(map[string]modelprovider.DecisionAnswer)
-		var attemptErr error
+		var attemptErr, interruptedErr error
 		for _, item := range batchResults {
+			if !item.started {
+				continue
+			}
 			result.Receipts = append(result.Receipts, item.receipt)
-			if item.err != nil && (attemptErr == nil || onlyMalformed(attemptErr) && !onlyMalformed(item.err)) {
-				attemptErr = item.err
+			if item.err != nil {
+				if onlyInterruption(item.err) {
+					if interruptedErr == nil {
+						interruptedErr = item.err
+					}
+				} else if attemptErr == nil || onlyMalformed(attemptErr) && !onlyMalformed(item.err) {
+					attemptErr = item.err
+				}
 			}
 			for name, answer := range item.result.Answers {
 				answers[name] = answer
 			}
 		}
+		if err = parentCtx.Err(); err != nil {
+			return result, err
+		}
+		if attemptErr != nil && !onlyMalformed(attemptErr) {
+			return result, attemptErr
+		}
 		if err = ctx.Err(); err != nil {
 			return result, err
 		}
+		if interruptedErr != nil {
+			return result, interruptedErr
+		}
 		if attemptErr == nil {
-			if err = ctx.Err(); err != nil {
-				return result, err
-			}
 			result.Answers = answers
 			return result, nil
 		}
-		if !onlyMalformed(attemptErr) || attempt == completeAttempts || ctx.Err() != nil {
+		if attempt == completeAttempts {
 			return result, attemptErr
 		}
 		requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "provider_regeneration", Attempt: attempt + 1, Total: completeAttempts})
@@ -308,8 +341,7 @@ func (p *Provider) encodePreparedBatch(ctx context.Context, groups []preparedDec
 	if err != nil {
 		return batch{}, err
 	}
-	single := make([]byte, 0, len(prefix)+len(largest.suffix))
-	single = append(single, prefix...)
+	single := bytes.Clone(prefix)
 	single = append(single, largest.suffix...)
 	count, err := p.inputTokens(ctx, single)
 	if err != nil {
@@ -345,8 +377,7 @@ func (p *Provider) inputTokens(ctx context.Context, body []byte) (int, error) {
 	return count, err
 }
 
-func (p *Provider) call(ctx context.Context, batch batch, common []observability.LogAttr, index, attempt int) (result modelprovider.DecisionResult, receipt modelprovider.DecisionReceipt, err error) {
-	started := time.Now()
+func (p *Provider) call(ctx context.Context, batch batch, common []observability.LogAttr, index, attempt int, started time.Time) (result modelprovider.DecisionResult, receipt modelprovider.DecisionReceipt, err error) {
 	diagnostics := &modelprovider.CallDiagnostics{}
 	receipt = modelprovider.DecisionReceipt{Provider: p.config.Provider, RequestedModel: p.config.Model, RequestHash: digest(batch.body), Batch: index, Attempt: attempt, QuestionCount: len(batch.questions), EstimatedInputTokens: batch.tokens, Tokenizer: p.tokenizer, Diagnostics: diagnostics}
 	fields := append(append([]observability.LogAttr{}, common...), attr("batch", index), attr("attempt", attempt), attr("question_count", len(batch.questions)), attr("request_wire_bytes", len(batch.body)), attr("estimated_input_tokens", batch.tokens), attr("tokenizer", p.tokenizer), attr("token_count_kind", "estimate"))
@@ -385,11 +416,6 @@ func (p *Provider) call(ctx context.Context, batch batch, common []observability
 		}
 		p.log(ctx, level, "decision.exchange.completed", finished...)
 	}()
-	diagnostics.FailurePhase = "queue"
-	if err = modelprovider.AcquireConcurrency(ctx, p.gate); err != nil {
-		return result, receipt, err
-	}
-	defer modelprovider.ReleaseConcurrency(p.gate)
 	queueMS := time.Since(started).Milliseconds()
 	diagnostics.QueueMS = &queueMS
 	diagnostics.FailurePhase = "prepare"
@@ -570,6 +596,24 @@ func onlyMalformed(err error) bool {
 		return onlyMalformed(cause)
 	}
 	return errors.Is(err, modelprovider.ErrVerifierMalformedResponse)
+}
+
+func onlyInterruption(err error) bool {
+	if err == nil {
+		return false
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, cause := range joined.Unwrap() {
+			if !onlyInterruption(cause) {
+				return false
+			}
+		}
+		return true
+	}
+	if cause := errors.Unwrap(err); cause != nil {
+		return onlyInterruption(cause)
+	}
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 func (p *Provider) attributes(request modelprovider.DecisionRequest) []observability.LogAttr {
