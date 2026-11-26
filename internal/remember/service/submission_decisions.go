@@ -43,6 +43,7 @@ func routeSubmissionDecisionTasks(ctx context.Context, provider modelprovider.De
 		routing = &assessor.SemanticAssessmentRouting{}
 	}
 	decisionRequest := modelprovider.DecisionRequest{Workload: "remember_assessment", OperationID: request.RequestID, SettingsVersion: snapshot.Revision}
+	decisionRequest.ApplyRuntimeConfig(*snapshot)
 	byEvidence := make(map[string]assessor.SemanticAssessmentEvidenceEquivalenceCandidateGroup, len(request.EvidenceEquivalenceCandidates))
 	for _, group := range request.EvidenceEquivalenceCandidates {
 		byEvidence[group.EvidenceID] = group

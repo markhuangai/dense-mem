@@ -49,5 +49,6 @@ export type DecisionConfig = {
     overrides: DecisionTasks;
     stale: boolean;
     last_verified_at: string;
+    configuration_error?: string;
   };
 };

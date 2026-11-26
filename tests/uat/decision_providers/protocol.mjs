@@ -34,10 +34,11 @@ export function handleDecisionFixture(request, response, payload, topicAssignmen
         if (mode === "uncertain") probability = 0.5;
       }
       if (assignment && mode !== "uncertain") {
-        if (question.name === "uncovered") probability = assignment.proposals.length ? 0.999 : 0.001;
+        if (question.name === "uncovered") probability = mode === "topic-uncategorized" ? 0.20 : mode === "topic-boundary" ? (assignment.proposals.length ? 0.85 : 0.20) : (assignment.proposals.length ? 0.999 : 0.001);
         if (question.name.startsWith("match_")) {
           const candidate = state.assignment.topics[Number(question.name.slice(6))];
-          probability = assignment.matches.some((match) => match.id === candidate.id) ? 0.999 : 0.001;
+          const matches = assignment.matches.some((match) => match.id === candidate.id);
+          probability = mode === "topic-uncategorized" ? 0.20 : mode === "topic-boundary" ? (matches ? 0.85 : 0.20) : (matches ? 0.999 : 0.001);
         }
       }
       if (question.name === "sufficiently_supported") probability = mode === "uncertain" ? 0.5 : 0.999;

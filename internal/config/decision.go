@@ -8,15 +8,16 @@ import (
 )
 
 type DecisionProviderConfig struct {
-	Provider               string
-	APIURL                 string
-	APIKey                 string `json:"-"`
-	Model                  string
-	MaxInputTokens         int
-	MaxQuestionInputTokens int
-	TimeoutSeconds         int
-	MaxConcurrency         int
-	LongContextEnabled     bool
+	Provider                     string
+	APIURL                       string
+	APIKey                       string `json:"-"`
+	Model                        string
+	MaxInputTokens               int
+	MaxQuestionInputTokens       int
+	QuestionInputInheritsRequest bool `json:"-"`
+	TimeoutSeconds               int
+	MaxConcurrency               int
+	LongContextEnabled           bool
 }
 
 func (c DecisionProviderConfig) Configured() bool {
@@ -56,6 +57,7 @@ func loadDecisionProviderConfig() (DecisionProviderConfig, error) {
 	}
 	if c.Provider == "openai" && strings.TrimSpace(os.Getenv("AI_DECISION_MAX_QUESTION_INPUT_TOKENS")) == "" {
 		c.MaxQuestionInputTokens = c.MaxInputTokens
+		c.QuestionInputInheritsRequest = true
 	}
 	c.LongContextEnabled, err = parseBoolOrDefault("AI_DECISION_LONG_CONTEXT_ENABLED", false)
 	if err != nil {
@@ -83,15 +85,14 @@ func (c DecisionProviderConfig) Validate() error {
 		name  string
 		value int
 	}{
-		{"AI_DECISION_MAX_INPUT_TOKENS", c.MaxInputTokens}, {"AI_DECISION_MAX_QUESTION_INPUT_TOKENS", c.MaxQuestionInputTokens},
 		{"AI_DECISION_TIMEOUT_SECONDS", c.TimeoutSeconds}, {"AI_DECISION_MAX_CONCURRENCY", c.MaxConcurrency},
 	} {
 		if field.value <= 0 {
 			return &ValidationError{Field: field.name, Message: "must be greater than zero"}
 		}
 	}
-	if c.MaxQuestionInputTokens > c.MaxInputTokens {
-		return &ValidationError{Field: "AI_DECISION_MAX_QUESTION_INPUT_TOKENS", Message: "must not exceed AI_DECISION_MAX_INPUT_TOKENS"}
+	if err := ValidateDecisionTokenBudgets(c.Provider, c.LongContextEnabled, c.MaxInputTokens, c.MaxQuestionInputTokens); err != nil {
+		return err
 	}
 	if c.TimeoutSeconds > 86400 || c.MaxConcurrency > 128 {
 		return &ValidationError{Field: "AI_DECISION_PROVIDER", Message: "timeout must not exceed 86400 seconds and concurrency must not exceed 128"}
@@ -99,13 +100,29 @@ func (c DecisionProviderConfig) Validate() error {
 	if c.LongContextEnabled && c.Provider != "typesafe" {
 		return &ValidationError{Field: "AI_DECISION_LONG_CONTEXT_ENABLED", Message: "is supported only by typesafe"}
 	}
-	if c.Provider == "typesafe" {
+	return nil
+}
+
+func ValidateDecisionTokenBudgets(provider string, longContext bool, maxInput, maxQuestion int) error {
+	if maxInput <= 0 {
+		return &ValidationError{Field: "AI_DECISION_MAX_INPUT_TOKENS", Message: "must be greater than zero"}
+	}
+	if maxQuestion <= 0 {
+		return &ValidationError{Field: "AI_DECISION_MAX_QUESTION_INPUT_TOKENS", Message: "must be greater than zero"}
+	}
+	if maxQuestion > maxInput {
+		return &ValidationError{Field: "AI_DECISION_MAX_QUESTION_INPUT_TOKENS", Message: "must not exceed AI_DECISION_MAX_INPUT_TOKENS"}
+	}
+	if provider == "typesafe" {
 		requestLimit, questionLimit := 64000, 32000
-		if c.LongContextEnabled {
+		if longContext {
 			requestLimit, questionLimit = 262000, 262000
 		}
-		if c.MaxInputTokens > requestLimit || c.MaxQuestionInputTokens > questionLimit {
+		if maxInput > requestLimit {
 			return &ValidationError{Field: "AI_DECISION_MAX_INPUT_TOKENS", Message: fmt.Sprintf("configured TypeSafe limits must not exceed %d per request and %d per question", requestLimit, questionLimit)}
+		}
+		if maxQuestion > questionLimit {
+			return &ValidationError{Field: "AI_DECISION_MAX_QUESTION_INPUT_TOKENS", Message: fmt.Sprintf("configured TypeSafe limits must not exceed %d per request and %d per question", requestLimit, questionLimit)}
 		}
 	}
 	return nil

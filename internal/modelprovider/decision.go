@@ -64,10 +64,19 @@ type DecisionGroup struct {
 }
 
 type DecisionRequest struct {
-	Workload        string
-	OperationID     string
-	SettingsVersion string
-	Groups          []DecisionGroup
+	Workload               string
+	OperationID            string
+	SettingsVersion        string
+	MaxInputTokens         int
+	MaxQuestionInputTokens int
+	ConfigurationError     string
+	Groups                 []DecisionGroup
+}
+
+func (r *DecisionRequest) ApplyRuntimeConfig(settings domain.DecisionRuntimeConfig) {
+	r.MaxInputTokens = settings.Provider.MaxInputTokens
+	r.MaxQuestionInputTokens = settings.Provider.MaxQuestionInputTokens
+	r.ConfigurationError = settings.ConfigurationError
 }
 
 type DecisionAnswer struct {

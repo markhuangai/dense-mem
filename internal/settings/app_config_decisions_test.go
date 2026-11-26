@@ -17,7 +17,7 @@ func TestDecisionPreferencesDefaultAndPartialUpdates(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 	repo := newAppConfigRepoStub(now, nil)
-	svc := NewAppConfigServiceWithDecisions(repo, nil, DecisionSettingsOptions{Provider: domain.DecisionProviderStatus{Configured: true, Provider: "openai", Model: "gpt-6-luna"}})
+	svc := NewAppConfigServiceWithDecisions(repo, nil, DecisionSettingsOptions{Provider: domain.DecisionProviderStatus{Configured: true, Provider: "openai", Model: "gpt-6-luna", MaxInputTokens: 32000, MaxQuestionInputTokens: 32000}})
 	svc.now = func() time.Time { return now }
 	initial, err := svc.GetDecisionSettings(ctx)
 	require.NoError(t, err)
@@ -41,7 +41,7 @@ func TestDecisionPreferencesDefaultAndPartialUpdates(t *testing.T) {
 	require.True(t, initial.Effective.Effective.SecurityReview, "running operations retain their snapshot")
 	_, exists := repo.entries[domain.AppConfigDecisionDeduplication]
 	require.False(t, exists, "save must not persist unsupplied defaults")
-	restarted := NewAppConfigServiceWithDecisions(repo, nil, DecisionSettingsOptions{Provider: domain.DecisionProviderStatus{Configured: true, Provider: "typesafe", Model: "jev-1.14.0"}})
+	restarted := NewAppConfigServiceWithDecisions(repo, nil, DecisionSettingsOptions{Provider: domain.DecisionProviderStatus{Configured: true, Provider: "typesafe", Model: "jev-1.14.0", MaxInputTokens: 64000, MaxQuestionInputTokens: 32000}})
 	snapshot, err := restarted.DecisionRuntimeConfig(ctx)
 	require.NoError(t, err)
 	require.False(t, snapshot.Effective.SecurityReview)
@@ -59,7 +59,7 @@ func TestDecisionSettingsRetainStaleOverridesAndLogCause(t *testing.T) {
 	var logs bytes.Buffer
 	repo := newAppConfigRepoStub(now, map[string]string{domain.AppConfigDecisionDeduplication: "false"})
 	logger := observability.NewWithHandler(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	svc := NewAppConfigServiceWithDecisions(repo, nil, DecisionSettingsOptions{Provider: domain.DecisionProviderStatus{Configured: true}, Logger: logger})
+	svc := NewAppConfigServiceWithDecisions(repo, nil, DecisionSettingsOptions{Provider: domain.DecisionProviderStatus{Configured: true, Provider: "openai", MaxInputTokens: 32000, MaxQuestionInputTokens: 32000}, Logger: logger})
 	svc.now = func() time.Time { return now }
 	valid, err := svc.DecisionRuntimeConfig(ctx)
 	require.NoError(t, err)
@@ -75,7 +75,7 @@ func TestDecisionSettingsRetainStaleOverridesAndLogCause(t *testing.T) {
 	require.Contains(t, logs.String(), "settings database unavailable")
 	_, err = svc.UpdateDecisionSettings(ctx, map[string]string{domain.AppConfigDecisionSecurity: "false"}, "control", "", "")
 	require.ErrorContains(t, err, "stale")
-	fresh := NewAppConfigServiceWithDecisions(repo, nil, DecisionSettingsOptions{Provider: domain.DecisionProviderStatus{Configured: true}, Logger: logger})
+	fresh := NewAppConfigServiceWithDecisions(repo, nil, DecisionSettingsOptions{Provider: domain.DecisionProviderStatus{Configured: true, Provider: "openai", MaxInputTokens: 32000, MaxQuestionInputTokens: 32000}, Logger: logger})
 	_, err = fresh.DecisionRuntimeConfig(ctx)
 	require.Error(t, err)
 	require.Contains(t, logs.String(), "no_valid_snapshot")
@@ -93,6 +93,82 @@ func TestDecisionSettingsRetainStaleOverridesAndLogCause(t *testing.T) {
 	require.True(t, retained.Stale)
 	require.Equal(t, recovered.Revision, retained.Revision)
 	require.False(t, retained.Preferences.Deduplication)
+}
+
+func TestDecisionBudgetOverridesAndProviderSwitch(t *testing.T) {
+	ctx := context.Background()
+	var logs bytes.Buffer
+	logger := observability.NewWithHandler(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	repo := newAppConfigRepoStub(time.Now(), nil)
+	openAI := domain.DecisionProviderStatus{Configured: true, Provider: "openai", Model: "decision-model", MaxInputTokens: 32000, MaxQuestionInputTokens: 32000}
+	svc := NewAppConfigServiceWithDecisions(repo, nil, DecisionSettingsOptions{Provider: openAI, QuestionInputInheritsRequest: true, Logger: logger})
+	initial, err := svc.GetDecisionSettings(ctx)
+	require.NoError(t, err)
+	require.Len(t, initial.Items, 8)
+	require.Equal(t, "default", initial.Items[6].Source)
+	require.Equal(t, "32000", initial.Items[6].EffectiveValue)
+	updated, err := svc.UpdateDecisionSettings(ctx, map[string]string{domain.AppConfigDecisionMaxInputTokens: "922000"}, "control", "", "budget-change")
+	require.NoError(t, err)
+	require.Equal(t, 922000, updated.Effective.Provider.MaxInputTokens)
+	require.Equal(t, 922000, updated.Effective.Provider.MaxQuestionInputTokens)
+	require.Equal(t, "override", updated.Items[6].Source)
+	typeSafe := domain.DecisionProviderStatus{Configured: true, Provider: "typesafe", Model: "jev", MaxInputTokens: 64000, MaxQuestionInputTokens: 32000}
+	switched := NewAppConfigServiceWithDecisions(repo, nil, DecisionSettingsOptions{Provider: typeSafe, Logger: logger})
+	invalid, err := switched.GetDecisionSettings(ctx)
+	require.NoError(t, err)
+	require.Contains(t, invalid.Effective.ConfigurationError, "TypeSafe")
+	require.NotEmpty(t, invalid.Items[6].ValidationError)
+	require.Contains(t, logs.String(), "decision.configuration.invalid")
+	require.Contains(t, logs.String(), "exceeds_provider_ceiling")
+	_, err = switched.UpdateDecisionSettings(ctx, map[string]string{domain.AppConfigDecisionMaxInputTokens: "65000"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
+	cleared, err := switched.UpdateDecisionSettings(ctx, map[string]string{domain.AppConfigDecisionMaxInputTokens: ""}, "control", "", "")
+	require.NoError(t, err)
+	require.Empty(t, cleared.Effective.ConfigurationError)
+	require.Equal(t, "default", cleared.Items[6].Source)
+	require.Equal(t, 64000, cleared.Effective.Provider.MaxInputTokens)
+	_, err = switched.UpdateDecisionSettings(ctx, map[string]string{domain.AppConfigDecisionMaxInputTokens: "64000", domain.AppConfigDecisionMaxQuestionInputTokens: "64001"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
+	unconfigured := NewAppConfigService(newAppConfigRepoStub(time.Now(), nil), nil)
+	_, err = unconfigured.UpdateDecisionSettings(ctx, map[string]string{domain.AppConfigDecisionMaxInputTokens: "100", domain.AppConfigDecisionMaxQuestionInputTokens: "101"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
+	_, err = unconfigured.UpdateDecisionSettings(ctx, map[string]string{domain.AppConfigDecisionMaxQuestionInputTokens: "101"}, "control", "", "")
+	require.ErrorIs(t, err, ErrInvalidAppConfig)
+}
+
+func TestDecisionRequestOverrideRespectsQuestionLimitOrigin(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		inherited bool
+		want      int
+	}{
+		{name: "inherited", inherited: true, want: 64000},
+		{name: "explicit equal", want: 32000},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			repo := newAppConfigRepoStub(time.Now(), nil)
+			provider := domain.DecisionProviderStatus{Configured: true, Provider: "openai", MaxInputTokens: 32000, MaxQuestionInputTokens: 32000}
+			svc := NewAppConfigServiceWithDecisions(repo, nil, DecisionSettingsOptions{Provider: provider, QuestionInputInheritsRequest: tc.inherited})
+			updated, err := svc.UpdateDecisionSettings(ctx, map[string]string{domain.AppConfigDecisionMaxInputTokens: "64000"}, "control", "", "")
+			require.NoError(t, err)
+			require.Equal(t, 64000, updated.Effective.Provider.MaxInputTokens)
+			require.Equal(t, tc.want, updated.Effective.Provider.MaxQuestionInputTokens)
+			updated, err = svc.UpdateDecisionSettings(ctx, map[string]string{domain.AppConfigDecisionMaxQuestionInputTokens: "48000"}, "control", "", "")
+			require.NoError(t, err)
+			require.Equal(t, 48000, updated.Effective.Provider.MaxQuestionInputTokens)
+			updated, err = svc.UpdateDecisionSettings(ctx, map[string]string{domain.AppConfigDecisionMaxQuestionInputTokens: ""}, "control", "", "")
+			require.NoError(t, err)
+			require.Equal(t, tc.want, updated.Effective.Provider.MaxQuestionInputTokens)
+			updated, err = svc.UpdateDecisionSettings(ctx, map[string]string{domain.AppConfigDecisionMaxInputTokens: "16000"}, "control", "", "")
+			if tc.inherited {
+				require.NoError(t, err)
+				require.Equal(t, 16000, updated.Effective.Provider.MaxQuestionInputTokens)
+			} else {
+				require.ErrorIs(t, err, ErrInvalidAppConfig)
+			}
+		})
+	}
 }
 
 func TestDecisionSettingsRejectNonBooleanAndUnknownValues(t *testing.T) {

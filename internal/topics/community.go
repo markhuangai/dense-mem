@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/assessor"
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/jsonstrict"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -19,7 +20,7 @@ import (
 	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
 )
 
-const communityPolicy = "community-placement-v1"
+const communityPolicy = "community-placement-v2"
 
 type CommunityAssessor struct {
 	Transport     modelprovider.StructuredTransport
@@ -32,38 +33,40 @@ type CommunityAssessor struct {
 }
 
 func (s CommunityAssessor) Assess(ctx context.Context, operationID string, input contract.CommunityInput, model string) (contract.CommunityOutcome, error) {
+	var settings domain.DecisionRuntimeConfig
+	if s.Decisions != nil {
+		if s.Settings == nil {
+			return contract.CommunityOutcome{}, fmt.Errorf("community placement decision settings unavailable")
+		}
+		var err error
+		settings, err = s.Settings.DecisionRuntimeConfig(ctx)
+		if err != nil {
+			return contract.CommunityOutcome{}, err
+		}
+	}
 	hash, err := modelprovider.DecisionInputHash(struct {
-		Policy string
-		Model  string
-		Input  contract.CommunityInput
-	}{communityPolicy, model, input})
+		Policy, Model, DecisionModel, DecisionVendor string
+		UseDecisions                                 bool
+		Input                                        contract.CommunityInput
+	}{communityPolicy, model, settings.Provider.Model, settings.Provider.Provider, settings.Effective.CommunityPlacement, input})
 	outcome := contract.CommunityOutcome{InputHash: hash, Method: "deterministic", Status: "standalone"}
 	if err != nil || len(input.Candidates) == 0 {
 		return outcome, err
 	}
 	limits := assessor.NormalizeSemanticAssessmentLimits(s.Limits)
+	if s.Decisions != nil && settings.Effective.CommunityPlacement {
+		outcome.Method = "decision"
+		decisionCtx := assessment.AccountDecisions(ctx, s.accounting, uuid.NewString(), settings.Provider.MaxInputTokens)
+		parent, _, decisionErr := s.decide(decisionCtx, operationID, settings, input)
+		if decisionErr != nil {
+			return outcome, decisionErr
+		}
+		return communityParent(outcome, parent), nil
+	}
 	if s.contextWindow > 0 {
 		limits.MaxInputTokens = min(limits.MaxInputTokens, int(s.contextWindow)-limits.MaxOutputTokens)
 		if limits.MaxInputTokens < 1 {
 			return outcome, contract.ErrConfiguration
-		}
-	}
-
-	if s.Decisions != nil {
-		settings, settingsErr := s.Settings.DecisionRuntimeConfig(ctx)
-		if settingsErr != nil {
-			return outcome, settingsErr
-		}
-		if settings.Effective.CommunityPlacement {
-			outcome.Method = "decision"
-			decisionCtx := assessment.AccountDecisions(ctx, s.accounting, uuid.NewString(), limits.MaxOutputTokens)
-			parent, clear, decisionErr := s.decide(decisionCtx, operationID, settings.Revision, input)
-			if decisionErr != nil {
-				return outcome, decisionErr
-			}
-			if clear {
-				return communityParent(outcome, parent), nil
-			}
 		}
 	}
 
@@ -124,29 +127,36 @@ func communityParent(outcome contract.CommunityOutcome, id string) contract.Comm
 	return outcome
 }
 
-func (s CommunityAssessor) decide(ctx context.Context, id, settings string, input contract.CommunityInput) (string, bool, error) {
+func (s CommunityAssessor) decide(ctx context.Context, id string, settings domain.DecisionRuntimeConfig, input contract.CommunityInput) (string, bool, error) {
 	choices := []modelprovider.DecisionOption{{Value: "standalone", Description: "No supplied candidate clearly describes a broader community."}}
 	for _, candidate := range input.Candidates {
 		choices = append(choices, modelprovider.DecisionOption{Value: candidate.ID, Description: candidate.Name})
 	}
 	question := modelprovider.DecisionQuestion{Name: "parent", Type: modelprovider.DecisionChoice, Instructions: "Choose a clearly broader relevant topic for browsing. Preserve the current parent if suitable. Return standalone when no candidate clearly fits.", Choices: choices}
-	request := modelprovider.DecisionRequest{Workload: communityPolicy, OperationID: id, SettingsVersion: settings,
+	request := modelprovider.DecisionRequest{Workload: communityPolicy, OperationID: id, SettingsVersion: settings.Revision,
 		Groups: []modelprovider.DecisionGroup{{ID: "community", Reference: input.Topic.ID, Input: input, Questions: []modelprovider.DecisionQuestion{question}}}}
+	request.ApplyRuntimeConfig(settings)
 	result, err := s.Decisions.Decide(ctx, request)
-	if errors.Is(err, modelprovider.ErrDecisionInputBudgetExceeded) {
-		return "", false, nil
-	}
 	if err == nil {
 		err = modelprovider.ValidateDecisionResult(request, result)
 	}
 	if err != nil {
+		if s.Logger != nil {
+			reason := "decision_failed"
+			if errors.Is(err, modelprovider.ErrDecisionInputBudgetExceeded) {
+				reason = "decision_input_budget_exceeded"
+			}
+			s.Logger.ErrorContext(ctx, "community_placement.decision_routing", "team_id", observability.ExchangeScopeFromContext(ctx).TeamID, "operation_id", id, "policy_mode", "authoritative_closed_set", "settings_version", settings.Revision, "generation_triggered", false, "reason_code", reason, "error", err)
+		}
 		return "", false, fmt.Errorf("community placement decision: %w", err)
 	}
 	answer := result.Answers["parent"]
-	if answer.Probabilities[answer.Choice] < .99 {
-		return "", false, nil
+	probability := answer.Probabilities[answer.Choice]
+	if s.Logger != nil {
+		s.Logger.InfoContext(ctx, "community_placement.decision_routing", "team_id", observability.ExchangeScopeFromContext(ctx).TeamID, "operation_id", id, "policy_mode", "authoritative_closed_set", "threshold", DerivedCommunityPlaceThreshold, "candidate_count", len(input.Candidates), "choice", answer.Choice, "winner_probability", probability, "generation_triggered", false, "settings_version", settings.Revision, "exchange_count", len(result.Receipts))
+		s.Logger.DebugContext(ctx, "community_placement.decision_answers", "operation_id", id, "answer", answer)
 	}
-	if answer.Choice == "standalone" {
+	if answer.Choice == "standalone" || probability < DerivedCommunityPlaceThreshold {
 		return "", true, nil
 	}
 	return answer.Choice, true, nil

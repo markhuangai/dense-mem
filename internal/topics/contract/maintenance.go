@@ -61,18 +61,19 @@ type MaintenanceRun struct {
 type MaintenanceAudit func(MaintenanceRun) (audit.Entry, error)
 
 type MaintenanceClaim struct {
-	ID                    string
-	RunID                 string
-	WindowID              string
-	TeamID                string
-	SpaceID               string
-	Generation            int64
-	LeaseToken            string
-	LeaseUntil            time.Time
-	AttemptLease          time.Duration
-	Sources               []SourceHandle
-	Revisions             map[string]int64
-	PriorAssignmentHashes map[string]string
+	ID                     string
+	RunID                  string
+	WindowID               string
+	TeamID                 string
+	SpaceID                string
+	Generation             int64
+	LeaseToken             string
+	LeaseUntil             time.Time
+	AttemptLease           time.Duration
+	DecisionMaxInputTokens int64
+	Sources                []SourceHandle
+	Revisions              map[string]int64
+	PriorAssignmentHashes  map[string]string
 }
 
 type MaintenanceTurn struct {

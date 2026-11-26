@@ -15,5 +15,5 @@ func buildConfigurationApplication(repo settingscontract.AppConfigRepository, au
 func buildDecisionConfigurationApplication(repo settingscontract.AppConfigRepository, audit settings.ConfigAuditPreparer, cfg config.Config, logger observability.LogProvider) *settings.AppConfigServiceImpl {
 	return settings.NewAppConfigServiceWithDecisions(repo, audit, settings.DecisionSettingsOptions{Provider: domain.DecisionProviderStatus{
 		Configured: cfg.Decision.Configured(), Provider: cfg.Decision.Provider, Model: cfg.Decision.Model, MaxInputTokens: cfg.Decision.MaxInputTokens, MaxQuestionInputTokens: cfg.Decision.MaxQuestionInputTokens, LongContextEnabled: cfg.Decision.LongContextEnabled,
-	}, Logger: logger})
+	}, QuestionInputInheritsRequest: cfg.Decision.QuestionInputInheritsRequest, Logger: logger})
 }

@@ -8,6 +8,7 @@ import (
 )
 
 const MaxProviderDiagnosticBodyBytes = 16 << 20
+const MaxDecisionRequestWireBytes = 64 << 20
 
 const maxProviderDiagnosticIdentifierBytes = 128
 

@@ -488,7 +488,7 @@ func TestControlPortalDecisionConfigPatchItemBound(t *testing.T) {
 	e.HTTPErrorHandler = httperr.ErrorHandler
 	e.PATCH("/control/api/config/decisions", func(c *echo.Context) error {
 		body := httpmw.MustGetValidatedBody[controlDecisionConfigRequest](c.Request().Context(), decisionConfigBodyKey)
-		require.Len(t, body.Items, 6)
+		require.Len(t, body.Items, 8)
 		return c.NoContent(http.StatusNoContent)
 	}, httpmw.BindAndValidateStrict[controlDecisionConfigRequest](decisionConfigBodyKey))
 
@@ -501,6 +501,8 @@ func TestControlPortalDecisionConfigPatchItemBound(t *testing.T) {
 		domain.AppConfigDecisionReranking,
 		domain.AppConfigDecisionTopicAssignment,
 		domain.AppConfigDecisionCommunityPlacement,
+		domain.AppConfigDecisionMaxInputTokens,
+		domain.AppConfigDecisionMaxQuestionInputTokens,
 	} {
 		payload.Items = append(payload.Items, controlTelemetryPricingConfigItemRequest{Key: key, Value: &value})
 	}

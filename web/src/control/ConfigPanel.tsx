@@ -39,6 +39,8 @@ const CONFIG_LABELS: Record<string, string> = {
   RECALL_FEEDBACK_ENABLED: "Enable recall feedback",
   RECALL_FEEDBACK_RETENTION_DAYS: "Investigation retention days",
   DECISION_DEDUPLICATION_ENABLED: "Evidence deduplication",
+  DECISION_MAX_INPUT_TOKENS: "Maximum request input tokens",
+  DECISION_MAX_QUESTION_INPUT_TOKENS: "Maximum input tokens per question",
   DECISION_SECURITY_REVIEW_ENABLED: "Security review",
   DECISION_CONFLICT_REVIEW_ENABLED: "Conflict review",
   DECISION_RECALL_RERANKING_ENABLED: "Recall reranking",
@@ -231,9 +233,27 @@ export function DecisionConfigPanel({ api }: { api: ControlApi }) {
         : "Decision provider is not configured. Saved preferences apply when a provider is configured."}</p>
       <p className="form-meta">All tasks default to on. Saved changes apply to new operations within five seconds.</p>
       <p className="form-meta">Settings revision: <code>{config.effective.revision}</code></p>
+      {config.effective.configuration_error && <div className="banner error" role="alert">{config.effective.configuration_error}</div>}
       {config.effective.stale && <div className="banner error" role="alert">Settings refresh failed. Showing the last verified settings from {formatDate(config.effective.last_verified_at)}.</div>}
     </>}
-    renderItem={(item, value, onChange) => {
+    renderItem={(item, value, onChange, loading) => {
+      if (item.key === "DECISION_MAX_INPUT_TOKENS" || item.key === "DECISION_MAX_QUESTION_INPUT_TOKENS") {
+        return <>
+          <div className="setting-row">
+            <div className="setting-label">
+              <Label htmlFor={item.key}>{CONFIG_LABELS[item.key]}</Label>
+              <p id={`${item.key}-help`}>Effective limit {item.effective_value} tokens</p>
+            </div>
+            <div className="button-row">
+              <Input id={item.key} type="number" min={1} inputMode="numeric" value={value} disabled={loading}
+                placeholder={item.effective_value} aria-describedby={`${item.key}-help`}
+                aria-invalid={item.validation_error ? true : undefined} onChange={(event) => onChange(event.target.value)} />
+              <Button type="button" variant="ghost" onClick={() => onChange("")} disabled={loading || value === ""}>Clear override</Button>
+            </div>
+          </div>
+          {item.validation_error && <p className="field-error span" role="alert">{item.validation_error}</p>}
+        </>;
+      }
       const checked = (value || "true") === "true";
       return <div className="setting-row">
         <div className="setting-label">
@@ -263,7 +283,7 @@ function RuntimeConfigPanel<T extends RuntimeConfig>({
   load: () => Promise<T>;
   save: (input: RuntimeConfigInput) => Promise<T>;
   detail?: (config: T) => ReactNode;
-  renderItem?: (item: ConfigItem, value: string, onChange: (value: string) => void) => ReactNode;
+  renderItem?: (item: ConfigItem, value: string, onChange: (value: string) => void, loading: boolean) => ReactNode;
   changedOnly?: boolean;
 }) {
   const transition = useViewTransition();
@@ -342,7 +362,7 @@ function RuntimeConfigPanel<T extends RuntimeConfig>({
             <legend>{group}</legend>
             {items.map((item) => {
               const onChange = (value: string) => setDraft((current) => ({ ...current, [item.key]: value }));
-              return <Fragment key={item.key}>{renderItem?.(item, draft[item.key] ?? "", onChange) ?? <ConfigField item={item} value={draft[item.key] ?? ""} onChange={onChange} />}</Fragment>;
+              return <Fragment key={item.key}>{renderItem?.(item, draft[item.key] ?? "", onChange, loading) ?? <ConfigField item={item} value={draft[item.key] ?? ""} onChange={onChange} />}</Fragment>;
             })}
           </fieldset>)}
           <div className="button-row span">
@@ -358,6 +378,7 @@ function RuntimeConfigPanel<T extends RuntimeConfig>({
 }
 
 function configGroup(key: string): string {
+  if (key === "DECISION_MAX_INPUT_TOKENS" || key === "DECISION_MAX_QUESTION_INPUT_TOKENS") return "Model capacity";
   if (key.startsWith("TOPIC_MAINTENANCE_")) {
     if (key === "TOPIC_MAINTENANCE_TEAM_OVERRIDES_JSON") return "Team overrides";
     if (key.endsWith("_TOKENS")) return "Model capacity";

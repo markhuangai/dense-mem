@@ -36,6 +36,23 @@ for (const width of [1440, 768, 390]) {
     await security.click();
     await page.getByRole("button", { name: "Save config", exact: true }).click();
     await expect(page.getByRole("status")).toContainText("Changes saved");
+    const requestBudget = page.getByLabel("Maximum request input tokens");
+    const questionBudget = page.getByLabel("Maximum input tokens per question");
+    await requestBudget.fill("40000");
+    await page.getByRole("button", { name: "Save config", exact: true }).click();
+    await expect(page.getByText("Effective limit 40000 tokens").first()).toBeVisible();
+    await expect(page.getByText("Effective limit 32000 tokens")).toBeVisible();
+    await requestBudget.locator("..").getByRole("button", { name: "Clear override" }).click();
+    await page.getByRole("button", { name: "Save config", exact: true }).click();
+    await expect(page.getByRole("status")).toContainText("Changes saved");
+    await requestBudget.fill("100");
+    await questionBudget.fill("101");
+    await page.getByRole("button", { name: "Save config", exact: true }).click();
+    await expect(page.getByRole("alert")).toContainText("must not exceed");
+    await page.getByRole("button", { name: "Refresh decision config" }).click();
+    await confirmAction(page, "Discard changes");
+    await expect(requestBudget).toHaveValue("");
+    await expect(questionBudget).toHaveValue("");
     await page.route("**/control/api/config/decisions", async (route) => {
       if (route.request().method() === "PATCH") await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ message: "Decision settings unavailable" }) });
       else await route.continue();

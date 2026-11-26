@@ -61,6 +61,7 @@ var relevanceLevels = []modelprovider.DecisionLevel{
 func (r *Retrieval) rank(ctx context.Context, frontier string, input any, groups []modelprovider.DecisionGroup) (modelprovider.DecisionStage, error) {
 	snapshot, _ := recallDecisions(ctx)
 	request := modelprovider.DecisionRequest{Workload: "recall_reranking", OperationID: snapshot.operationID, SettingsVersion: snapshot.settings.Revision, Groups: groups}
+	request.ApplyRuntimeConfig(snapshot.settings)
 	hash, err := modelprovider.DecisionInputHash(map[string]any{"input": input, "groups": groups})
 	stage := modelprovider.DecisionStage{Workload: "recall_reranking", InputHash: hash, Settings: snapshot.settings, PolicyRevision: modelprovider.DecisionPolicyRevision, Action: "retain_original_ranking", Reason: "optional_provider_failure"}
 	stage.References = make(map[string]string, len(groups))

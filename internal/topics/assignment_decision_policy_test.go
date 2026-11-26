@@ -9,8 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestDecisionPolicyV1LabeledAssignments(t *testing.T) {
-	require.Equal(t, "topic-assignment-v1", assignment.PolicyVersion)
+func TestDecisionPolicyV2LabeledAssignments(t *testing.T) {
+	require.Equal(t, "topic-assignment-v2", assignment.PolicyVersion)
 	topics := []assignment.Topic{
 		{ID: "postgres", Version: 2, Label: "PostgreSQL"},
 		{ID: "recovery", Version: 1, Label: "Disaster recovery"},
@@ -27,10 +27,12 @@ func TestDecisionPolicyV1LabeledAssignments(t *testing.T) {
 		{"Change the PostgreSQL statement timeout for reporting jobs.", [3]float64{.993, .01, .005}, .01, []string{"postgres"}, false},
 		{"Partition customers by tenant ID across database shards.", [3]float64{.01, .001, .995}, .008, []string{"sharding"}, false},
 		{"Restore PostgreSQL, then rotate the exposed database credentials.", [3]float64{.999, .997, .007}, .995, nil, true},
-		{"Confirm whether the PostgreSQL replicas share a failure domain.", [3]float64{.997, .73, .003}, .008, nil, true},
-		{"Call me when this is done.", [3]float64{.004, .003, .01}, .002, nil, true},
-		{"Change PostgreSQL's autovacuum threshold.", [3]float64{.989, .002, .002}, .008, nil, true},
-		{"Change PostgreSQL's autovacuum threshold.", [3]float64{.995, .002, .006}, .011, nil, true},
+		{"Confirm whether the PostgreSQL replicas share a failure domain.", [3]float64{.997, .73, .003}, .008, []string{"postgres"}, false},
+		{"Call me when this is done.", [3]float64{.004, .003, .01}, .002, nil, false},
+		{"Boundary match", [3]float64{.80, .799, .002}, .799, []string{"postgres"}, false},
+		{"Boundary uncovered", [3]float64{.85, .002, .002}, .80, nil, true},
+		{"Change PostgreSQL's autovacuum threshold.", [3]float64{.989, .002, .002}, .008, []string{"postgres"}, false},
+		{"Change PostgreSQL's autovacuum threshold.", [3]float64{.995, .002, .006}, .011, []string{"postgres"}, false},
 	} {
 		t.Run(label.evidence, func(t *testing.T) {
 			answers := map[string]modelprovider.DecisionAnswer{

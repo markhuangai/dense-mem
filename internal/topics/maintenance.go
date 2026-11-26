@@ -360,6 +360,7 @@ type maintenanceAttemptKey struct {
 type maintenanceAttemptAccounting struct {
 	repository    contract.MaintenanceRepository
 	claim         contract.MaintenanceClaim
+	logger        *slog.Logger
 	now           func() time.Time
 	attemptLease  time.Duration
 	decisionLease time.Duration
@@ -369,7 +370,7 @@ type maintenanceAttemptAccounting struct {
 }
 
 func (s *MaintenanceService) maintenanceAdmission(ctx context.Context, claim contract.MaintenanceClaim, renewable bool) (context.Context, context.CancelFunc, *maintenanceAttemptAccounting) {
-	accounting := &maintenanceAttemptAccounting{repository: s.deps.Repository, claim: claim, now: s.deps.Now, admitted: map[maintenanceAttemptKey]bool{}}
+	accounting := &maintenanceAttemptAccounting{repository: s.deps.Repository, claim: claim, logger: s.deps.Logger, now: s.deps.Now, admitted: map[maintenanceAttemptKey]bool{}}
 	deadline := claim.LeaseUntil.Add(-5 * time.Second)
 	if !renewable {
 		turnCtx, cancel := context.WithDeadline(ctx, deadline)
@@ -395,15 +396,27 @@ func (s *MaintenanceService) maintenanceAdmission(ctx context.Context, claim con
 
 func (a *maintenanceAttemptAccounting) BeforeAttempt(ctx context.Context, id string, number, input, output int) (context.Context, error) {
 	claim := a.claim
+	decisionAccounting := modelprovider.DecisionAccountingFromContext(ctx)
+	if decision, ok := decisionAccounting.(interface{ DecisionInputLimit() int }); ok {
+		claim.DecisionMaxInputTokens = int64(decision.DecisionInputLimit())
+	}
 	if a.extend != nil {
 		claim.AttemptLease = a.attemptLease
-		if modelprovider.DecisionAccountingFromContext(ctx) != nil {
+		if decisionAccounting != nil {
 			claim.AttemptLease = max(claim.AttemptLease, a.decisionLease)
 		}
 	}
 	return modelprovider.WithAdmissionCallback(ctx, func(dispatchCtx context.Context) error {
 		now := a.now()
-		if err := a.repository.AdmitMaintenanceAttempt(dispatchCtx, claim, id, number, input, output, now); err != nil {
+		err := a.repository.AdmitMaintenanceAttempt(dispatchCtx, claim, id, number, input, output, now)
+		if decisionAccounting != nil && a.logger != nil {
+			level, outcome := slog.LevelInfo, "admitted"
+			if err != nil {
+				level, outcome = slog.LevelError, "admission_failed"
+			}
+			a.logger.Log(dispatchCtx, level, "topic maintenance assessment attempt", "team_id", claim.TeamID, "run_id", claim.RunID, "batch_id", claim.ID, "assessment_id", id, "attempt", number, "estimated_input_tokens", input, "effective_max_input_tokens", claim.DecisionMaxInputTokens, "outcome", outcome, "failure_code", maintenanceDiagnosticError(err), "error", err)
+		}
+		if err != nil {
 			return err
 		}
 		a.mu.Lock()
@@ -426,5 +439,13 @@ func (a *maintenanceAttemptAccounting) AfterAttempt(ctx context.Context, id stri
 		}
 		return nil
 	}
-	return a.repository.ReconcileMaintenanceAttempt(ctx, a.claim, id, attempt)
+	err := a.repository.ReconcileMaintenanceAttempt(ctx, a.claim, id, attempt)
+	if modelprovider.DecisionAccountingFromContext(ctx) != nil && a.logger != nil {
+		level, outcome := slog.LevelInfo, "reconciled"
+		if err != nil {
+			level, outcome = slog.LevelError, "reconciliation_failed"
+		}
+		a.logger.Log(ctx, level, "topic maintenance assessment attempt", "team_id", a.claim.TeamID, "run_id", a.claim.RunID, "batch_id", a.claim.ID, "assessment_id", id, "attempt", attempt.Number, "outcome", outcome, "failure_code", maintenanceDiagnosticError(err), "error", err)
+	}
+	return err
 }

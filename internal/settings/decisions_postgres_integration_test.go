@@ -22,7 +22,7 @@ import (
 )
 
 func decisionServiceForPostgres(db *gorm.DB, rls *storagepostgres.RLS, provider string) *settings.AppConfigServiceImpl {
-	return settings.NewAppConfigServiceWithDecisions(settingspostgres.NewAppConfigRepository(db, rls), auditapp.New(auditpostgres.NewStore(db, rls)), settings.DecisionSettingsOptions{Provider: domain.DecisionProviderStatus{Configured: provider != "disabled", Provider: provider, Model: map[string]string{"openai": "gpt-6-luna", "typesafe": "jev-1.14.0"}[provider]}})
+	return settings.NewAppConfigServiceWithDecisions(settingspostgres.NewAppConfigRepository(db, rls), auditapp.New(auditpostgres.NewStore(db, rls)), settings.DecisionSettingsOptions{Provider: domain.DecisionProviderStatus{Configured: provider != "disabled", Provider: provider, Model: map[string]string{"openai": "gpt-6-luna", "typesafe": "jev-1.14.0"}[provider], MaxInputTokens: 32000, MaxQuestionInputTokens: 32000}, QuestionInputInheritsRequest: provider == "openai"})
 }
 
 func preserveDecisionConfig(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS) func() {
@@ -35,6 +35,8 @@ func preserveDecisionConfig(t *testing.T, db *gorm.DB, rls *storagepostgres.RLS)
 		domain.AppConfigDecisionReranking,
 		domain.AppConfigDecisionTopicAssignment,
 		domain.AppConfigDecisionCommunityPlacement,
+		domain.AppConfigDecisionMaxInputTokens,
+		domain.AppConfigDecisionMaxQuestionInputTokens,
 		domain.AppConfigUpdateTimeKey,
 	}
 	original, err := settingspostgres.NewAppConfigRepository(db, rls).List(ctx)
@@ -188,6 +190,45 @@ func TestDecisionSettingsControlAuthorizationAndStrictPatch(t *testing.T) {
 		TopicAssignment:    true,
 		CommunityPlacement: true,
 	}, persisted.Overrides)
+}
+
+func TestDecisionBudgetPostgresProviderSwitchAndControl(t *testing.T) {
+	db, rls, cleanup := openSettingsPostgres(t)
+	defer cleanup()
+	restore := preserveDecisionConfig(t, db, rls)
+	defer restore()
+	openAI := decisionServiceForPostgres(db, rls, "openai")
+	updated, err := openAI.UpdateDecisionSettings(context.Background(), map[string]string{domain.AppConfigDecisionMaxInputTokens: "922000"}, "control", "", "budget-provider-switch")
+	require.NoError(t, err)
+	require.Equal(t, 922000, updated.Effective.Provider.MaxQuestionInputTokens)
+	explicit := settings.NewAppConfigServiceWithDecisions(settingspostgres.NewAppConfigRepository(db, rls), nil, settings.DecisionSettingsOptions{Provider: domain.DecisionProviderStatus{Configured: true, Provider: "openai", Model: "gpt-6-luna", MaxInputTokens: 32000, MaxQuestionInputTokens: 32000}})
+	explicitSettings, err := explicit.DecisionRuntimeConfig(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 922000, explicitSettings.Provider.MaxInputTokens)
+	require.Equal(t, 32000, explicitSettings.Provider.MaxQuestionInputTokens)
+	typeSafe := decisionServiceForPostgres(db, rls, "typesafe")
+	e, err := densehttp.NewControlPortalServerWithServices(&config.Config{ControlPortalToken: "decision-settings-control"}, nil, nil, nil, densehttp.ControlPortalServices{Config: typeSafe, Decisions: typeSafe}, densehttp.HealthConfig{}, nil, nil)
+	require.NoError(t, err)
+	read := controlRequest(e, http.MethodGet, "/control/api/config/decisions", "decision-settings-control", "")
+	require.Equal(t, http.StatusOK, read.Code)
+	var envelope struct {
+		Data domain.DecisionConfigSettings `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(read.Body.Bytes(), &envelope))
+	require.Len(t, envelope.Data.Items, 8)
+	require.Contains(t, envelope.Data.Effective.ConfigurationError, "TypeSafe")
+	require.NotEmpty(t, envelope.Data.Items[6].ValidationError)
+	rejected := controlRequest(e, http.MethodPatch, "/control/api/config/decisions", "decision-settings-control", `{"items":[{"key":"DECISION_MAX_INPUT_TOKENS","value":"65000"}]}`)
+	require.Equal(t, http.StatusUnprocessableEntity, rejected.Code)
+	cleared := controlRequest(e, http.MethodPatch, "/control/api/config/decisions", "decision-settings-control", `{"items":[{"key":"DECISION_MAX_INPUT_TOKENS","value":""}]}`)
+	require.Equal(t, http.StatusOK, cleared.Code, cleared.Body.String())
+	envelope.Data = domain.DecisionConfigSettings{}
+	require.NoError(t, json.Unmarshal(cleared.Body.Bytes(), &envelope))
+	require.Len(t, envelope.Data.Items, 8)
+	require.Empty(t, envelope.Data.Effective.ConfigurationError)
+	require.Empty(t, envelope.Data.Items[6].ValidationError)
+	require.Equal(t, "default", envelope.Data.Items[6].Source)
+	require.Equal(t, 32000, envelope.Data.Effective.Provider.MaxInputTokens)
 }
 
 func TestDecisionSettingsRefreshWaitHonorsCancellation(t *testing.T) {

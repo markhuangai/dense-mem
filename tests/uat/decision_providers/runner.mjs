@@ -115,6 +115,7 @@ try {
   const saved = await control(controlURL);
   assert.equal(saved.effective.preferences.security_review, false);
   assert.equal(saved.effective.effective.deduplication, true);
+  await control(controlURL, [{ key: "DECISION_MAX_INPUT_TOKENS", value: "922000" }, { key: "DECISION_MAX_QUESTION_INPUT_TOKENS", value: "922000" }]);
   childID = createTypeSafeInstance();
   assert(/^[a-f0-9]{64}$/.test(childID), "test container identity is required");
   docker(["start",childID]);
@@ -127,10 +128,29 @@ try {
   const typesafe = await control(typesafeControl);
   assert.equal(typesafe.effective.provider.provider, "typesafe");
   assert.equal(typesafe.effective.preferences.security_review, false, "saved off survives provider change and process startup");
+  assert(typesafe.effective.configuration_error.includes("TypeSafe"));
+  assert(typesafe.items.some((item) => item.validation_error));
+  const invalidPatch = await fetch(`${typesafeControl}/control/api/config/decisions`, { method: "PATCH", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ items: [{ key: "DECISION_MAX_INPUT_TOKENS", value: "65000" }] }) });
+  assert.equal(invalidPatch.status, 422);
+  const restored = await control(typesafeControl, [{ key: "DECISION_MAX_INPUT_TOKENS", value: "" }, { key: "DECISION_MAX_QUESTION_INPUT_TOKENS", value: "" }]);
+  assert(!restored.effective.configuration_error);
+  assert(restored.items.filter((item) => item.key.startsWith("DECISION_MAX_")).every((item) => item.source === "default"));
   await control(typesafeControl, [{ key: "DECISION_SECURITY_REVIEW_ENABLED", value: "true" }]);
   const typesafeUser = `http://${childName}:8080`;
   const jev = await remember(typesafeUser, "TypeSafe");
   assert.equal(jev.result.processing_state, "completed");
+  await control(controlURL, [{ key: "DECISION_MAX_INPUT_TOKENS", value: "922000" }, { key: "DECISION_MAX_QUESTION_INPUT_TOKENS", value: "922000" }]);
+  await until(async () => Boolean((await control(typesafeControl)).effective.configuration_error));
+  const beforeInvalid = (await fixture()).exchanges.length;
+  const rejectedConfiguration = await callTool(typesafeUser, apiKey, "remember", { target_space: "team_shared", idempotency_key: `decision-${randomUUID()}`, evidence: [{ content: `${prefix} Invalid provider budget.`, source_type: "manual" }] });
+  assert(rejectedConfiguration.isError || rejectedConfiguration.receipt.processing_state === "failed");
+  assert.equal((await fixture()).exchanges.length, beforeInvalid, "invalid provider budgets must fail before HTTP dispatch");
+  const invalidLogs = spawnSync("docker", ["logs", childID], { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
+  assert.equal(invalidLogs.status, 0);
+  const invalidText = `${invalidLogs.stdout}\n${invalidLogs.stderr}`;
+  assert(invalidText.includes("decision.configuration.invalid") && invalidText.includes("exceeds_provider_ceiling"));
+  assert(!invalidText.includes("dense-mem-e2e-decision-key"));
+  await control(typesafeControl, [{ key: "DECISION_MAX_INPUT_TOKENS", value: "" }, { key: "DECISION_MAX_QUESTION_INPUT_TOKENS", value: "" }]);
   const beforeBudget = (await fixture()).exchanges.length;
   const oversized = await callTool(typesafeUser, apiKey, "remember", {
     target_space: "team_shared", idempotency_key: `decision-${randomUUID()}`,
@@ -228,14 +248,34 @@ async function verifyTopicRouting(base, adminBase, vendor) {
     await admin("/config/topic-maintenance", { items: [{ key: "TOPIC_MAINTENANCE_ENABLED", value: "true" }, { key: "TOPIC_MAINTENANCE_CONTEXT_WINDOW_TOKENS", value: "300000" }] }, "PATCH");
     await store("Atlas uses PostgreSQL.");
     const beforeGeneration = await generations();
+    await fixture("topic-boundary");
     const start = (await fixture()).exchanges.length;
     const familiar = await store("Orion stores records in PostgreSQL.");
     assert.equal(await generations(), beforeGeneration, "a clear match with no uncovered subject must complete through Decisions");
     const mixed = await store("Vega keeps backups of PostgreSQL.");
     assert.equal(await generations(), beforeGeneration + 1, "a covered and an uncovered subject must request a complete structured assignment");
+    await fixture("topic-uncategorized");
+    const beforeUncategorized = (await fixture()).exchanges.length;
+    await store("Pluto maintains PostgreSQL status dashboards.");
+    const uncategorized = (await fixture()).exchanges.slice(beforeUncategorized).filter((item) => item.vendor === vendor && item.names.includes("uncovered"));
+    assert.equal(uncategorized.length, 1, "uncategorized test must reach a Decision with existing candidates");
+    assert.equal(await generations(), beforeGeneration + 1, "a clear uncategorized Decision must skip generation");
+    await fixture("normal");
     const routed = (await fixture()).exchanges.slice(start).filter((item) => item.vendor === vendor && item.names.includes("uncovered"));
-    assert.equal(routed.length, 2);
+    assert.equal(routed.length, 3);
     assert(routed.every((item) => item.names.some((name) => name.startsWith("match_"))));
+    if (vendor === "openai") {
+      const logs = spawnSync("docker", ["compose", "-p", project, "-f", compose, "logs", "--no-color", "server"], { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
+      assert.equal(logs.status, 0);
+      const records = `${logs.stdout}\n${logs.stderr}`.split("\n").flatMap((line) => {
+        const start = line.indexOf("{");
+        if (start < 0) return [];
+        try { return [JSON.parse(line.slice(start))]; } catch { return []; }
+      }).filter((entry) => entry.msg === "topic_assignment.decision_routing");
+      assert(records.some((entry) => entry.selected_count > 0 && entry.uncovered_probability === 0.2 && entry.generation_triggered === false));
+      assert(records.some((entry) => entry.selected_count === 0 && entry.uncovered_probability === 0.2 && entry.generation_triggered === false));
+      assert(records.some((entry) => entry.uncovered_probability === 0.85 && entry.generation_triggered === true));
+    }
     const recall = (args) => callTool(base, actor.api_key, "recall_memory", args).then((result) => result.receipt);
     const topics = (await recall({ query: "PostgreSQL backups", limit: 20, topic_limit: 10 })).related_topics;
     const storage = topics.find((topic) => topic.name === "memory-storage");

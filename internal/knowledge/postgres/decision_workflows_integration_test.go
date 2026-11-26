@@ -173,7 +173,7 @@ func TestDecisionRememberPostgresAtomicityReplayIsolationAndSettingsSnapshot(t *
 			return nil
 		}))
 	}()
-	options := settings.DecisionSettingsOptions{Provider: domain.DecisionProviderStatus{Configured: true, Provider: "openai", Model: "gpt-6-luna"}}
+	options := settings.DecisionSettingsOptions{Provider: domain.DecisionProviderStatus{Configured: true, Provider: "openai", Model: "gpt-6-luna", MaxInputTokens: 32000, MaxQuestionInputTokens: 32000}}
 	controls := settings.NewAppConfigServiceWithDecisions(repository, nil, options)
 	initial, err := controls.DecisionRuntimeConfig(ctx)
 	require.NoError(t, err)
