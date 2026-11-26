@@ -127,7 +127,7 @@ func testCurrentTopicWriterDrain(t *testing.T) {
 	lockCtx, cancelLockWait := context.WithCancel(ctx)
 	defer cancelLockWait()
 	lockLogs := newRecordingLogger()
-	go func() { waiting <- RunUp(lockCtx, db, time.Minute, lockLogs) }()
+	go func() { waiting <- RunUp(lockCtx, db, 0, lockLogs) }()
 	waitForPrepareRetry(lockLogs)
 	cancelLockWait()
 	require.ErrorIs(t, <-waiting, context.Canceled)
@@ -136,8 +136,8 @@ func testCurrentTopicWriterDrain(t *testing.T) {
 
 	timeoutLogs := newProgressLog(t)
 	const timeoutReason = "feature_storage_relational_topics_prepare_lock_timeout: table lock unavailable (SQLSTATE 55P03)"
-	err = RunUp(ctx, db, 2*time.Minute, timeoutLogs.logger)
-	require.Error(t, err)
+	err = RunUp(ctx, db, 6*time.Second, timeoutLogs.logger)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.Equal(t, timeoutReason, storage.MigrationFailureReason(err))
 	var terminal map[string]any
 	for _, event := range timeoutLogs.records(t) {
@@ -163,10 +163,15 @@ func testCurrentTopicWriterDrain(t *testing.T) {
 
 	results := make(chan error, 2)
 	prepareLogs := newRecordingLogger()
-	for range 2 {
-		go func() { results <- RunUp(ctx, db, time.Minute, prepareLogs) }()
+	for _, timeout := range []time.Duration{0, 3 * time.Minute} {
+		go func() { results <- RunUp(ctx, db, timeout, prepareLogs) }()
 	}
 	waitForPrepareRetry(prepareLogs)
+	select {
+	case err := <-results:
+		t.Fatalf("migration returned while the preparation lock was held: %v", err)
+	case <-time.After(65 * time.Second):
+	}
 	require.NoError(t, blocker.Rollback().Error)
 	for range 2 {
 		require.NoError(t, <-results)

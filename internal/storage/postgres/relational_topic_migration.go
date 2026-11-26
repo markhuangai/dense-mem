@@ -27,8 +27,6 @@ func isRelationalTopicPrepareLock(err error) bool {
 }
 
 func retryRelationalTopicPrepare(ctx context.Context, provider *goose.Provider, lockErr error) error {
-	retryCtx, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	progress := MigrationProgressFromContext(ctx)
@@ -42,11 +40,11 @@ func retryRelationalTopicPrepare(ctx context.Context, provider *goose.Provider, 
 			progress.Report("prepare_lock", "migration", "waiting", "attempts", "attempts", &attempts, nil)
 		}
 		select {
-		case <-retryCtx.Done():
+		case <-ctx.Done():
 		case <-ticker.C:
 		}
-		if retryCtx.Err() != nil {
-			if err := ctx.Err(); err != nil {
+		if err := ctx.Err(); err != nil {
+			if errors.Is(err, context.Canceled) {
 				return err
 			}
 			const reason = "feature_storage_relational_topics_prepare_lock_timeout: table lock unavailable (SQLSTATE 55P03)"
@@ -55,10 +53,10 @@ func retryRelationalTopicPrepare(ctx context.Context, provider *goose.Provider, 
 				progress.SetFeatureTransactionOutcome("unconfirmed")
 				progress.FeatureStorageFailure("failed", reason)
 			}
-			return &MigrationFailure{Cause: lockErr, Reason: reason}
+			return &MigrationFailure{Cause: errors.Join(err, lockErr), Reason: reason}
 		}
 
-		_, err := provider.UpTo(retryCtx, RelationalTopicPrepareVersion)
+		_, err := provider.UpTo(ctx, RelationalTopicPrepareVersion)
 		switch {
 		case err == nil:
 			if progress != nil {
@@ -68,7 +66,7 @@ func retryRelationalTopicPrepare(ctx context.Context, provider *goose.Provider, 
 			return nil
 		case isRelationalTopicPrepareLock(err):
 			lockErr = err
-		case retryCtx.Err() == nil || !errors.Is(err, retryCtx.Err()):
+		case ctx.Err() == nil || !errors.Is(err, ctx.Err()):
 			return err
 		}
 	}
