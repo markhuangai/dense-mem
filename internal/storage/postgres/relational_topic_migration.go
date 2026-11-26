@@ -37,14 +37,25 @@ func retryRelationalTopicPrepare(ctx context.Context, provider *goose.Provider, 
 	}
 
 	// PostgreSQL maintenance can hold a conflicting lock even after application writers stop.
-	for attempts := int64(1); retryCtx.Err() == nil; attempts++ {
+	for attempts := int64(1); ; attempts++ {
 		if progress != nil {
 			progress.Report("prepare_lock", "migration", "waiting", "attempts", "attempts", &attempts, nil)
 		}
 		select {
 		case <-retryCtx.Done():
-			continue
 		case <-ticker.C:
+		}
+		if retryCtx.Err() != nil {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			const reason = "feature_storage_relational_topics_prepare_lock_timeout: table lock unavailable (SQLSTATE 55P03)"
+			if progress != nil {
+				progress.FeatureStorageDatabaseFailure(lockErr)
+				progress.SetFeatureTransactionOutcome("unconfirmed")
+				progress.FeatureStorageFailure("failed", reason)
+			}
+			return &MigrationFailure{Cause: lockErr, Reason: reason}
 		}
 
 		_, err := provider.UpTo(retryCtx, RelationalTopicPrepareVersion)
@@ -60,13 +71,6 @@ func retryRelationalTopicPrepare(ctx context.Context, provider *goose.Provider, 
 		case retryCtx.Err() == nil || !errors.Is(err, retryCtx.Err()):
 			return err
 		}
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return &MigrationFailure{
-		Cause:  lockErr,
-		Reason: "feature_storage_relational_topics_prepare_lock_timeout: table lock unavailable (SQLSTATE 55P03)",
 	}
 }
 

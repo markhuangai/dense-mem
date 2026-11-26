@@ -134,6 +134,33 @@ func testCurrentTopicWriterDrain(t *testing.T) {
 	require.NoError(t, admin.Raw(`SELECT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname='offline_upgrade_fence')`).Row().Scan(&applied))
 	require.False(t, applied, "failed preparation attempts must roll back the write fence")
 
+	timeoutLogs := newProgressLog(t)
+	const timeoutReason = "feature_storage_relational_topics_prepare_lock_timeout: table lock unavailable (SQLSTATE 55P03)"
+	err = RunUp(ctx, db, 2*time.Minute, timeoutLogs.logger)
+	require.Error(t, err)
+	require.Equal(t, timeoutReason, storage.MigrationFailureReason(err))
+	var terminal map[string]any
+	for _, event := range timeoutLogs.records(t) {
+		if event["msg"] == "relational_topic_migration_failed" {
+			require.Nil(t, terminal, "preparation must emit one terminal failure")
+			terminal = event
+		}
+	}
+	require.NotNil(t, terminal, "a held lock must produce a protected terminal record")
+	require.Equal(t, "ERROR", terminal["level"])
+	require.Equal(t, "prepare_lock", terminal["phase"])
+	require.Equal(t, "failed", terminal["state"])
+	require.Equal(t, timeoutReason, terminal["failure_reason"])
+	require.Equal(t, "55P03", terminal["sqlstate"])
+	require.Equal(t, float64(storage.RelationalTopicPrepareVersion), terminal["migration_version"])
+	require.Equal(t, "attempts", terminal["metric"])
+	require.Greater(t, terminal["completed"], float64(1))
+	require.NotEmpty(t, terminal["migration_execution_id"])
+	require.Equal(t, "resume_matching_application_after_resolving_reported_cause", terminal["recovery_action"])
+	require.NoError(t, admin.Raw(`SELECT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname='offline_upgrade_fence')
+		OR EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=? AND is_applied)`, storage.RelationalTopicPrepareVersion).Row().Scan(&applied))
+	require.False(t, applied, "expired preparation must leave no write fence or applied version")
+
 	results := make(chan error, 2)
 	prepareLogs := newRecordingLogger()
 	for range 2 {
