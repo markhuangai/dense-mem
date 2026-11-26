@@ -396,19 +396,20 @@ func (s *MaintenanceService) maintenanceAdmission(ctx context.Context, claim con
 
 func (a *maintenanceAttemptAccounting) BeforeAttempt(ctx context.Context, id string, number, input, output int) (context.Context, error) {
 	claim := a.claim
-	if decision, ok := modelprovider.DecisionAccountingFromContext(ctx).(interface{ DecisionInputLimit() int }); ok {
+	decisionAccounting := modelprovider.DecisionAccountingFromContext(ctx)
+	if decision, ok := decisionAccounting.(interface{ DecisionInputLimit() int }); ok {
 		claim.DecisionMaxInputTokens = int64(decision.DecisionInputLimit())
 	}
 	if a.extend != nil {
 		claim.AttemptLease = a.attemptLease
-		if modelprovider.DecisionAccountingFromContext(ctx) != nil {
+		if decisionAccounting != nil {
 			claim.AttemptLease = max(claim.AttemptLease, a.decisionLease)
 		}
 	}
 	return modelprovider.WithAdmissionCallback(ctx, func(dispatchCtx context.Context) error {
 		now := a.now()
 		err := a.repository.AdmitMaintenanceAttempt(dispatchCtx, claim, id, number, input, output, now)
-		if a.logger != nil {
+		if decisionAccounting != nil && a.logger != nil {
 			level, outcome := slog.LevelInfo, "admitted"
 			if err != nil {
 				level, outcome = slog.LevelError, "admission_failed"
@@ -439,7 +440,7 @@ func (a *maintenanceAttemptAccounting) AfterAttempt(ctx context.Context, id stri
 		return nil
 	}
 	err := a.repository.ReconcileMaintenanceAttempt(ctx, a.claim, id, attempt)
-	if a.logger != nil {
+	if modelprovider.DecisionAccountingFromContext(ctx) != nil && a.logger != nil {
 		level, outcome := slog.LevelInfo, "reconciled"
 		if err != nil {
 			level, outcome = slog.LevelError, "reconciliation_failed"

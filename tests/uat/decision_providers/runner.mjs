@@ -255,7 +255,10 @@ async function verifyTopicRouting(base, adminBase, vendor) {
     const mixed = await store("Vega keeps backups of PostgreSQL.");
     assert.equal(await generations(), beforeGeneration + 1, "a covered and an uncovered subject must request a complete structured assignment");
     await fixture("topic-uncategorized");
-    await store("Pluto operates an unclassified experimental process.");
+    const beforeUncategorized = (await fixture()).exchanges.length;
+    await store("Pluto maintains PostgreSQL status dashboards.");
+    const uncategorized = (await fixture()).exchanges.slice(beforeUncategorized).filter((item) => item.vendor === vendor && item.names.includes("uncovered"));
+    assert.equal(uncategorized.length, 1, "uncategorized test must reach a Decision with existing candidates");
     assert.equal(await generations(), beforeGeneration + 1, "a clear uncategorized Decision must skip generation");
     await fixture("normal");
     const routed = (await fixture()).exchanges.slice(start).filter((item) => item.vendor === vendor && item.names.includes("uncovered"));
