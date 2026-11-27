@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
-import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import type { TelemetrySnapshot } from "../src/telemetry/types";
-import { expectPageContained, navigate } from "../tests-support/portal";
+import { expectPageContained, expectPortalAccessible, navigate } from "../tests-support/portal";
 
 const controlURL = process.env.DENSE_MEM_CONTROL_URL!.replace(/\/$/, "");
 const userURL = process.env.DENSE_MEM_USER_URL!.replace(/\/$/, "");
@@ -149,14 +148,16 @@ for (const theme of ["Light", "Dark"] as const) {
 }
 
 async function pickTheme(page: Page, theme: "Light" | "Dark") {
-  await page.getByRole("button", { name: "Choose theme", exact: true }).click();
+  const trigger = page.getByRole("button", { name: "Choose theme", exact: true });
+  await trigger.click();
   await page.getByRole("menuitem", { name: theme, exact: true }).click();
   await expect(page.locator("main")).toHaveAttribute("data-theme", theme.toLowerCase());
+  await expect(page.locator('[data-slot="dropdown-menu-content"]')).toBeHidden();
+  await expect(trigger).toBeFocused();
 }
 
 async function checkAccess(page: Page, view: string) {
-  const { violations } = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
-  expect(violations.map(({ id, nodes }) => ({ id, elements: nodes.map(({ target }) => target) })), view).toEqual([]);
+  await expectPortalAccessible(page, view);
   await expectPageContained(page);
 }
 

@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
-import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import type { SaveTopicEdits, TopicDefinition, TopicEdit, TopicPublication, TopicRecord, TopicRecordPage } from "../src/user/topic-types";
-import { confirmAction, expectPageContained, navigate } from "../tests-support/portal";
+import { confirmAction, expectPageContained, expectPortalAccessible, navigate } from "../tests-support/portal";
 
 const userURL = process.env.DENSE_MEM_USER_URL!;
 const controlURL = process.env.DENSE_MEM_CONTROL_URL!;
@@ -103,13 +102,17 @@ test("manager saves, replays and clears a Topic parent", async ({ page, request 
   const editChild = page.getByRole("button", { name: "Edit child", exact: true });
   await expect(page.locator(".mobile-navigation")).toBeHidden();
   for (const theme of ["Light", "Dark"]) {
-    await page.getByRole("button", { name: "Choose theme", exact: true }).click();
+    const trigger = page.getByRole("button", { name: "Choose theme", exact: true });
+    await trigger.click();
     await page.getByRole("menuitem", { name: theme, exact: true }).click();
+    await expect(trigger).toBeFocused();
     await expect(editChild).toBeVisible();
-    await checkAccess(page, `${theme} populated Topic catalog`);
+    await expectPortalAccessible(page, `${theme} populated Topic catalog`);
+    await expectPageContained(page);
     await editChild.click();
     await expect(page.getByLabel("Definition parent")).toHaveValue(parent.id);
-    await checkAccess(page, `${theme} populated Topic editor`);
+    await expectPortalAccessible(page, `${theme} populated Topic editor`);
+    await expectPageContained(page);
     if (theme === "Light") await tab(page, "Catalog").click();
   }
   await expect(page.getByLabel("Definition parent")).toHaveValue(parent.id);
@@ -135,12 +138,6 @@ test("manager saves, replays and clears a Topic parent", async ({ page, request 
   expect((await readRecord(request, manager, child.id)).definition?.parent_id).toBeUndefined();
   await expectPageContained(page);
 });
-
-async function checkAccess(page: Page, view: string) {
-  const { violations } = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
-  expect(violations.map(({ id, nodes }) => ({ id, elements: nodes.map(({ target }) => target) })), view).toEqual([]);
-  await expectPageContained(page);
-}
 
 test("Control Overview keeps required metrics when telemetry is disabled", async ({ page }) => {
   await page.goto(`${controlURL}/`);

@@ -1,6 +1,5 @@
-import { navigate, openNavigation, confirmAction, expectPageContained, expectConflictCardsContained } from "../tests-support/portal";
+import { navigate, openNavigation, confirmAction, expectPageContained, expectConflictCardsContained, expectPortalAccessible } from "../tests-support/portal";
 import { expect, test, type Page } from "@playwright/test";
-import AxeBuilder from "@axe-core/playwright";
 
 const controlUrl = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
 const controlToken = requiredEnv("DENSE_MEM_CONTROL_TOKEN");
@@ -24,10 +23,10 @@ test("Evidence view resolves a case, handles stale review, and stays keyboard-sa
     await expect(page.getByRole("button", { name: "Choose theme", exact: true })).toBeFocused();
     await expectConflictCardsContained(page);
     await expectPageContained(page);
-    await checkAccess(page, `${width} ${theme} evidence conflict queue`);
+    await expectPortalAccessible(page, `${width} ${theme} evidence conflict queue`);
     await caseCard(page, initial[0].conflict_id).click();
     await expect(page.getByRole("heading", { name: "Cited evidence conflict" })).toBeVisible();
-    await checkAccess(page, `${width} ${theme} evidence conflict review`);
+    await expectPortalAccessible(page, `${width} ${theme} evidence conflict review`);
     await page.getByRole("button", { name: "Close", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Cited evidence conflict" })).toBeHidden();
     await page.screenshot({ path: testInfo.outputPath(`evidence-conflicts-${width}-${theme.toLowerCase()}.png`), fullPage: true });
@@ -66,11 +65,6 @@ test("Evidence view resolves a case, handles stale review, and stays keyboard-sa
   const noHorizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
   expect(noHorizontalOverflow).toBe(true);
 });
-
-async function checkAccess(page: Page, view: string) {
-  const { violations } = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
-  expect(violations.map(({ id, nodes }) => ({ id, elements: nodes.map(({ target }) => target) })), view).toEqual([]);
-}
 
 async function openControlPanel(page: Page) {
   await page.goto(`${controlUrl}/`);

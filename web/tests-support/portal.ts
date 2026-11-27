@@ -1,3 +1,4 @@
+import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page } from "@playwright/test";
 
 export async function openNavigation(page: Page) {
@@ -27,6 +28,19 @@ export async function expectPageContained(page: Page) {
     if (!await table.isVisible()) continue;
     expect(await table.evaluate((element) => getComputedStyle(element).overflowX)).toBe("auto");
   }
+}
+
+export async function expectPortalAccessible(page: Page, view: string) {
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+    const transitions = document.getAnimations().filter((animation) =>
+      animation.playState === "running" && Number.isFinite(animation.effect?.getComputedTiming().endTime));
+    await Promise.allSettled(transitions.map((animation) => animation.finished));
+  });
+  const { violations } = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+  expect(violations.map(({ id, nodes }) => ({
+    id, elements: nodes.map(({ target, failureSummary }) => ({ target, failureSummary })),
+  })), view).toEqual([]);
 }
 
 export async function expectCompactNumberField(page: Page, name: string) {
