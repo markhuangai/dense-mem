@@ -120,7 +120,7 @@ func (p *Provider) Assess(ctx context.Context, request Request) (Response, []top
 	if err := p.ConfigurationError(); err != nil {
 		return Response{}, nil, err
 	}
-	if len(request.Items) < 1 || len(request.Items) > 20 || len(request.Definitions) > 20 || len(request.Pairs) > 190 {
+	if len(request.Items) < 1 || len(request.Items) > 20 || len(request.Definitions)+len(request.LockedDefinitions) > 20 || len(request.Pairs) > 190 {
 		return Response{}, nil, &modelprovider.ProviderError{Provider: "topic organization", Message: "organization request exceeds bounds", FailureClass: modelprovider.ProviderFailureClassRequestInvalid}
 	}
 	if request.EquivalenceOnly != p.equivalenceOnly {

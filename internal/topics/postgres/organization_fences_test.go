@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	access "github.com/markhuangai/dense-mem/internal/access/postgres"
@@ -14,6 +15,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	storage "github.com/markhuangai/dense-mem/internal/storage/postgres"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
+	"github.com/markhuangai/dense-mem/internal/topics/assignment"
 	topiccontract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
@@ -237,6 +239,7 @@ func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
 		group := groups.Records[0].Record
 		_, err = f.knowledge.RetractEvidence(f.actor(memberOwner, "member"), knowledge.RetractEvidenceInput{TeamID: f.team, OwnerProfileID: f.owners[memberOwner], EvidenceIDs: []string{b.ID}, Reason: "withdraw grouped member", IdempotencyKey: "withdraw-member", RequestHash: testHash("withdraw-member")})
 		require.NoError(t, err)
+		unrelated := f.organizationEvidence(t, 0, "An unrelated PostgreSQL note.", nil)
 		before := f.canonicalSnapshot(t)
 		contextData, err := f.store.ReadOrganization(context.Background(), f.team, []topiccontract.SourceHandle{a})
 		require.NoError(t, err)
@@ -248,13 +251,18 @@ func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
 			}
 		}
 		require.True(t, found)
+		require.Len(t, contextData.Candidates, 1)
+		require.False(t, contextData.Candidates[0].Current)
+		unrelatedContext, err := f.store.ReadOrganization(context.Background(), f.team, []topiccontract.SourceHandle{unrelated})
+		require.NoError(t, err)
+		require.Empty(t, unrelatedContext.Candidates)
 		priorCalls := calls.Load()
 		input := topiccontract.OrganizationInput{OperationKey: "remaining-source", Sources: []topiccontract.SourceHandle{a}}
 		result, err := service.Organize(context.Background(), f.team, input)
 		require.NoError(t, err)
-		require.Equal(t, "organized", result.Outcomes[0].Status)
-		require.NotNil(t, result.Publication)
-		require.Equal(t, priorCalls+1, calls.Load())
+		require.Equal(t, "unchanged", result.Outcomes[0].Status)
+		require.Nil(t, result.Publication)
+		require.Equal(t, priorCalls, calls.Load())
 		retained, err := f.store.GetRecord(context.Background(), f.team, group.ID, 0)
 		require.NoError(t, err)
 		require.Equal(t, group, retained.Record)
@@ -273,7 +281,9 @@ func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
 		var handles []topiccontract.SourceHandle
 		var definitions, assignments, refinements []topiccontract.Change
 		var targets []topiccontract.Record
-		targetBySource := map[string]string{}
+		oldBySource := map[string]topiccontract.Record{}
+		targetBySource := map[string]topiccontract.Record{}
+		textBySource := map[string]string{}
 		for i := range 11 {
 			text := fmt.Sprintf("Record number %d uses an isolated database.", i)
 			source := f.organizationEvidence(t, i%2, text, nil)
@@ -283,7 +293,7 @@ func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
 			manager := testTopic(fmt.Sprintf("manager-category-%d", i))
 			manager.ID = fmt.Sprintf("ffffffff-ffff-4fff-8fff-%012d", i+1)
 			manager.Definition.Description = text
-			targetBySource[text] = manager.Definition.Key
+			oldBySource[source.ID], targetBySource[source.ID], textBySource[source.ID] = old, manager, text
 			targets = append(targets, manager)
 			definitions = append(definitions, topiccontract.Change{Record: old}, topiccontract.Change{Record: manager})
 			dependency := f.source(t, source)
@@ -297,72 +307,83 @@ func testOntologyOrganizationVocabularyAndSourceFences(t *testing.T) {
 		require.NoError(t, err)
 		assignmentResult, err := f.store.PublishAutomatic(context.Background(), f.team, testPublication("old-assignments", definitionsResult.Revision, assignments...))
 		require.NoError(t, err)
+		window := maintenanceWindow(t, f, maintenanceSettings(t, f))
+		turn, claim := maintenanceClaim(t, f, window)
+		require.Len(t, claim.Sources, len(handles))
+		initial := []topiccontract.OrganizationOutcome{}
+		for _, source := range claim.Sources {
+			old := oldBySource[source.ID]
+			dependency := f.source(t, source)
+			outcome, err := f.store.CommitMaintenanceItemAssignment(topiccontract.WithMaintenanceClaim(context.Background(), *claim), *claim, assignment.Publication{
+				EvidenceID: source.ID, ExpectedFingerprint: dependency.Fingerprint,
+				Outcome: assignment.Outcome{Text: textBySource[source.ID], Method: "generation", InputHash: testHash("initial-" + source.ID), Matches: []assignment.Match{{ID: old.ID, Version: 1}}},
+			})
+			require.NoError(t, err)
+			initial = append(initial, outcome)
+		}
+		require.NoError(t, f.store.CompleteMaintenanceBatch(context.Background(), *claim, topiccontract.OrganizationResult{Current: true, IsolatedOutcomes: true, Outcomes: initial}, "", time.Now()))
+		require.NoError(t, f.store.ReleaseMaintenanceTurn(context.Background(), *turn))
+		priorRevisions := map[string]int64{}
+		for _, source := range handles {
+			state := revalidationQueue(t, f, source)
+			require.Equal(t, "organized", state.Status)
+			priorRevisions[source.ID] = state.Revision
+		}
 		_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("revised-topics", assignmentResult.Revision, refinements...))
 		require.NoError(t, err)
 		before := f.canonicalSnapshot(t)
-		contextData, err := f.store.ReadOrganization(context.Background(), f.team, handles)
-		require.NoError(t, err)
-		require.LessOrEqual(t, len(contextData.Candidates), topiccontract.MaxVocabularyCandidates)
-		candidates := map[string]bool{}
-		for _, candidate := range contextData.Candidates {
-			candidates[candidate.ID] = true
-		}
+		revalidationDiscover(t, f, window)
 		original := map[string]topiccontract.Record{}
-		for i, assignment := range assignments {
-			view, err := f.store.GetRecord(context.Background(), f.team, assignment.Record.ID, 0)
-			require.NoError(t, err)
-			require.False(t, view.Current)
-			original[view.ID] = view.Record
-			require.True(t, candidates[targets[i].ID])
-		}
-		service, calls := organizationFixtureService(t, f, nil, func(request assessment.Request, response *assessment.Response) {
-			require.Len(t, request.Items, 11)
-			require.Empty(t, response.Definitions)
-			require.Len(t, response.Items, 11)
-			refs := map[string]string{}
-			for _, definition := range request.Definitions {
-				refs[definition.Key] = definition.Ref
-			}
-			items := map[string]string{}
-			for _, item := range request.Items {
-				require.Empty(t, item.LockedDefinitionRef)
-				items[item.Ref] = targetBySource[item.Text]
-			}
-			for i := range response.Items {
-				ref := refs[items[response.Items[i].Ref]]
-				require.NotEmpty(t, ref)
-				response.Items[i].DefinitionRef = ref
-			}
-		})
-		input := topiccontract.OrganizationInput{OperationKey: "topic-vocabulary-bound", Sources: handles}
-		result, err := service.Organize(context.Background(), f.team, input)
-		require.NoError(t, err)
-		require.NotNil(t, result.Publication)
-		require.True(t, result.Current)
-		require.Len(t, result.Outcomes, 11)
-		for _, outcome := range result.Outcomes {
-			require.Equal(t, "organized", outcome.Status)
-			require.Empty(t, outcome.Reason)
-		}
-		for i, assignment := range assignments {
-			view, err := f.store.GetRecord(context.Background(), f.team, assignment.Record.ID, 0)
+		for i, prior := range assignments {
+			view, err := f.store.GetRecord(context.Background(), f.team, prior.Record.ID, 0)
 			require.NoError(t, err)
 			require.True(t, view.Current)
+			original[view.ID] = view.Record
+			state := revalidationQueue(t, f, handles[i])
+			require.Equal(t, "pending", state.Status)
+			require.Greater(t, state.Revision, priorRevisions[handles[i].ID])
+		}
+		turn, claim = maintenanceClaim(t, f, window)
+		require.Len(t, claim.Sources, len(handles))
+		outcomes := []topiccontract.OrganizationOutcome{}
+		for _, source := range claim.Sources {
+			dependency := f.source(t, source)
+			scope := assignment.Scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation, OperationID: claim.ID}
+			candidates, err := f.store.ReadAssignmentCandidates(context.Background(), scope, assignment.Slice{EvidenceID: source.ID, SourceFingerprint: dependency.Fingerprint, Text: textBySource[source.ID]})
+			require.NoError(t, err)
+			require.True(t, candidates.NeedsRepair)
+			require.LessOrEqual(t, len(candidates.Topics), assignment.MaxTopics)
+			require.Equal(t, oldBySource[source.ID].ID, candidates.Topics[0].ID)
+			target := targetBySource[source.ID]
+			found := false
+			for _, candidate := range candidates.Topics {
+				found = found || candidate.ID == target.ID
+			}
+			require.True(t, found)
+			outcome, err := f.store.CommitMaintenanceItemAssignment(topiccontract.WithMaintenanceClaim(context.Background(), *claim), *claim, assignment.Publication{
+				EvidenceID: source.ID, ExpectedFingerprint: dependency.Fingerprint,
+				Outcome: assignment.Outcome{Text: textBySource[source.ID], Method: "generation", InputHash: testHash("repair-" + source.ID), Reviewed: candidates.Topics, Matches: []assignment.Match{{ID: target.ID, Version: 1}}},
+			})
+			require.NoError(t, err)
+			require.Equal(t, "organized", outcome.Status)
+			outcomes = append(outcomes, outcome)
+		}
+		require.NoError(t, f.store.CompleteMaintenanceBatch(context.Background(), *claim, topiccontract.OrganizationResult{Current: true, IsolatedOutcomes: true, Outcomes: outcomes}, "", time.Now()))
+		require.NoError(t, f.store.ReleaseMaintenanceTurn(context.Background(), *turn))
+		for i, prior := range assignments {
+			view, err := f.store.GetRecord(context.Background(), f.team, prior.Record.ID, 0)
+			require.NoError(t, err)
+			require.True(t, view.Retired)
 			require.Equal(t, int64(2), view.Version)
-			require.Equal(t, targets[i].ID, view.Assignment.DefinitionID)
 			history, err := f.store.GetRecord(context.Background(), f.team, view.ID, 1)
 			require.NoError(t, err)
 			require.Equal(t, original[view.ID], history.Record)
-		}
-		for _, key := range []string{input.OperationKey, "topic-vocabulary-bound-replay"} {
-			input.OperationKey = key
-			replay, err := service.Organize(context.Background(), f.team, input)
+			id := topiccontract.OrganizationRecordID(f.team, topiccontract.AssignmentKind, topiccontract.SourceKey(handles[i])+":"+targets[i].ID)
+			current, err := f.store.GetRecord(context.Background(), f.team, id, 0)
 			require.NoError(t, err)
-			require.True(t, replay.Existing)
-			require.Equal(t, result.AssessmentID, replay.AssessmentID)
-			require.Equal(t, result.Outcomes, replay.Outcomes)
+			require.True(t, current.Current)
+			require.Equal(t, targets[i].ID, current.Assignment.DefinitionID)
 		}
-		require.Equal(t, int32(1), calls.Load())
 		require.Equal(t, before, f.canonicalSnapshot(t))
 	})
 	t.Run("bounded vocabulary reuse", func(t *testing.T) {

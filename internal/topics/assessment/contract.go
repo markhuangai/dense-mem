@@ -44,11 +44,12 @@ type Pair struct {
 }
 
 type Request struct {
-	EquivalenceOnly bool         `json:"equivalence_only,omitempty"`
-	RequestID       string       `json:"request_id"`
-	Items           []Item       `json:"items"`
-	Definitions     []Definition `json:"definitions"`
-	Pairs           []Pair       `json:"pairs"`
+	EquivalenceOnly   bool         `json:"equivalence_only,omitempty"`
+	RequestID         string       `json:"request_id"`
+	Items             []Item       `json:"items"`
+	Definitions       []Definition `json:"definitions"`
+	Pairs             []Pair       `json:"pairs"`
+	LockedDefinitions []Definition `json:"-"`
 }
 
 type Decision struct {
@@ -227,8 +228,12 @@ func validateDecisions(request, questions Request, response Response) error {
 		return validationResult(errs, nil)
 	}
 	definitions := map[string]Definition{}
+	lockedDefinitions := map[string]Definition{}
 	paths := map[string]string{}
 	definitionOrder := []string{}
+	for _, d := range request.LockedDefinitions {
+		lockedDefinitions[d.Ref] = d
+	}
 	for i, d := range request.Definitions {
 		definitions[d.Ref] = d
 		paths[d.Ref] = fmt.Sprintf("request.definitions[%d]", i)
@@ -241,10 +246,11 @@ func validateDecisions(request, questions Request, response Response) error {
 			errs = append(errs, validationIssue(path+".ref", "definition_ref_invalid", "definition ref %q must be nonempty, trimmed, at most 64 bytes and contain no NUL", d.Ref))
 			continue
 		}
-		if _, exists := definitions[d.Ref]; exists {
+		_, locked := lockedDefinitions[d.Ref]
+		if _, exists := definitions[d.Ref]; exists || locked {
 			code := "definition_ref_duplicate"
 			message := "definition ref %q is duplicated; use a fresh ref for each new definition"
-			if strings.HasPrefix(paths[d.Ref], "request.") {
+			if locked || strings.HasPrefix(paths[d.Ref], "request.") {
 				code = "definition_ref_supplied"
 				message = "response.definitions is only for new definitions; omit supplied ref %q and reuse it in items[].definition_ref"
 			}
@@ -315,6 +321,9 @@ func validateDecisions(request, questions Request, response Response) error {
 				errs = append(errs, validationIssue(path+".definition_ref", "item_locked_classification", "item %q classification changes deterministic reuse: must equal locked_definition_ref %q; received %q", decision.Ref, item.LockedDefinitionRef, decision.DefinitionRef))
 			}
 			d, ok := definitions[decision.DefinitionRef]
+			if !ok && item.LockedDefinitionRef == decision.DefinitionRef && item.LockedDefinitionRef != "" {
+				d, ok = lockedDefinitions[decision.DefinitionRef]
+			}
 			if !ok {
 				errs = append(errs, validationIssue(path+".definition_ref", "item_definition_ref", "item %q definition_ref %q is outside allowlist; include a new definition in response.definitions or reuse a supplied ref", decision.Ref, decision.DefinitionRef))
 				continue

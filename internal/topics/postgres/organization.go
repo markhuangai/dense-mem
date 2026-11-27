@@ -111,6 +111,51 @@ func (s *Store) assessmentContext(tx *gorm.DB, fence scope, handles []topic.Sour
 	if err != nil {
 		return result, err
 	}
+	// An accepted historical assignment can outlive the Topic's original support.
+	// Keep its active target as locked context without adding it to general search.
+	present := map[string]bool{}
+	for _, view := range result.Candidates {
+		present[view.ID] = true
+	}
+	missing := []string{}
+	for _, id := range forced {
+		if !present[id] {
+			missing = append(missing, id)
+			present[id] = true
+		}
+	}
+	if len(missing) > 0 {
+		heads, err := loadHeads(tx, fence, missing, nil)
+		if err != nil {
+			return result, err
+		}
+		locked := make([]topic.Record, 0, len(missing))
+		for _, id := range missing {
+			if record, ok := heads[id]; ok && record.Kind == topic.Topic && !record.Retired {
+				locked = append(locked, record)
+			}
+		}
+		views, err := s.organizationViews(tx, fence, locked)
+		if err != nil {
+			return result, err
+		}
+		required := map[string]bool{}
+		for _, id := range forced {
+			required[id] = true
+		}
+		optional := []topic.RecordView{}
+		for _, view := range result.Candidates {
+			if required[view.ID] {
+				views = append(views, view)
+			} else {
+				optional = append(optional, view)
+			}
+		}
+		if len(views) > topic.MaxVocabularyCandidates {
+			return result, topic.ErrContextBound
+		}
+		result.Candidates = append(views, optional[:min(len(optional), topic.MaxVocabularyCandidates-len(views))]...)
+	}
 	for _, source := range result.Sources {
 		_, preferred := topic.OrganizationClassification(source, result.Records, result.Candidates)
 		if preferred != "" {
