@@ -21,9 +21,11 @@ flowchart TB
   Maintenance --> Placement["Choose a broader Topic or leave it standalone"]
 ```
 
-Remember can assign several direct Topics to each Evidence item. It sends a scoped shortlist of up to 20 existing Topics. When the optional Decision API is enabled for Topic assignment, candidates with a match probability of at least 0.80 are selected. An uncovered probability of at least 0.80 invokes structured generation for missing subjects. With no matches and an uncovered probability below 0.80, the Evidence remains searchable as uncategorized. Generation also handles absent candidates. A required provider or input-budget failure returns a typed error before publication.
+Remember can assign several direct Topics to each Evidence item. Its scoped shortlist of up to 20 combines Topic-vector and indexed text search, including direct memberships that need repair. It reuses the Evidence embedding already required for the write. Until a Topic vector is available, indexed text search remains available. When the optional Decision API is enabled for Topic assignment, candidates with a match probability of at least 0.80 are selected. An uncovered probability of at least 0.80 invokes structured generation for missing subjects while retaining the selected Topics. With no matches and an uncovered probability below 0.80, the Evidence remains searchable as uncategorized. A required provider or input-budget failure returns a typed error before publication.
 
-The scheduler also revisits older eligible Evidence when inputs change or an assessment is due. When enabled, a Community Decision places a Topic under its selected parent at a probability of at least 0.80 and otherwise records a standalone result. Evidence equivalence is evaluated independently and preserves each passage's exact text and provenance. The Decision thresholds describe [application revision `5525662de19a`](https://github.com/markhuangai/dense-mem/blob/5525662de19a0bee41caefb93b141377cb2870cd/adr/0022-authoritative-decision-api-and-runtime-token-budgets.md) and depend on the deployed application revision.
+The scheduler interleaves assignment, Topic-vector backfill, consolidation, Community placement, and Evidence equivalence. New Topics do not requeue the existing corpus. A material edit or retirement rechecks direct members; an uncategorized item remains terminal until its Evidence changes or an operator requests reassessment. Consolidation preserves the manager-authored Topic when there is one, then the earliest published Topic, then the lower ID. It retains the survivor's memberships and placement and moves eligible memberships with history.
+
+Community placement considers manager-authored Topics and Topics with at least two active direct members. When enabled, a Community Decision places a Topic under its selected parent at a probability of at least 0.80 and otherwise records a standalone result. Consolidation and independent Evidence equivalence use the Topic assignment Decision setting and a 0.95 threshold. Disabled Decision stages use structured generation. Evidence equivalence preserves each passage's exact text and provenance. This describes [application revision `8a7222414a79`](https://github.com/markhuangai/dense-mem/blob/8a7222414a79d61d4b2cf28a3efd3ecd5044bfb4/adr/0023-non-recursive-hybrid-topic-assignment-and-consolidation.md); check your deployed application revision for availability.
 
 ## Discover And Follow A Topic
 
@@ -48,7 +50,9 @@ Counts and selection apply visibility, lifecycle, temporal eligibility, freshnes
 | Organization enabled | Remember assigns Topics before returning. The scheduler also processes eligible existing Evidence and Community placement. |
 | Maintenance paused | Remember still assigns Topics. Existing Topics and memberships remain readable. |
 | Organization disabled | Topic reads stop; ordinary Evidence recall remains available. |
-| Evidence or Topic definitions change | Dependency fingerprints invalidate affected derived state. |
+| Evidence changes | Source dependencies invalidate affected derived state. |
+| A Topic is added | Existing Evidence is not requeued solely because of the new Topic. |
+| A Topic is materially edited or retired | Its direct members are reassessed. Alias enrichment from consolidation preserves the survivor's accepted memberships. |
 | A publication's source or generation changes during assessment | Fenced publication cannot overwrite newer state. |
 
 Maintenance uses bounded scheduling, concurrency, provider backoff, and complete-response validation. Request context limits constrain individual model calls. See [Configuration]({{ '/Configuration/#topic-maintenance' | relative_url }}) and [Operations Runbook]({{ '/Operations-Runbook/#topic-maintenance' | relative_url }}).

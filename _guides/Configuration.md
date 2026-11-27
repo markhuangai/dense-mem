@@ -121,7 +121,7 @@ TypeSafe configuration is capped at 64000 request / 32000 question tokens by def
 | Capability | Key |
 | --- | --- |
 | Intake | `DECISION_DEDUPLICATION_ENABLED`, `DECISION_SECURITY_REVIEW_ENABLED`, `DECISION_CONFLICT_REVIEW_ENABLED` |
-| Organization | `DECISION_TOPIC_ASSIGNMENT_ENABLED`, `DECISION_COMMUNITY_PLACEMENT_ENABLED` |
+| Organization | `DECISION_TOPIC_ASSIGNMENT_ENABLED` controls assignment, consolidation, and Evidence equivalence; `DECISION_COMMUNITY_PLACEMENT_ENABLED` controls Community placement. |
 | Recall | `DECISION_RECALL_RERANKING_ENABLED` |
 
 Missing preferences default true after successful settings load. Effective enablement requires a configured Decision provider. Explicit false persists. On refresh failure the last valid snapshot is marked stale. Required work fails when no valid snapshot is available.
@@ -159,7 +159,7 @@ These are runtime `app_config` keys edited in the control portal:
 | `TOPIC_MAINTENANCE_CONTEXT_WINDOW_TOKENS` | Empty until configured; 1–1000000000, and must leave room for output. |
 | `APP_TIMEZONE` | General runtime timezone, bootstrapped from the startup value (`Local` when unset). |
 
-Configure the model's full request context, including response headroom. The Topic storage upgrade migrates all eight supported `ONTOLOGY_MAINTENANCE_*` settings to the corresponding `TOPIC_MAINTENANCE_*` keys. See [Topics And Organization]({{ '/Topics-And-Organization/' | relative_url }}) and [Operations Runbook]({{ '/Operations-Runbook/#topic-maintenance' | relative_url }}).
+Configure the model's full request context, including response headroom. Topic-vector backfill uses the active embedding contract and batches up to 256 Topics; the configured embedding provider still controls its upstream request size. Manager Save makes no embedding or Decision call. The Topic storage upgrade migrates all eight supported `ONTOLOGY_MAINTENANCE_*` settings to the corresponding `TOPIC_MAINTENANCE_*` keys. See [Topics And Organization]({{ '/Topics-And-Organization/' | relative_url }}) and [Operations Runbook]({{ '/Operations-Runbook/#topic-maintenance' | relative_url }}).
 
 ## Redis, Rate Limits, And Streams
 
