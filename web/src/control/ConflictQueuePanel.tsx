@@ -9,7 +9,6 @@ import { ApiError, ControlApi, Team } from "../api";
 import type { EvidenceConflict, EvidenceConflictDetail } from "../evidence-conflict-api-types";
 import { FieldRow, LoadingState, SectionHeading } from "../ui/components";
 import { formatDate, readError, shortId } from "./utils";
-import "./ConflictQueuePanel.css";
 
 export function ConflictQueuePanel({ api, team }: { api: ControlApi; team: Team }) {
   const [refreshNonce,setRefreshNonce]=useState(0);
@@ -198,13 +197,13 @@ function EvidenceConflictView({ api, team, refreshNonce }: { api: ControlApi; te
     {!loading && Boolean(error) && <QueueErrorState status={error instanceof ApiError ? error.status : 0} message={readError(error)} />}
     {!loading && !error && visibleItems.length === 0 && <div className="table-placeholder" role="status">No evidence conflicts match this view.</div>}
     {!loading && visibleItems.length > 0 && <div className="evidence-conflict-list">
-      {visibleItems.map((item) => <Button variant="outline" type="button" className={`evidence-conflict-card ${visibleSelected?.conflict.conflict_id === item.conflict_id ? "selected" : ""}`} key={item.conflict_id} onClick={() => void transition(() => openConflict(item))}>
+      {visibleItems.map((item) => <button type="button" className="interactive-card evidence-conflict-card" aria-pressed={visibleSelected?.conflict.conflict_id === item.conflict_id} key={item.conflict_id} onClick={() => void transition(() => openConflict(item))}>
         <span className="status-pill neutral">{item.status} · v{item.version}</span>
         <strong>{item.positions.length} cited positions</strong>
         <small>{formatDate(item.updated_at)} · {shortId(item.conflict_id)}</small>
-      </Button>)}
+      </button>)}
     </div>}
-    {!loading && !error && <div className="conflict-queue-pagination" aria-label="Evidence conflict page navigation">
+    {!loading && !error && <div className="pagination-bar conflict-queue-pagination" aria-label="Evidence conflict page navigation">
       <Button variant="outline" className="ghost-button" type="button" disabled={cursorHistory.length === 0} onClick={() => setCursorHistory((current) => current.slice(0, -1))}>Previous</Button>
       <span>Page {cursorHistory.length + 1}</span>
       <Button variant="outline" className="ghost-button" type="button" disabled={!nextCursor} onClick={() => nextCursor && setCursorHistory((current) => [...current, nextCursor])}>Next</Button>

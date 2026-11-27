@@ -371,7 +371,7 @@ test("responsive user portal layout", async ({ page }) => {
     await expect(page.getByRole("button", { name: "Open navigation" })).toBeVisible();
   }
   await expect(page.locator(".resource-rail")).toHaveCount(0);
-  await expect(page.locator(".knowledge-results-panel")).toHaveCSS("border-radius", "10px");
+  await expect(page.locator(".knowledge-results-panel")).toHaveCSS("border-radius", "6px");
   await expectNoShellOverlap(page);
 
   await expectPageContained(page);

@@ -1,0 +1,66 @@
+@import "@fontsource-variable/public-sans";
+@import "@fontsource-variable/jetbrains-mono";
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  * { box-sizing: border-box; border-color: var(--border); }
+  [hidden] { display: none !important; }
+  body {
+    min-width: 320px;
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-size: 14px;
+    line-height: 1.5;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+  }
+  button, input, select, textarea { font: inherit; }
+  button, [role="button"] { cursor: pointer; }
+  button:disabled, [aria-disabled="true"] { cursor: not-allowed; }
+  h1, h2, h3, h4 { font-weight: 650; letter-spacing: -.025em; }
+  label, legend { color: var(--text); font-size: 14px; font-weight: 600; }
+  fieldset { display: flex; flex-wrap: wrap; gap: 10px; margin: 0; padding: 0; border: 0; }
+  code, pre, kbd { font-family: var(--font-mono); }
+  code {
+    display: inline-block;
+    max-width: 100%;
+    padding: 2px 5px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-tag);
+    background: var(--panel-muted);
+    color: var(--text);
+    font-size: 12px;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+  :focus-visible { outline: 2px solid var(--laser); outline-offset: 3px; }
+  input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color: var(--laser); }
+  input[type="range"] { box-shadow: none; }
+
+  @keyframes portal-enter {
+    from { opacity: 0; transform: translate3d(0, 4px, 0); }
+    to { opacity: 1; transform: translate3d(0, 0, 0); }
+  }
+  @keyframes loading-spin { to { transform: rotate(360deg); } }
+  @keyframes skeleton-pulse { 50% { opacity: .36; } }
+  @keyframes radar-pulse { 80%, 100% { opacity: 0; transform: scale(2.2); } }
+  @keyframes telemetry-reveal {
+    from { opacity: 0; clip-path: inset(0 100% 0 0); }
+    to { opacity: 1; clip-path: inset(0); }
+  }
+  @keyframes meter-sweep { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: .01ms !important;
+      scroll-behavior: auto !important;
+    }
+    .loading-orbit, .loading-skeleton, .dependency-radar::after { display: none !important; }
+  }
+}

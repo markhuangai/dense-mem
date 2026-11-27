@@ -2,11 +2,11 @@ import { Check, Copy, Info, Menu, PanelLeftClose, PanelLeftOpen, X } from "lucid
 import { FormEventHandler, ReactNode, useEffect, useRef, useState } from "react";
 import { Button } from "./primitives/button";
 import { Input } from "./primitives/input";
-import { Badge } from "./primitives/badge";
 import { Label } from "./primitives/label";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "./primitives/sheet";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./primitives/tooltip";
 import { portalHref } from "./navigation";
+import { CommandPalette, DenseMemMark, type CommandItem, useLaserIndicator } from "./motion";
 import type { ThemeName } from "./theme";
 export type { ThemeName } from "./theme";
 
@@ -28,6 +28,7 @@ type PortalShellProps = BrandProps & {
   navLabel: string;
   navItemsLabel: string;
   navItems: PortalNavItem[];
+  commandItems?: CommandItem[];
   workspacePicker?: ReactNode;
   contextBar?: ReactNode;
   detailLabel: string;
@@ -51,10 +52,9 @@ export function AuthShell({ theme, title, icon, actions, children, onSubmit }: A
     <div className="auth-brand"><Brand title={title} icon={icon} />{actions}</div>
     <div className="auth-layout">
       <section className="auth-introduction" aria-label="Welcome">
-        <Badge variant="outline">{control ? "Service administration" : "Your memory workspace"}</Badge>
         <h1>{control ? "A clear view of your memory service." : "Find the context that matters."}</h1>
         <p>{control ? "Manage teams, access, and memory operations in one workspace." : "Explore evidence, follow connections, and understand what your team knows."}</p>
-        <div className="auth-provenance" aria-hidden="true"><span>Evidence</span><i /><span>Topics</span><i /><span>Context</span></div>
+        <div className="auth-provenance" aria-hidden="true"><DenseMemMark size={18} /><span>Evidence</span><i /><span>Topics</span><i /><span>Context</span></div>
       </section>
       <section className="auth-panel" aria-label={title}>
         <div><h2>{control ? "Sign in to Control" : "Sign in to Knowledge"}</h2><p className="section-subtitle">{control ? "Use your control token or an available identity provider." : "Use an API key or your organization’s sign-in."}</p></div>
@@ -65,40 +65,56 @@ export function AuthShell({ theme, title, icon, actions, children, onSubmit }: A
   </main>;
 }
 
-export function PortalShell({ theme, title, icon, topbarActions, navLabel, navItemsLabel, navItems, workspacePicker, contextBar, detailLabel, error, children }: PortalShellProps) {
+export function PortalShell({ theme, title, icon, topbarActions, navLabel, navItemsLabel, navItems, commandItems = [], workspacePicker, contextBar, detailLabel, error, children }: PortalShellProps) {
   const storageKey = title.includes("Control") ? "denseMem.controlSidebar" : "denseMem.userSidebar";
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem(storageKey) === "collapsed");
   const [mobileOpen, setMobileOpen] = useState(false);
+  const railLaser = useLaserIndicator<HTMLElement>('[aria-current="page"]', "vertical");
   const active = navItems.find((item) => item.active);
   const groups = [...new Set(navItems.map((item) => item.group ?? "Workspace"))];
   function toggleSidebar() { setCollapsed((current) => { localStorage.setItem(storageKey, current ? "expanded" : "collapsed"); return !current; }); }
-  const navigation = <nav className="rail-tabs" aria-label={navItemsLabel}>{groups.map((group) => <div className="nav-group" key={group}><p className="nav-group-label">{group}</p>{navItems.filter((item) => (item.group ?? "Workspace") === group).map((item) => <TabButton key={item.id} {...item} onClick={async () => { const result = await item.onClick(); if (result !== false) setMobileOpen(false); }} />)}</div>)}</nav>;
+  function navigation(mobile: boolean) {
+    return <nav ref={mobile ? undefined : railLaser.containerRef} className="rail-tabs" aria-label={navItemsLabel}>
+      {groups.map((group) => <div className="nav-group" key={group}>
+        <p className="nav-group-label">{group}</p>
+        {navItems.filter((item) => (item.group ?? "Workspace") === group).map((item) => <TabButton key={item.id} {...item}
+          collapsed={!mobile && collapsed} onClick={async () => { const result = await item.onClick(); if (mobile && result !== false) setMobileOpen(false); }} />)}
+      </div>)}
+      {!mobile && <span ref={railLaser.indicatorRef} className="laser-indicator laser-vertical" hidden aria-hidden="true" />}
+    </nav>;
+  }
   const brand = <Brand title={title} icon={icon} />;
+  const commands = [...navItems.filter((item) => !item.disabled).map((item) => ({ id: item.id, label: item.label, group: item.group, onSelect: item.onClick })), ...commandItems];
   return <TooltipProvider delayDuration={250}><main className="app-shell" data-theme={theme} data-sidebar-collapsed={collapsed}>
     <a className="skip-link" href="#portal-content">Skip to content</a>
     <aside className="primary-rail" aria-label={navLabel}>
       <div className="rail-brand">{brand}</div>
       {workspacePicker && <div className="sidebar-workspace">{workspacePicker}</div>}
-      {navigation}
+      {navigation(false)}
       <div className="sidebar-footer"><span>{title.includes("Control") ? "Service workspace" : "Memory workspace"}</span><Button variant="ghost" size="icon" onClick={toggleSidebar} aria-label={collapsed ? "Expand navigation" : "Collapse navigation"} aria-expanded={!collapsed}>{collapsed ? <PanelLeftOpen aria-hidden="true" /> : <PanelLeftClose aria-hidden="true" />}</Button></div>
     </aside>
     <div className="portal-main">
       <header className="topbar">
-        <Button className="mobile-nav-trigger" variant="ghost" size="icon" aria-label="Open navigation" onClick={() => setMobileOpen(true)}><Menu aria-hidden="true" /></Button>
+        <Button className="mobile-nav-trigger hidden max-md:inline-flex" variant="ghost" size="icon" aria-label="Open navigation" onClick={() => setMobileOpen(true)}><Menu aria-hidden="true" /></Button>
         <div className="topbar-context">{contextBar}<span className="breadcrumb-separator" aria-hidden="true">/</span><strong>{active?.label ?? "Workspace"}</strong></div>
-        <div className="topbar-actions">{topbarActions}</div>
+        <div className="topbar-actions"><CommandPalette items={commands} />{topbarActions}</div>
       </header>
       <div className="portal-content" id="portal-content" tabIndex={-1}>
         {error && <div className="banner error" role="alert">{error}</div>}
         <section className="detail-pane" aria-label={detailLabel}>{children}</section>
       </div>
     </div>
-    <Sheet open={mobileOpen} onOpenChange={setMobileOpen}><SheetContent className="mobile-navigation" side="left"><SheetHeader className="sr-only"><SheetTitle>{navLabel}</SheetTitle><SheetDescription>Choose a section of your workspace.</SheetDescription></SheetHeader><div className="rail-brand">{brand}</div>{error && <div className="banner error" role="alert">{error}</div>}{workspacePicker && <div className="sidebar-workspace">{workspacePicker}</div>}{navigation}</SheetContent></Sheet>
+    <Sheet open={mobileOpen} onOpenChange={setMobileOpen}><SheetContent className="mobile-navigation w-[min(310px,88vw)] max-w-none gap-0 bg-card p-0" side="left"><SheetHeader className="sr-only"><SheetTitle>{navLabel}</SheetTitle><SheetDescription>Choose a section of your workspace.</SheetDescription></SheetHeader><div className="rail-brand">{brand}</div>{error && <div className="banner error" role="alert">{error}</div>}{workspacePicker && <div className="sidebar-workspace">{workspacePicker}</div>}{navigation(true)}</SheetContent></Sheet>
   </main></TooltipProvider>;
 }
 
-export function TabButton({ active, disabled, icon, label, href, onClick }: { active: boolean; disabled?: boolean; icon: ReactNode; label: string; href?: string; onClick: () => void | Promise<unknown> }) {
-  return <a className={active ? "rail-tab-button active" : "rail-tab-button"} href={disabled ? undefined : href ?? portalHref({ section: label.toLowerCase().replaceAll(" ", "-") })} aria-current={active ? "page" : undefined} aria-disabled={disabled || undefined} tabIndex={disabled ? -1 : undefined} title={label} onClick={(event) => { if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && event.button === 0) { event.preventDefault(); if (!disabled) void onClick(); } }}>{icon}<span>{label}</span></a>;
+export function TabButton({ active, collapsed, disabled, icon, label, href, onClick }: { active: boolean; collapsed?: boolean; disabled?: boolean; icon: ReactNode; label: string; href?: string; onClick: () => void | Promise<unknown> }) {
+  const link = <a className={active ? "rail-tab-button active" : "rail-tab-button"} href={disabled ? undefined : href ?? portalHref({ section: label.toLowerCase().replaceAll(" ", "-") })}
+    aria-current={active ? "page" : undefined} aria-disabled={disabled || undefined} tabIndex={disabled ? -1 : undefined} title={collapsed ? undefined : label}
+    onClick={(event) => { if (!event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey && event.button === 0) { event.preventDefault(); if (!disabled) void onClick(); } }}>
+    {icon}<span className={collapsed ? "sr-only" : undefined}>{label}</span>
+  </a>;
+  return collapsed ? <Tooltip><TooltipTrigger asChild>{link}</TooltipTrigger><TooltipContent side="right" sideOffset={8}>{label}</TooltipContent></Tooltip> : link;
 }
 
 export function SectionHeading({ title, subtitle, meta, actions }: SectionHeadingProps) {
@@ -108,7 +124,7 @@ export function SectionHeading({ title, subtitle, meta, actions }: SectionHeadin
         <h2>{title}</h2>
         {subtitle && <p className="section-subtitle">{subtitle}</p>}
       </div>
-      {actions ?? (meta !== undefined && meta !== null ? <span>{meta}</span> : null)}
+      {actions ?? (meta !== undefined && meta !== null ? <span className="section-meta">{meta}</span> : null)}
     </div>
   );
 }

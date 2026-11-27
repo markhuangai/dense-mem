@@ -1,11 +1,15 @@
 import { CSSProperties, ReactNode, useEffect, useRef, useState } from "react";
 import { Activity, CheckCircle2, Moon, Network, Users } from "lucide-react";
 import { ControlApi, Credential, Team } from "../api";
+import type { TelemetrySnapshot, TelemetryWindowKey } from "../telemetry/types";
 import { useVisiblePolling } from "../telemetry/useVisiblePolling";
 import { SectionHeading, SummaryCard } from "../ui/components";
+import { TelemetryChart, useLaserIndicator } from "../ui/motion";
 import { credentialPermissionLabel, credentialRoleLabel, formatDate, shortId } from "./utils";
 
 export type TeamWorkspaceTab = "overview" | "remember-attempts" | "credentials" | "evidence-conflicts" | "settings";
+const telemetryWindows = ["15m", "1h", "12h", "1d"] as const satisfies readonly TelemetryWindowKey[];
+type TeamTelemetry = { teamID: string; window: TelemetryWindowKey; snapshot: TelemetrySnapshot | null };
 
 export function TeamWorkspaceShell({ team, activeTab, children }: { team: Team; activeTab: TeamWorkspaceTab; children: ReactNode }) {
   const labels: Record<TeamWorkspaceTab, string> = { overview: "Overview", credentials: "Credentials", "remember-attempts": "Remember history", "evidence-conflicts":"Evidence conflicts", settings: "Team settings" };
@@ -29,6 +33,10 @@ export function TeamOverviewPanel({
   const [loading, setLoading] = useState(false);
   const [metricsLoading, setMetricsLoading] = useState(false);
   const metricsRequestRef = useRef(0);
+  const telemetryRequestRef = useRef(0);
+  const [window, setWindow] = useState<TelemetryWindowKey>("1h");
+  const [telemetry, setTelemetry] = useState<TeamTelemetry | null>(null);
+  const rangeLaser = useLaserIndicator<HTMLDivElement>('[aria-pressed="true"]');
 
   useEffect(() => {
     let active = true;
@@ -70,6 +78,21 @@ export function TeamOverviewPanel({
     }
   }, [api, team.id]);
 
+  useVisiblePolling(async (signal) => {
+    const requestID = ++telemetryRequestRef.current;
+    try {
+      const snapshot = await api.getTelemetry({ scope: "team", team_id: team.id, window }, signal);
+      if (requestID === telemetryRequestRef.current && !signal.aborted) setTelemetry({ teamID: team.id, window, snapshot });
+    } catch (error) {
+      if (requestID === telemetryRequestRef.current && !signal.aborted && !isAbortError(error)) {
+        setTelemetry({ teamID: team.id, window, snapshot: null });
+      }
+    }
+  }, [api, team.id, window]);
+
+  const currentTelemetry = telemetry?.teamID === team.id && telemetry.window === window ? telemetry : null;
+  const snapshot = currentTelemetry?.snapshot;
+  const series = snapshot?.series.find(({ id }) => id === "http_rps");
   const metricsReady = metrics !== null && !metricsUnavailable;
   const metricsFailed = metricsUnavailable && !metricsLoading;
   const teamMetrics = metricsReady ? metrics.teams.find((item) => item.team_id === team.id) : undefined;
@@ -99,11 +122,24 @@ export function TeamOverviewPanel({
         <SummaryCard label="Requests" value={requestValue} detail="Last hour" tone={metricsFailed ? "warning" : "neutral"} />
         <SummaryCard label="Recall health" value={healthValue} detail={healthDetail} tone={metricsFailed ? "warning" : "neutral"} />
         <div className="health-stack" aria-label="Health summary">
-          <HealthLine label="Healthy" value={metricsReady ? Math.max(0, dependencies.length - degradedDependencies.length) : "n/a"} tone={metricsFailed ? "warning" : "healthy"} />
+          <HealthLine label="Healthy" value={metricsReady ? Math.max(0, dependencies.length - degradedDependencies.length) : "n/a"} tone={metricsFailed ? "warning" : "healthy"} live={healthyDependencies.length > 0} />
           <HealthLine label="Degraded" value={metricsReady ? degradedDependencies.length : "n/a"} tone={metricsFailed || degradedDependencies.length > 0 ? "warning" : "healthy"} />
           <HealthLine label="Errors" value={metricsReady ? errors : "n/a"} tone={errors > 0 ? "danger" : metricsFailed ? "warning" : "healthy"} />
         </div>
       </div>
+
+      <section className="overview-panel" aria-label="Team telemetry">
+        <SectionHeading title="Team telemetry" actions={<div ref={rangeLaser.containerRef} className="laser-range-group" role="group" aria-label="Telemetry window">
+          {telemetryWindows.map((range) => <button key={range} type="button" aria-pressed={range === window} onClick={() => setWindow(range)}>{range}</button>)}
+          <span ref={rangeLaser.indicatorRef} className="laser-indicator laser-horizontal" aria-hidden="true" hidden />
+        </div>} />
+        {!currentTelemetry ? <p className="form-meta" role="status">Loading telemetry</p>
+          : !snapshot?.available || snapshot.status === "unavailable" ? <p className="banner warning" role="status">Telemetry unavailable</p>
+          : <>
+            {snapshot.status === "degraded" && <p className="banner warning" role="status">Telemetry degraded{snapshot.message ? ` · ${snapshot.message}` : ""}</p>}
+            {series ? <TelemetryChart key={`${team.id}-${window}`} series={series} /> : <p className="form-meta" role="status">No samples recorded in this window.</p>}
+          </>}
+      </section>
 
       <div className="overview-grid">
         <section className="overview-panel" aria-label="Team activity">
@@ -167,14 +203,16 @@ function HealthLine({
   label,
   value,
   tone,
+  live = false,
 }: {
   label: string;
   value: ReactNode;
   tone: "healthy" | "warning" | "danger";
+  live?: boolean;
 }) {
   return (
     <div className={`health-line ${tone}`}>
-      <span aria-hidden="true" />
+      <span className={live ? "dependency-radar" : undefined} aria-hidden="true" />
       <small>{label}</small>
       <strong>{value}</strong>
     </div>

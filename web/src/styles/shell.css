@@ -1,0 +1,120 @@
+@layer components {
+  .app-shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 100dvh; background: var(--background); }
+  .app-shell[data-sidebar-collapsed="true"] { grid-template-columns: 58px minmax(0, 1fr); }
+  .primary-rail { position: sticky; top: 0; display: flex; flex-direction: column; min-width: 0; height: 100dvh; background: var(--background); border-right: 1px solid var(--border); }
+  .rail-brand { display: flex; align-items: center; min-height: 64px; padding: 14px 17px; border-bottom: 1px solid var(--border); }
+  .brand-row { display: flex; align-items: center; gap: 9px; min-width: 0; }
+  .brand-mark { display: grid; place-items: center; width: 32px; height: 32px; flex: 0 0 auto; color: var(--laser); }
+  .brand-title { display: grid; line-height: 1.3; }
+  .brand-title strong { color: var(--text); font-size: 15px; font-weight: 700; letter-spacing: -.035em; }
+  .brand-title > span { color: var(--muted); font-size: 12px; }
+  .sidebar-workspace { min-width: 0; padding: 12px 12px 10px; }
+  .workspace-trigger > span { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+  .workspace-picker { width: 260px; max-width: calc(100vw - 32px); }
+  .workspace-options { display: grid; max-height: 300px; gap: 3px; overflow: auto; margin-top: 8px; }
+  .workspace-option span { overflow: hidden; text-overflow: ellipsis; }
+  .rail-tabs { position: relative; display: flex; flex: 1; flex-direction: column; gap: 16px; min-height: 0; padding: 8px 10px 20px; overflow: auto; }
+  .nav-group { display: grid; gap: 2px; }
+  .nav-group-label { margin: 0 10px 4px; color: var(--muted); font: 500 11px/1.5 var(--font-mono); letter-spacing: .035em; }
+  .rail-tab-button { display: flex; align-items: center; gap: 9px; width: 100%; min-width: 0; min-height: 34px; padding: 6px 9px; border-radius: var(--radius-tag); color: var(--muted); font-size: 13px; font-weight: 550; text-align: left; }
+  .rail-tab-button > svg { flex: 0 0 auto; }
+  .rail-tab-button > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rail-tab-button:hover { color: var(--text); background: var(--panel-hover); }
+  .rail-tab-button.active { color: var(--text); background: var(--panel-hover); font-weight: 650; }
+  .rail-tab-button[aria-disabled="true"] { opacity: .6; }
+  .sidebar-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 56px; padding: 8px 12px 8px 18px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+  [data-sidebar-collapsed="true"] .primary-rail :is(.brand-title, .nav-group-label, .sidebar-footer > span, .workspace-trigger > span, .workspace-trigger > svg:last-child) { display: none; }
+  [data-sidebar-collapsed="true"] .primary-rail .rail-brand { justify-content: center; padding-inline: 0; }
+  [data-sidebar-collapsed="true"] .primary-rail :is(.rail-tabs, .sidebar-workspace) { padding-inline: 8px; }
+  [data-sidebar-collapsed="true"] .primary-rail .rail-tab-button { justify-content: center; }
+  [data-sidebar-collapsed="true"] .primary-rail .sidebar-footer { justify-content: center; padding: 8px; }
+
+  .portal-main { min-width: 0; }
+  .topbar { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 60px; padding: 8px 26px; background: var(--background); border-bottom: 1px solid var(--border); }
+  .topbar-context { display: flex; align-items: center; gap: 9px; min-width: 0; color: var(--muted); font-size: 13px; }
+  .topbar-context > strong, .topbar-context .current-team { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .topbar-context > strong { color: var(--text); font-weight: 650; }
+  .topbar-context .current-team { max-width: 230px; }
+  .breadcrumb-separator { color: var(--muted); }
+  .topbar-actions { display: flex; align-items: center; gap: 5px; flex: 0 0 auto; }
+  .portal-content { min-width: 0; padding: 24px 26px; }
+  .detail-pane { display: grid; align-content: start; gap: 18px; min-width: 0; animation: portal-enter 180ms var(--ease-out); }
+  .detail-pane > * { min-width: 0; }
+  .mobile-navigation .rail-tabs { padding-bottom: 24px; }
+  .skip-link { position: fixed; top: -60px; left: 12px; z-index: 100; padding: 8px 12px; border-radius: var(--radius-panel); color: var(--primary-foreground); background: var(--primary); }
+  .skip-link:focus { top: 10px; }
+
+  .command-shortcut { padding: 1px 5px; border: 1px solid var(--border-strong); border-radius: var(--radius-tag); color: var(--muted); font-size: 11px; white-space: nowrap; }
+  .command-palette-options { display: grid; align-content: start; gap: 2px; max-height: min(42vh, 20rem); overflow: auto; }
+  .command-palette-option { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 36px; padding: 6px 9px; border-radius: var(--radius-tag); cursor: pointer; }
+  .command-palette-option[aria-selected="true"] { background: var(--panel-hover); box-shadow: inset 1px 0 var(--laser); }
+  .command-palette-option > small { color: var(--muted); font-size: 12px; }
+  .command-palette-empty { margin: 0; color: var(--muted); font-size: 13px; }
+
+  .team-directory { display: grid; gap: 18px; }
+  .team-directory .section-heading { margin-bottom: 0; }
+  .team-directory-toolbar { display: flex; gap: 12px; align-items: center; justify-content: space-between; }
+  .team-directory-toolbar .search-input-wrap { width: min(400px, 100%); }
+  .team-directory-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); gap: 12px; }
+  .team-directory-card { align-items: flex-start; min-height: 112px; padding: 16px; }
+  .team-directory-card .team-mark { display: grid; place-items: center; width: 32px; height: 32px; flex: 0 0 auto; border: 1px solid var(--border); border-radius: var(--radius-panel); color: var(--muted); }
+  .team-directory-card .team-mark svg { width: 17px; }
+  .team-directory-card strong { display: block; margin: 0 0 4px; font-size: 15px; font-weight: 650; }
+  .team-directory-card .team-description, .team-directory-card small { display: block; margin: 0; color: var(--muted); font-size: 13px; }
+  .team-directory-card .team-directory-copy { min-width: 0; overflow-wrap: anywhere; }
+  .panel-tabs { display: grid; gap: 16px; min-width: 0; }
+  .panel-tabs > [data-slot="tabs-content"] { min-width: 0; }
+
+  .auth-shell { display: flex; flex-direction: column; min-height: 100dvh; padding: 24px clamp(20px, 4vw, 48px); background: var(--background); color: var(--text); }
+  .auth-brand { display: flex; align-items: center; justify-content: space-between; }
+  .auth-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 395px); align-items: center; gap: clamp(32px, 6.5vw, 88px); width: min(970px, 100%); flex: 1; margin-inline: auto; padding-block: 56px; }
+  .auth-introduction h1 { max-width: 520px; margin: 0 0 14px; font-size: clamp(29px, 3.4vw, 44px); line-height: 1.12; letter-spacing: -.055em; }
+  .auth-introduction p { max-width: 420px; color: var(--muted); font-size: 16px; line-height: 1.55; }
+  .auth-provenance { display: flex; align-items: center; gap: 10px; width: fit-content; margin-top: 28px; padding-top: 12px; border-top: 1px solid var(--border-strong); color: var(--muted); font: 500 11px/1.5 var(--font-mono); }
+  .auth-provenance svg { color: var(--laser); }
+  .auth-provenance i { width: 14px; height: 1px; background: var(--border-strong); }
+  .auth-panel { display: grid; gap: 22px; width: 100%; padding: 28px; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--panel); }
+  .auth-panel h2 { margin: 0; font-size: 21px; }
+  .auth-panel form { display: grid; gap: 12px; min-width: 0; }
+  .auth-panel form > .primary-button { margin-top: 6px; }
+  .auth-panel .button-row { display: grid; gap: 8px; }
+  .auth-panel .setting-row { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 0; border: 0; }
+  .auth-panel .setting-row > .field-control { justify-self: stretch; width: 100%; }
+  .auth-footer { margin: 0; padding-block: 10px; color: var(--muted); font-size: 12px; }
+
+  @media (max-width: 1100px) {
+    .portal-content { padding: 20px; }
+    .topbar { padding-inline: 20px; }
+  }
+  @media (max-width: 767px) {
+    .app-shell, .app-shell[data-sidebar-collapsed="true"] { grid-template-columns: minmax(0, 1fr); }
+    .primary-rail { display: none; }
+    .topbar { min-height: 56px; gap: 6px; padding: 8px 10px; }
+    .topbar-context { flex: 1; gap: 6px; }
+    .topbar-context .current-team { max-width: 96px; }
+    .topbar-actions { gap: 2px; }
+    .topbar-actions .sign-out-label, .command-trigger-label, .command-shortcut { display: none; }
+    .portal-content { padding: 14px; }
+    .surface { padding: 16px; }
+    .section-heading { flex-wrap: wrap; gap: 9px; }
+    .section-heading h2 { font-size: 18px; }
+    .edit-grid > label, .key-form > label, .security-grid > label { padding-top: 0; }
+    .secret-box, .key-detail-grid { grid-template-columns: minmax(0, 1fr); }
+    .security-summary, .metrics-summary, .dependency-grid, .conflict-summary, .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .table-page-size { margin-left: 0; }
+    .team-directory-toolbar { align-items: stretch; flex-direction: column; }
+    .team-directory-toolbar .search-input-wrap { width: 100%; }
+    .auth-layout { grid-template-columns: minmax(0, 1fr); gap: 22px; width: min(430px, 100%); padding-block: 28px; }
+    .auth-introduction { max-width: 34ch; }
+    .auth-introduction h1 { margin-bottom: 8px; }
+    .auth-introduction p { font-size: 14px; }
+    .auth-provenance { display: none; }
+    .auth-panel { padding: 20px; }
+    .auth-footer { text-align: center; }
+    .setting-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+    .setting-row:has(> [data-field-size="number"], > .field-control > [data-field-size="number"], > [data-field-size="time"], > .field-control > [data-field-size="time"], > .button-row > .config-toggle, > .toggle-row) { grid-template-columns: minmax(0, 1fr) auto; }
+    .setting-row > :is([data-slot="input"], [data-slot="textarea"], [data-slot="native-select-wrapper"], .field-control) { justify-self: start; }
+    .setting-row > :is([data-field-size="number"], [data-field-size="time"], .field-control:has([data-field-size="number"], [data-field-size="time"])) { width: 7.5rem; justify-self: end; }
+    .setting-row .permission-checkbox-group { justify-content: flex-start; }
+  }
+}

@@ -486,7 +486,7 @@ function ConfigField({
   const pricing = item.key.startsWith("TELEMETRY_COST_");
   const topicNumber = ["TOPIC_MAINTENANCE_CADENCE_HOURS", "TOPIC_MAINTENANCE_MAX_CONCURRENCY", "TOPIC_MAINTENANCE_TEAM_MAX_CONCURRENCY", "TOPIC_MAINTENANCE_CONTEXT_WINDOW_TOKENS"].includes(item.key);
   const numeric = pricing || item.key.endsWith("_SECONDS") || item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS";
-  const time = false;
+  const time = item.key === "TOPIC_MAINTENANCE_START_TIME_LOCAL";
   const min = numeric && !pricing ? 1 : undefined;
   return (
     <>
@@ -494,9 +494,9 @@ function ConfigField({
         {fieldLabel}
       <Input
         id={item.key} aria-describedby={description ? `${item.key}-help` : undefined}
-        type={time ? "time" : pricing ? "text" : numeric ? "number" : "text"}
+        type={numeric && !pricing ? "number" : "text"}
         inputMode={pricing ? "decimal" : topicNumber ? "numeric" : undefined}
-        className={item.key === "TOPIC_MAINTENANCE_START_TIME_LOCAL" ? "input-time" : undefined}
+        {...(time ? { "data-field-size": "time" } : {})}
         min={min}
         max={item.key === "OPERATION_LOG_RETENTION_DAYS" || item.key === "RECALL_FEEDBACK_RETENTION_DAYS" ? 365 : undefined}
         placeholder={CONFIG_PLACEHOLDERS[item.key] ?? ""}

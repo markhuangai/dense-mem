@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import type { SaveTopicEdits, TopicDefinition, TopicEdit, TopicPublication, TopicRecord, TopicRecordPage } from "../src/user/topic-types";
 import { confirmAction, expectPageContained, navigate } from "../tests-support/portal";
@@ -83,7 +84,9 @@ async function addEdit(page: Page, reason: string) {
   await page.getByLabel("Audit reason").fill(reason);
 }
 
-test("manager saves, replays and clears a Topic parent", async ({ page, request }) => {
+test("manager saves, replays and clears a Topic parent", async ({ page, request }, testInfo) => {
+  test.setTimeout(90_000);
+  await page.setViewportSize(testInfo.project.name === "mobile" ? { width: 390, height: 844 } : { width: 1440, height: 1000 });
   const team = await createTeam(request);
   const manager = await createCredential(request, team, "manager");
   const definition = (key: string): TopicDefinition => ({ key, label: key, description: "Organizational topic" });
@@ -98,7 +101,17 @@ test("manager saves, replays and clears a Topic parent", async ({ page, request 
   await signIn(page, manager);
   await navigate(page, "Topics");
   const editChild = page.getByRole("button", { name: "Edit child", exact: true });
-  await editChild.click();
+  await expect(page.locator(".mobile-navigation")).toBeHidden();
+  for (const theme of ["Light", "Dark"]) {
+    await page.getByRole("button", { name: "Choose theme", exact: true }).click();
+    await page.getByRole("menuitem", { name: theme, exact: true }).click();
+    await expect(editChild).toBeVisible();
+    await checkAccess(page, `${theme} populated Topic catalog`);
+    await editChild.click();
+    await expect(page.getByLabel("Definition parent")).toHaveValue(parent.id);
+    await checkAccess(page, `${theme} populated Topic editor`);
+    if (theme === "Light") await tab(page, "Catalog").click();
+  }
   await expect(page.getByLabel("Definition parent")).toHaveValue(parent.id);
   await page.getByLabel("Definition parent").fill(alternate.id);
   await addEdit(page, "Change Topic parent");
@@ -121,6 +134,27 @@ test("manager saves, replays and clears a Topic parent", async ({ page, request 
   expect((await clickSave(page)).status()).toBe(200);
   expect((await readRecord(request, manager, child.id)).definition?.parent_id).toBeUndefined();
   await expectPageContained(page);
+});
+
+async function checkAccess(page: Page, view: string) {
+  const { violations } = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21aa"]).analyze();
+  expect(violations.map(({ id, nodes }) => ({ id, elements: nodes.map(({ target }) => target) })), view).toEqual([]);
+  await expectPageContained(page);
+}
+
+test("Control Overview keeps required metrics when telemetry is disabled", async ({ page }) => {
+  await page.goto(`${controlURL}/`);
+  await page.getByLabel("Control token", { exact: true }).fill(process.env.DENSE_MEM_CONTROL_TOKEN!);
+  await page.getByRole("button", { name: "Unlock", exact: true }).click();
+  const telemetry = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname === "/control/api/telemetry" && url.searchParams.get("team_id") === teamID;
+  });
+  await page.locator(".team-directory-card").filter({ hasText: process.env.DENSE_MEM_E2E_TEAM_NAME! }).click();
+  expect((await telemetry).status()).toBe(503);
+  await expect(page.getByText("Telemetry unavailable", { exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Top signals", exact: true }).locator(".metric-row")).toHaveCount(4);
+  await expect(page.getByRole("region", { name: "Team activity", exact: true })).not.toContainText("metrics unavailable");
 });
 
 test("manager saves with cookie authentication and reviews a real version conflict", async ({ page, request }) => {

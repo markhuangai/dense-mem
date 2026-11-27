@@ -95,6 +95,7 @@ test("operators inspect topic coverage and pause or resume durable admission", a
   await expect(page.getByRole("group", { name: "Processing", exact: true })).toBeVisible();
   await expect(page.getByRole("group", { name: "Model capacity", exact: true })).toBeVisible();
   await expectCompactNumberField(page, "Cadence (hours)");
+  await expectCompactNumberField(page, "Window start time");
   await expectCompactNumberField(page, "Concurrent assessments");
   await expectPageContained(page);
   await page.getByRole("button", { name: "Pause maintenance", exact: true }).click();

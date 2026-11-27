@@ -355,7 +355,7 @@ export function DirectoryAutomationPanel({ api, provider, teams }: { api: Contro
                   <TableCell>{group.group_name || "Unnamed group"}</TableCell>
                   <TableCell><code>{group.group_id}</code></TableCell>
                   <TableCell><span className={group.enabled ? "status-pill neutral" : "status-pill warning"}>{group.enabled ? "enabled" : "disabled"}</span></TableCell>
-                  <TableCell className="actions-cell"><Button variant="ghost" size="icon" className="icon-button danger-icon" type="button" aria-label={`Remove ${group.group_name || group.group_id} from control access`} disabled={loading} onClick={() => void retireAdminGroup(group)}><Trash2 size={16} aria-hidden="true" /></Button></TableCell>
+                  <TableCell className="actions-cell"><Button variant="ghost-destructive" size="icon" className="icon-button" type="button" aria-label={`Remove ${group.group_name || group.group_id} from control access`} disabled={loading} onClick={() => void retireAdminGroup(group)}><Trash2 size={16} aria-hidden="true" /></Button></TableCell>
                 </TableRow>
               ))}</TableBody>
             </Table>

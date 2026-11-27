@@ -1,34 +1,31 @@
-.knowledge-explorer{ display: grid; grid-template-columns: minmax(0,1fr); min-width: 0; min-height: calc(100dvh - 122px); background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+@layer components {
+.knowledge-explorer{ display: grid; grid-template-columns: minmax(0,1fr); min-width: 0; min-height: calc(100dvh - 122px); background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-panel); }
 .knowledge-explorer.has-inspector{ grid-template-columns: minmax(0,1fr) 350px; }
-.knowledge-results-panel { display: flex; flex-direction: column; min-width: 0; background: var(--background); border-radius: 10px; }
-.knowledge-commandbar { border-radius: 10px 10px 0 0; }
-.knowledge-results-toolbar { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; justify-content: space-between; }
-.knowledge-list { flex: 1; align-content: start; }
+.knowledge-results-panel { display: flex; flex-direction: column; min-width: 0; background: var(--background); border-radius: var(--radius-panel); }
+.knowledge-commandbar { border-radius: var(--radius-panel) var(--radius-panel) 0 0; }
 .explorer-filter-popover { display: grid; gap: 18px; width: 340px; max-width: calc(100vw - 32px); max-height: min(720px,75dvh); overflow: auto; padding: 20px; }
 .explorer-filter-popover .section-heading { margin-bottom: 0; }
-.filter-stack { display: grid; gap: 10px; padding: 0; border: 0; }
 .filter-stack legend { margin-bottom: 8px; }
-.filter-row { display: flex; align-items: center; gap: 9px; }
 .filter-row small { margin-left: auto; }
-.contextual-inspector { display: grid; align-content: start; gap: 18px; min-width: 0; padding: 20px; border-left: 1px solid var(--border); overflow-wrap: anywhere; }
-.contextual-sheet { width: min(440px, calc(100vw - 20px)); max-width: none; overflow: auto; }
+.contextual-inspector { display: grid; align-content: start; gap: 18px; min-width: 0; padding: 20px; border-left: 1px solid var(--border); overflow-wrap: anywhere; animation: portal-enter 180ms var(--ease-out); }
 .contextual-sheet-body { display: grid; gap: 18px; min-width: 0; padding: 0 20px 24px; overflow-wrap: anywhere; }
 .inspector-card { min-width: 0; }
 .inspector-card > [data-slot=tabs-list] { width: 100%; }
 .inspector-section[data-state=inactive] { display: none; }
 .inspector-details { margin-top: 0; }
-.knowledge-result-option:hover { border-color: var(--primary); }
-.status-pill.success { color: var(--success); background: var(--success-soft); }
-.status-pill.danger { color: var(--danger); background: var(--danger-soft); }
+.knowledge-result-option:hover { border-color: var(--laser); }
 .toolbar-actions { flex-wrap: wrap; }
 
 
 .knowledge-results-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
+  padding: 14px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
 }
 
 .knowledge-results-toolbar h2 {
@@ -36,13 +33,6 @@
   color: var(--text);
   font-size: 18px;
   line-height: 1.2;
-}
-
-.knowledge-results-toolbar span {
-  color: var(--subtle);
-  font-size: 12px;
-  font-weight: 650;
-  text-transform: uppercase;
 }
 
 .filter-stack {
@@ -86,14 +76,17 @@
   padding: 0 10px;
   color: var(--text);
   background: var(--panel-strong);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
   font: inherit;
 }
 
 .knowledge-list {
   display: grid;
+  flex: 1;
+  align-content: start;
   gap: 10px;
+  padding: 12px 14px;
 }
 
 .compact-list {
@@ -102,15 +95,16 @@
 
 .knowledge-item {
   min-width: 0;
-  padding: 13px;
-  background: var(--panel-strong);
+  padding: 13px 14px;
+  background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-panel);
 }
 
 .knowledge-item.selected {
-  background: color-mix(in srgb, var(--accent-soft) 44%, var(--panel));
-  border-color: color-mix(in srgb, var(--primary) 44%, var(--border));
+  background: color-mix(in srgb, var(--panel) 84%, var(--accent-soft));
+  border-color: color-mix(in srgb, var(--laser) 64%, var(--border));
+  box-shadow: inset 1px 0 var(--laser);
 }
 
 .knowledge-result-option {
@@ -185,7 +179,7 @@
   padding: 10px;
   background: var(--panel-strong);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-panel);
 }
 
 .inspector-details dt {
@@ -214,13 +208,6 @@
   min-height: 40px;
 }
 
-.knowledge-results-toolbar {
-  margin: 0;
-  padding: 14px 16px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
-}
-
 .toolbar-actions,
 .result-kicker {
   display: flex;
@@ -229,19 +216,8 @@
   min-width: 0;
 }
 
-.knowledge-list {
-  gap: 10px;
-  padding: 12px 14px;
-}
-
 .knowledge-list.dense {
   gap: 7px;
-}
-
-.knowledge-item {
-  padding: 13px 14px;
-  background: var(--panel);
-  border-radius: 6px;
 }
 
 .knowledge-list.dense .knowledge-item {
@@ -250,12 +226,6 @@
 
 .knowledge-list.dense .knowledge-item p {
   display: none;
-}
-
-.knowledge-item.selected {
-  background: color-mix(in srgb, var(--panel) 84%, var(--accent-soft));
-  border-color: color-mix(in srgb, var(--primary) 64%, var(--border));
-  box-shadow: inset 3px 0 0 var(--primary);
 }
 
 .icon-button.active {
@@ -348,3 +318,4 @@
     linear-gradient(90deg, var(--primary) var(--confidence), var(--border) 0);
 }
 @media(max-width:767px) { .knowledge-commandbar { padding: 14px; } .knowledge-results-toolbar { padding: 14px; } .knowledge-list { padding: 12px; } .knowledge-item { padding: 14px; } .knowledge-explorer{ min-height: calc(100dvh - 90px); } }
+}

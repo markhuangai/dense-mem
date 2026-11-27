@@ -164,12 +164,12 @@ export function TopicsPanel({ api, session }: { api: UserApi; session: UserSessi
       <TopicEditor key={editorEpoch} onDirtyChange={setEditorDirty} records={records} target={target} disabled={busy || stale || edits.length >= 64} onAdd={add} />
       <ol>{edits.map((edit, index) => <li key={index}>
         <EditDetails edit={edit} records={records} />
-        <Button variant="outline" aria-label={`Remove correction ${index + 1}`} disabled={busy} onClick={() => setEdits((current) => current.filter((_, position) => position !== index))}>Remove</Button>
+        <Button variant="ghost-destructive" aria-label={`Remove correction ${index + 1}`} disabled={busy} onClick={() => setEdits((current) => current.filter((_, position) => position !== index))}>Remove</Button>
       </li>)}</ol>
       <FieldRow label="Audit reason" htmlFor="topic-audit-reason"><Textarea id="topic-audit-reason" value={reason} maxLength={512} disabled={busy} onChange={(event) => setReason(event.target.value)} /></FieldRow>
       <Button className="primary-button" disabled={busy || stale || editorDirty || !reason.trim() || !edits.length} onClick={() => void perform(save)}>Save</Button>
     </section></TabsContent>}
-    <TabsContent value="history" forceMount hidden={activeTab !== "history"}><section className="surface"><h3>Publication history</h3>{publications.map((item) => <Button variant="outline" key={item.id} disabled={busy} onClick={() => void perform(async () => setPublication(await api.topicPublication(item.id)))}>Revision {item.revision} · {item.origin} · {item.reason}</Button>)}
+    <TabsContent value="history" forceMount hidden={activeTab !== "history"}><section className="surface"><h3>Publication history</h3>{publications.map((item) => <button type="button" className="interactive-card" key={item.id} disabled={busy} onClick={() => void perform(async () => setPublication(await api.topicPublication(item.id)))}>Revision {item.revision} · {item.origin} · {item.reason}</button>)}
       {historyCursor > 0 && <Button variant="outline" disabled={busy} onClick={() => void perform(async () => { const page = await api.topicPublications(historyCursor); setPublications((current) => [...current, ...page.publications]); setHistoryCursor(page.next_revision ?? 0); })}>Load more publications</Button>}
       {publication && <div aria-label="Publication detail"><h3>Publication revision {publication.revision}</h3><p>{publication.reason}</p><ul>{publication.record_views?.map((record) => <li key={record.id}>{recordLabel(record)} · revision {record.version} · {record.current ? "Current" : "Historical or awaiting reassessment"}<RecordDetails record={record} records={publication.record_views ?? []} /></li>)}</ul>
       </div>}

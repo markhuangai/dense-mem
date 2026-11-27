@@ -1,5 +1,6 @@
 import { expect, vi } from "vitest";
 import { ControlMetrics, Credential, GeneralConfig, OperationLog, OperationLogConfig, SecurityBan, SecuritySettings, SSOConfig, Team } from "./api";
+import type { TelemetrySnapshot } from "./telemetry/types";
 
 export const profileA: Team = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -64,8 +65,9 @@ export const metricsSnapshot: ControlMetrics = {
   ],
 };
 
-export const telemetrySnapshot = {
+export const telemetrySnapshot: TelemetrySnapshot = {
   available: true,
+  status: "ready",
   window: {
     key: "1h",
     from: "2026-05-02T12:00:00Z",
@@ -83,6 +85,7 @@ export const telemetrySnapshot = {
       id: "http_rps",
       label: "HTTP requests",
       unit: "rps",
+      status: "ready",
       points: [
         { timestamp: "2026-05-02T12:00:00Z", value: 0.5 },
         { timestamp: "2026-05-02T13:00:00Z", value: 0.8 },
@@ -211,6 +214,7 @@ export function mockPortalFetch({
   bans = [],
   logs = operationLogsSnapshot,
   metrics = metricsSnapshot,
+  telemetry,
   rememberInvocation,
   rememberAttempts,
 }: {
@@ -220,6 +224,7 @@ export function mockPortalFetch({
   bans?: SecurityBan[];
   logs?: OperationLog[];
   metrics?: ControlMetrics | "error";
+  telemetry?: (url: URL, signal: AbortSignal | null | undefined) => Response | Promise<Response>;
   rememberInvocation?: { summary: Record<string, unknown>; detail: Record<string, unknown> };
   rememberAttempts?: Array<{ summary: Record<string, unknown>; detail: Record<string, unknown> }>;
 }) {
@@ -237,8 +242,8 @@ export function mockPortalFetch({
     if (url.endsWith("/session")) {
       return jsonResponse({ data: { authenticated: true } });
     }
-    if (url.includes("/telemetry") && method === "GET") {
-      return jsonResponse({ data: telemetrySnapshot });
+    if (parsedUrl.pathname === "/control/api/telemetry" && method === "GET") {
+      return telemetry ? telemetry(parsedUrl, init?.signal) : jsonResponse({ data: telemetrySnapshot });
     }
     if (url.includes("/metrics") && method === "GET") {
       if (metrics === "error") {

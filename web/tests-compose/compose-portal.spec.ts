@@ -2,6 +2,7 @@ import { navigate, openNavigation, confirmAction, expectPageContained } from "..
 import { expect, type APIRequestContext, type Locator, type Page, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import "./portal-state";
+import "./portal-obsidian";
 
 const controlUrl = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
 const userUrl = requiredEnv("DENSE_MEM_USER_URL").replace(/\/$/, "");

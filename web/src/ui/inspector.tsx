@@ -28,7 +28,7 @@ export function ResponsiveInspector({ compact, open, onOpenChange, title, childr
 }) {
   const returnFocus = useRef<HTMLElement | null>(null);
   if (compact) return <Sheet open={open} onOpenChange={onOpenChange}>
-    <SheetContent className="contextual-sheet" showCloseButton={false} onOpenAutoFocus={() => {
+    <SheetContent className="contextual-sheet w-[min(440px,calc(100vw-20px))] overflow-auto sm:max-w-none" showCloseButton={false} onOpenAutoFocus={() => {
       returnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     }} onCloseAutoFocus={(event) => {
       event.preventDefault();
