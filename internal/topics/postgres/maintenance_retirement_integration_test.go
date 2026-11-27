@@ -119,7 +119,7 @@ func TestOntologyEvidenceOnlyResetRebuildsExistingEvidence(t *testing.T) {
 		require.NoError(t, f.admin.Raw(`SELECT COALESCE(jsonb_object_agg(replace(key,'TOPIC_MAINTENANCE_','ONTOLOGY_MAINTENANCE_'),value)::text,'{}') FROM app_config WHERE key LIKE 'ONTOLOGY_MAINTENANCE_%' OR key LIKE 'TOPIC_MAINTENANCE_%'`).Row().Scan(&settings))
 		result["settings"] = settings
 		var batches string
-		require.NoError(t, f.admin.Raw(`SELECT jsonb_agg(to_jsonb(row_value)-ARRAY['sources','revisions','status','failure_code','completed_at','community_topic_id'] ORDER BY batch_id)::text FROM `+prefix+`batches row_value`).Row().Scan(&batches))
+		require.NoError(t, f.admin.Raw(`SELECT jsonb_agg(to_jsonb(row_value)-ARRAY['sources','revisions','status','failure_code','completed_at','community_topic_id','batch_kind'] ORDER BY batch_id)::text FROM `+prefix+`batches row_value`).Row().Scan(&batches))
 		result["batch_identity"] = batches
 		return result
 	}

@@ -88,7 +88,7 @@ ALTER TABLE topic_maintenance_batches
 ALTER TABLE topic_maintenance_runs
     DROP CONSTRAINT topic_maintenance_runs_kind_check,
     ADD CONSTRAINT topic_maintenance_runs_kind_check
-        CHECK (kind IN ('scheduled','run','retry','reassess','pause','resume'));
+        CHECK (kind IN ('scheduled','run','retry','reassess','pause','resume','allowance'));
 ALTER TABLE topic_maintenance_teams
     ADD COLUMN next_stage smallint NOT NULL DEFAULT 0 CHECK (next_stage BETWEEN 0 AND 4);
 ALTER TABLE topic_maintenance_community_work

@@ -350,16 +350,21 @@ func maintenancePublicationFence(ctx context.Context, tx *gorm.DB, fence scope) 
 var _ topic.MaintenanceRepository = (*Store)(nil)
 
 func expireMaintenanceBatches(tx *gorm.DB, now time.Time) (int64, error) {
-	result := tx.Exec(`UPDATE topic_maintenance_batches SET status='lost',failure_code='lease_lost' WHERE status='running' AND lease_until<=?`, now)
-	if result.Error != nil {
-		return result.RowsAffected, result.Error
+	count, err := expireMaintenanceBatchRecords(tx, now)
+	if err != nil {
+		return count, err
 	}
-	err := tx.Exec(`UPDATE topic_maintenance_community_work SET lease_batch_id=NULL,lease_until=NULL
+	err = tx.Exec(`UPDATE topic_maintenance_community_work SET lease_batch_id=NULL,lease_until=NULL
 		WHERE lease_until<=?`, now).Error
 	if err != nil {
-		return result.RowsAffected, err
+		return count, err
 	}
 	err = tx.Exec(`UPDATE topic_embeddings SET consolidation_batch_id=NULL,consolidation_lease_until=NULL
 		WHERE consolidation_lease_until<=?`, now).Error
-	return result.RowsAffected, err
+	return count, err
+}
+
+func expireMaintenanceBatchRecords(tx *gorm.DB, now time.Time) (int64, error) {
+	result := tx.Exec(`UPDATE topic_maintenance_batches SET status='lost',failure_code='lease_lost' WHERE status='running' AND lease_until<=?`, now)
+	return result.RowsAffected, result.Error
 }

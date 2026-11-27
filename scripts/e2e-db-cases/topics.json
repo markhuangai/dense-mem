@@ -17,6 +17,13 @@
       "source": "internal/topics/postgres/topic_embeddings_integration_test.go"
     },
     {
+      "id": "repository/TestTopicHybridSearchSkipsStaleCandidates",
+      "package": "./internal/topics/postgres",
+      "run": "^TestTopicHybridSearchSkipsStaleCandidates$",
+      "phase": "precheck",
+      "source": "internal/topics/postgres/topic_embeddings_integration_test.go"
+    },
+    {
       "id": "repository/TestTopicMaintenancePartialAssignmentCommitAndRetry",
       "package": "./internal/topics/postgres",
       "run": "^TestTopicMaintenancePartialAssignmentCommitAndRetry$",

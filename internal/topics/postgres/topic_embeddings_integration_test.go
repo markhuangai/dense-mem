@@ -76,6 +76,16 @@ func TestTopicEmbeddingBackfillRevisionAndScopeFences(t *testing.T) {
 	}))
 }
 
+func TestTopicHybridSearchSkipsStaleCandidates(t *testing.T) {
+	f := newOrganizationFixture(t)
+	current := seedStaleVocabulary(t, f, 20, 1)[0]
+	scope := assignment.Scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation, OperationID: uuid.NewString()}
+	result, err := f.store.ReadAssignmentCandidates(context.Background(), scope, assignment.Slice{Text: "PostgreSQL relational storage"})
+	require.NoError(t, err)
+	require.Len(t, result.Topics, 1)
+	require.Equal(t, current.ID, result.Topics[0].ID)
+}
+
 func TestTopicHybridSearchIndexTiersAndIsolation(t *testing.T) {
 	for _, tier := range []struct {
 		name, strategy, operator string

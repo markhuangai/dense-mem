@@ -129,9 +129,9 @@ func (s *Store) CompleteTopicEmbeddingBatch(ctx context.Context, turn topic.Main
 		if err != nil {
 			return err
 		}
-		err = tx.Raw(`SELECT true FROM topic_maintenance_runs AS run JOIN topic_maintenance_windows AS window USING(window_id)
-			WHERE run.run_id=?::uuid AND run.status IN ('pending','running') AND window.ends_at>clock_timestamp()
-			FOR SHARE OF run,window`, turn.RunID).Row().Scan(&valid)
+		err = tx.Raw(`SELECT true FROM topic_maintenance_runs AS run JOIN topic_maintenance_windows AS maintenance_window USING(window_id)
+			WHERE run.run_id=?::uuid AND run.status IN ('pending','running') AND maintenance_window.ends_at>clock_timestamp()
+			FOR SHARE OF run,maintenance_window`, turn.RunID).Row().Scan(&valid)
 		if errors.Is(err, sql.ErrNoRows) {
 			return topic.ErrWindowClosed
 		}

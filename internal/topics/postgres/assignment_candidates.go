@@ -58,36 +58,11 @@ func (s *Store) assignmentCandidatesWithVector(tx *gorm.DB, fence scope, input a
 	stats.VectorUnavailable = vector == ""
 	_, words := topic.VocabularyQuery([]topic.SourceSnapshot{{State: map[string]string{"content": input.Text}}})
 	query := topic.LooseVocabularyQuery(words)
-	rows, err := tx.Raw(`SELECT current.topic_id::text,NOT EXISTS (
-		SELECT 1 FROM topic_embeddings AS embedding WHERE
-		(embedding.team_id,embedding.shared_space_id,embedding.space_generation,embedding.topic_id)=
-		(current.team_id,current.shared_space_id,current.space_generation,current.topic_id)
-		AND embedding.embedding_contract_id=NULLIF(?,'')::uuid AND embedding.topic_version=current.definition_version)
-		FROM topics AS current
-		WHERE current.team_id=?::uuid AND current.shared_space_id=?::uuid AND current.space_generation=?
-		AND NOT current.retired AND current.search_tsv @@ websearch_to_tsquery('simple',?)
-		ORDER BY ts_rank_cd(current.search_tsv,websearch_to_tsquery('simple',?)) DESC,current.topic_id LIMIT ?`,
-		active.ID, fence.TeamID, fence.SpaceID, fence.Generation, query, query, assignment.MaxTopics).Rows()
+	lexical, missing, err := s.assignmentLexicalCandidates(tx, fence, active.ID, query)
 	if err != nil {
 		return nil, stats, err
 	}
-	lexical := []string{}
-	for rows.Next() {
-		var id string
-		var missing bool
-		if err := rows.Scan(&id, &missing); err != nil {
-			rows.Close()
-			return nil, stats, err
-		}
-		lexical = append(lexical, id)
-		if missing {
-			stats.UnembeddedTopicCount++
-		}
-	}
-	err = errors.Join(rows.Err(), rows.Close())
-	if err != nil {
-		return nil, stats, err
-	}
+	stats.UnembeddedTopicCount = missing
 	stats.FullTextCount = len(lexical)
 	var semantic []string
 	if vector != "" {
@@ -162,6 +137,86 @@ func (s *Store) assignmentCandidatesWithVector(tx *gorm.DB, fence scope, input a
 		}
 	}
 	return result, stats, nil
+}
+
+func (s *Store) assignmentLexicalCandidates(tx *gorm.DB, fence scope, contractID, query string) ([]string, int, error) {
+	type candidate struct {
+		id      string
+		missing bool
+	}
+	var result []string
+	unembedded := 0
+	// Check freshness before consuming shortlist slots so stale history cannot hide current Topics.
+	for offset := 0; len(result) < assignment.MaxTopics; {
+		limit := min(assignment.MaxTopics, topic.MaxDependencyRecords-offset+1)
+		rows, err := tx.Raw(`SELECT current.topic_id::text,NOT EXISTS (
+			SELECT 1 FROM topic_embeddings AS embedding WHERE
+			(embedding.team_id,embedding.shared_space_id,embedding.space_generation,embedding.topic_id)=
+			(current.team_id,current.shared_space_id,current.space_generation,current.topic_id)
+			AND embedding.embedding_contract_id=NULLIF(?,'')::uuid AND embedding.topic_version=current.definition_version)
+			FROM topics AS current
+			WHERE current.team_id=?::uuid AND current.shared_space_id=?::uuid AND current.space_generation=?
+			AND NOT current.retired AND current.search_tsv @@ websearch_to_tsquery('simple',?)
+			ORDER BY ts_rank_cd(current.search_tsv,websearch_to_tsquery('simple',?)) DESC,current.topic_id LIMIT ? OFFSET ?`,
+			contractID, fence.TeamID, fence.SpaceID, fence.Generation, query, query, limit, offset).Rows()
+		if err != nil {
+			return nil, 0, err
+		}
+		var page []candidate
+		var ids []string
+		for rows.Next() {
+			var item candidate
+			if err := rows.Scan(&item.id, &item.missing); err != nil {
+				rows.Close()
+				return nil, 0, err
+			}
+			page = append(page, item)
+			ids = append(ids, item.id)
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return nil, 0, err
+		}
+		if len(page) == 0 {
+			break
+		}
+		if offset+len(page) > topic.MaxDependencyRecords {
+			return nil, 0, topic.ErrContextBound
+		}
+		heads, err := loadHeads(tx, fence, ids, nil)
+		if err != nil {
+			return nil, 0, err
+		}
+		records := make([]topic.Record, 0, len(page))
+		for _, item := range page {
+			if record, ok := heads[item.id]; ok && !record.Retired {
+				records = append(records, record)
+			}
+		}
+		views, err := s.organizationViews(tx, fence, records)
+		if err != nil {
+			return nil, 0, err
+		}
+		current := make(map[string]bool, len(views))
+		for _, view := range views {
+			current[view.ID] = view.Current
+		}
+		for _, item := range page {
+			if current[item.id] {
+				result = append(result, item.id)
+				if item.missing {
+					unembedded++
+				}
+				if len(result) == assignment.MaxTopics {
+					break
+				}
+			}
+		}
+		offset += len(page)
+		if len(page) < limit {
+			break
+		}
+	}
+	return result, unembedded, nil
 }
 
 func assignmentEvidenceVector(tx *gorm.DB, fence scope, input assignment.Slice, active assignmentSearchContract) (string, error) {

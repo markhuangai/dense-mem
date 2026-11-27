@@ -312,7 +312,7 @@ async function verifyTopicRouting(base, adminBase, vendor) {
         await until(async () => {
           const [parent, child] = await Promise.all([record(storage.topic_id), record(backups.topic_id)]);
           return parent.community_placement === "failed" && child.community_placement === "failed";
-        }, 150_000);
+        }, 150_000, 2000);
         const failedDecisions = (await fixture()).exchanges.slice(beforeOutage).filter((item) => item.vendor === vendor && item.mode === "community-partial-outage" && item.names.some((name) => /^parent_\d+$/.test(name)));
         assert(failedDecisions.some((item) => item.names.filter((name) => /^parent_\d+$/.test(name)).length >= 2), "the failed Decision must contain both Community topics");
         assert.equal(await communityGenerations(), beforePlacement, "a failed Community Decision must not fall back to generation");
@@ -327,7 +327,7 @@ async function verifyTopicRouting(base, adminBase, vendor) {
           const [parent, child] = await Promise.all([record(storage.topic_id), record(backups.topic_id)]);
           return parent.community_placement === "standalone" && child.community_placement === "placed"
             && child.community_parent_id === storage.topic_id;
-        }, 150_000);
+        }, 150_000, 2000);
         const placementDecisions = (await fixture()).exchanges.slice(beforeDecision).filter((item) => item.vendor === vendor && item.names.some((name) => /^parent_\d+$/.test(name)));
         assert(placementDecisions.some((item) => item.names.filter((name) => /^parent_\d+$/.test(name)).length >= 2), "Community placement must use a batched Decision");
         assert.equal(await communityGenerations(), beforePlacement, "clear Community Decisions must not invoke generation");
@@ -342,7 +342,7 @@ async function verifyTopicRouting(base, adminBase, vendor) {
           const [parent, child] = await Promise.all([record(storage.topic_id), record(backups.topic_id)]);
           return parent.community_placement === "failed" && child.community_placement === "placed"
             && child.community_parent_id === storage.topic_id;
-        }, 150_000);
+        }, 150_000, 2000);
         assert((await communityGenerations()) >= beforePlacement + 2, "independent generation must let the sibling place while one provider call fails");
       } finally {
         await admin("/topic-maintenance/pause", { operation_key: randomUUID() });
@@ -391,6 +391,6 @@ async function control(base, items) {
 }
 async function fixture(value) { return getJSON(`${fixtureURL}/decision-fixture`, value ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: value }) } : undefined); }
 async function getJSON(url, init) { const response = await fetch(url, init); assert(response.ok, `fixture HTTP ${response.status}`); return response.json(); }
-async function until(check, timeoutMS = 30_000) { const deadline = Date.now() + timeoutMS; let cause; while (Date.now() < deadline) { try { if (await check()) return; } catch (error) { cause = error; } await new Promise((resolve) => setTimeout(resolve, 250)); } throw new Error("decision scenario condition did not complete", { cause }); }
+async function until(check, timeoutMS = 30_000, intervalMS = 250) { const deadline = Date.now() + timeoutMS; let cause; while (Date.now() < deadline) { try { if (await check()) return; } catch (error) { cause = error; } await new Promise((resolve) => setTimeout(resolve, intervalMS)); } throw new Error("decision scenario condition did not complete", { cause }); }
 function docker(args) { const result = spawnSync("docker", args, { encoding: "utf8", maxBuffer: 2 * 1024 * 1024 }); assert.equal(result.status, 0, "decision test container operation failed"); return result.stdout; }
 function required(name) { const value = process.env[name]; assert(value, `${name} is required`); return value.replace(/\/$/, ""); }
