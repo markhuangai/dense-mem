@@ -294,6 +294,26 @@ async function verifyTopicRouting(base, adminBase, vendor) {
       })).data;
       const communityGenerations = async () => (await getJSON(`${fixtureURL}/health`)).chat_requests.filter((call) => call.schema_name === "community_placement_v1").length;
       const beforePlacement = await communityGenerations();
+      const placementSince = new Date().toISOString();
+      const waitForPlacement = async (label, predicate) => {
+        let last;
+        try {
+          await until(async () => {
+            const [parent, child] = await Promise.all([record(storage.topic_id), record(backups.topic_id)]);
+            last = { parent, child };
+            return predicate(parent, child);
+          }, 150_000, 2000);
+        } catch (error) {
+          const logs = spawnSync("docker", ["compose", "-p", project, "-f", compose, "logs", "--no-color", "--since", placementSince, "server"], { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
+          const events = `${logs.stdout || ""}\n${logs.stderr || ""}`.split("\n").flatMap((line) => {
+            const start = line.indexOf("{");
+            if (start < 0) return [];
+            try { return [JSON.parse(line.slice(start))]; } catch { return []; }
+          }).filter((entry) => entry.team_id === team.id && (entry.msg?.startsWith("community_placement.") || entry.msg?.startsWith("topic_maintenance.")))
+            .slice(-80).map(({ time, msg, run_id, batch_id, topic_id, topic_version, parent_topic_id, candidates, choice, winner_probability, threshold, status, reason, reason_code, failure_code, claimed_count, committed_count, error }) => ({ time, msg, run_id, batch_id, topic_id, topic_version, parent_topic_id, candidates, choice, winner_probability, threshold, status, reason, reason_code, failure_code, claimed_count, committed_count, error }));
+          throw new Error(`${label} did not settle: ${JSON.stringify({ last, log_status: logs.status, events })}`, { cause: error });
+        }
+      };
       const decisionSettings = await control(adminBase);
       const communitySetting = decisionSettings.items.find((item) => item.key === "DECISION_COMMUNITY_PLACEMENT_ENABLED");
       assert(communitySetting);
@@ -309,10 +329,7 @@ async function verifyTopicRouting(base, adminBase, vendor) {
         await fixture("community-partial-outage");
         await admin("/topic-maintenance/resume", { operation_key: randomUUID() });
         await admin("/topic-maintenance/runs", { operation_key: randomUUID(), max_batches: 20 });
-        await until(async () => {
-          const [parent, child] = await Promise.all([record(storage.topic_id), record(backups.topic_id)]);
-          return parent.community_placement === "failed" && child.community_placement === "failed";
-        }, 150_000, 2000);
+        await waitForPlacement("Decision outage", (parent, child) => parent.community_placement === "failed" && child.community_placement === "failed");
         const failedDecisions = (await fixture()).exchanges.slice(beforeOutage).filter((item) => item.vendor === vendor && item.mode === "community-partial-outage" && item.names.some((name) => /^parent_\d+$/.test(name)));
         assert(failedDecisions.some((item) => item.names.filter((name) => /^parent_\d+$/.test(name)).length >= 2), "the failed Decision must contain both Community topics");
         assert.equal(await communityGenerations(), beforePlacement, "a failed Community Decision must not fall back to generation");
@@ -323,11 +340,8 @@ async function verifyTopicRouting(base, adminBase, vendor) {
         const beforeDecision = (await fixture()).exchanges.length;
         await admin("/topic-maintenance/resume", { operation_key: randomUUID() });
         await admin("/topic-maintenance/runs", { operation_key: randomUUID(), max_batches: 40 });
-        await until(async () => {
-          const [parent, child] = await Promise.all([record(storage.topic_id), record(backups.topic_id)]);
-          return parent.community_placement === "standalone" && child.community_placement === "placed"
-            && child.community_parent_id === storage.topic_id;
-        }, 150_000, 2000);
+        await waitForPlacement("Decision recovery", (parent, child) => parent.community_placement === "standalone" && child.community_placement === "placed"
+          && child.community_parent_id === storage.topic_id);
         const placementDecisions = (await fixture()).exchanges.slice(beforeDecision).filter((item) => item.vendor === vendor && item.names.some((name) => /^parent_\d+$/.test(name)));
         assert(placementDecisions.some((item) => item.names.filter((name) => /^parent_\d+$/.test(name)).length >= 2), "Community placement must use a batched Decision");
         assert.equal(await communityGenerations(), beforePlacement, "clear Community Decisions must not invoke generation");
@@ -338,11 +352,8 @@ async function verifyTopicRouting(base, adminBase, vendor) {
         await getJSON(`${fixtureURL}/ontology-fixture`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "community-partial-outage" }) });
         await admin("/topic-maintenance/resume", { operation_key: randomUUID() });
         await admin("/topic-maintenance/runs", { operation_key: randomUUID(), max_batches: 40 });
-        await until(async () => {
-          const [parent, child] = await Promise.all([record(storage.topic_id), record(backups.topic_id)]);
-          return parent.community_placement === "failed" && child.community_placement === "placed"
-            && child.community_parent_id === storage.topic_id;
-        }, 150_000, 2000);
+        await waitForPlacement("Independent generation", (parent, child) => parent.community_placement === "failed" && child.community_placement === "placed"
+          && child.community_parent_id === storage.topic_id);
         assert((await communityGenerations()) >= beforePlacement + 2, "independent generation must let the sibling place while one provider call fails");
       } finally {
         await admin("/topic-maintenance/pause", { operation_key: randomUUID() });

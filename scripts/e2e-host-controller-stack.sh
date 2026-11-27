@@ -229,7 +229,10 @@ if (["ontology_organization", "ontology_management", "ontology_upgrade"].include
     AI_API_KEY: "dense-mem-ontology-e2e-key",
   })) serverEnvironment.set(key, value);
 }
-if (scenario === "ontology_organization") serverEnvironment.set("LOG_LEVEL", "");
+if (scenario === "ontology_organization") {
+  serverEnvironment.set("LOG_LEVEL", "");
+  serverEnvironment.set("AI_VERIFIER_MAX_CONCURRENCY", "12");
+}
 if (scenario === "space_aware_recall") {
   serverEnvironment.set("LOG_LEVEL", "");
   serverEnvironment.set("RECALL_EXPANSION_ENABLED", "true");

@@ -90,9 +90,12 @@ func TestOntologyMaintenanceDiscoveryCommittedDiagnostics(t *testing.T) {
 				require.EqualValues(t, 2, counts["refreshed_sources"])
 				require.EqualValues(t, 2, counts["completed_markers"])
 				require.Empty(t, discovery["error_code"])
+				completed := x.queue(t)
 				for i := range queue {
 					require.Equal(t, "pending", queue[i].Status)
+					require.NotEqual(t, queue[i].AssessmentID, completed[i].AssessmentID, "changed membership context needs a fresh assessment")
 					queue[i].Status = "organized"
+					queue[i].AssessmentID = completed[i].AssessmentID
 				}
 			}
 			require.Equal(t, queue, x.queue(t))
@@ -113,7 +116,9 @@ func TestOntologyMaintenanceDiscoveryCommittedDiagnostics(t *testing.T) {
 				require.NoError(t, x.f.admin.Raw(`SELECT assessment_id::text FROM historical_organization_assessments
 					WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND operation_key=?`,
 					x.f.team, x.f.space, x.f.generation, "maintenance:"+batchID).Row().Scan(&assessmentID))
-				require.Equal(t, queue[0].AssessmentID, assessmentID, "the completion receipt must reuse the earlier assessment")
+				for _, source := range queue {
+					require.Equal(t, assessmentID, source.AssessmentID, "each completed source must reference the new assessment")
+				}
 			}
 		})
 	}

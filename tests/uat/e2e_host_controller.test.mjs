@@ -181,7 +181,7 @@ test("Client overlays retain ordinary settings and reserve a bounded request bud
     const generator = join(fixture, "overlay.cjs");
     await writeFile(generator, stack.slice(start, end));
     const traceWithoutTelemetry = ["synchronous_write_telemetry_disabled", "oauth_provider_compatibility", "ontology_management", "ontology_upgrade"];
-    for (const name of ["google_adk_memory", "langchain_retriever", "python_client", "session_ingest", "synchronous_write", "enterprise_exports", ...traceWithoutTelemetry]) {
+    for (const name of ["google_adk_memory", "langchain_retriever", "python_client", "session_ingest", "synchronous_write", "enterprise_exports", "ontology_organization", ...traceWithoutTelemetry]) {
       const destination = join(fixture, `${name}.yml`);
       await run(process.execPath, [
         generator, destination, "synchronous_write", "", "", "fixture-model", "1536",
@@ -201,11 +201,15 @@ test("Client overlays retain ordinary settings and reserve a bounded request bud
       if (traceWithoutTelemetry.includes(name)) {
         assert.match(overlay, /LOG_LEVEL: ""/);
         assert.match(overlay, /TELEMETRY_ENABLED: "false"/);
+      } else if (name === "ontology_organization") {
+        assert.match(overlay, /LOG_LEVEL: ""/);
       } else if (["python_client", "session_ingest", "synchronous_write"].includes(name)) {
         assert.match(overlay, /LOG_LEVEL: "debug"/);
       } else {
         assert.doesNotMatch(overlay, /LOG_LEVEL/);
       }
+      if (name === "ontology_organization") assert.match(overlay, /AI_VERIFIER_MAX_CONCURRENCY: "12"/);
+      else assert.doesNotMatch(overlay, /AI_VERIFIER_MAX_CONCURRENCY/);
       if (name === "enterprise_exports") {
         assert.match(overlay, /OTLP_ENABLED: "true"/);
         assert.match(overlay, /OTLP_TRACE_ENDPOINT: "http:\/\/enterprise-collector:4318\/v1\/traces"/);
