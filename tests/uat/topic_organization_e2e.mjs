@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { captureRememberFailure } from "./synchronous_write/cases/diagnostics.mjs";
 import { rememberWithEmbeddingRetry } from "./synchronous_write/remember_retry.mjs";
-import { assessmentRecords, captureSemanticAssessmentWindow, reconstructDiagnosticBody } from "./topic_assessment_diagnostics.mjs";
+import { assessmentRecords, captureSemanticAssessmentWindow, maintenanceRecords, reconstructDiagnosticBody, structuredLogRecords } from "./topic_assessment_diagnostics.mjs";
 
 const userURL = required("DENSE_MEM_USER_URL").replace(/\/$/, "");
 const controlURL = required("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
@@ -250,10 +250,10 @@ try {
       directory: `${failureDirectory}/ontology-organization` });
     const diagnosticTeams = new Set(credentialTeams.values());
     for (const credential of [controlToken, ...credentialTeams.keys()]) assert(!window.includes(credential), "topic diagnostic capture exposed credentials");
-    const maintenanceRecords = window.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line))
+    const maintenanceEvents = structuredLogRecords(window)
       .filter((record) => diagnosticTeams.has(record.team_id) && /^(community_placement\.|topic_equivalence\.|topic_maintenance\.|topic maintenance (discovery|preparation))/.test(record.msg))
       .slice(-200);
-    for (const record of maintenanceRecords) console.log(`topic_maintenance_diagnostic_record ${JSON.stringify(record)}`);
+    for (const record of maintenanceEvents) console.log(`topic_maintenance_diagnostic_record ${JSON.stringify(record)}`);
     for (const record of assessmentRecords(window).filter((record) => diagnosticTeams.has(record.team_id))) console.log(`topic_semantic_diagnostic_record ${JSON.stringify(record)}`);
   } catch (captureError) { failure = new AggregateError([error, captureError], "ontology organization failure capture is incomplete"); }
 } finally {
@@ -476,7 +476,7 @@ async function finalizationRecovery(key) {
   const logs = () => {
     const result = spawnSync("docker", ["compose", "-p", required("DENSE_MEM_E2E_COMPOSE_PROJECT"), "-f", required("DENSE_MEM_E2E_COMPOSE_FILE"), "logs", "--no-color", "--no-log-prefix", "--since", since, "server"], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
     assert(!result.error && result.status === 0, "recovery stdout must be available");
-    return assessmentRecords(result.stdout).filter((row) => row.team_id === teamID);
+    return maintenanceRecords(result.stdout, teamID);
   };
   try {
     postgresQuery(`CREATE FUNCTION topic_e2e_finalization_failure() RETURNS trigger LANGUAGE plpgsql AS $$

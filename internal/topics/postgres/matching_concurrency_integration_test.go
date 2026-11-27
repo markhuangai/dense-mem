@@ -61,7 +61,8 @@ func TestOntologyMatchingConcurrentInvalidation(t *testing.T) {
 		require.Empty(t, handles, "lexical overlap alone must not invalidate an unlinked source")
 		page, err := maintenanceDefinitionGroupPage(tx, fence, []maintenanceMarker{marker}, topic.MaintenancePageSize)
 		require.NoError(t, err)
-		require.Equal(t, handles, page.Sources)
+		require.Empty(t, page.Sources)
+		require.True(t, page.Exhausted[0])
 		return nil
 	}))
 	contextData, err := f.store.ReadOrganization(ctx, f.team, []topic.SourceHandle{source})
