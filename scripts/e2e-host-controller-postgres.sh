@@ -47,7 +47,7 @@ provision_postgres_runtime_role() {
   local runtime_user runtime_password runtime_database role_state
   runtime_user="$(compose_server_environment_value POSTGRES_USER)"
   runtime_password="$(compose_server_environment_value POSTGRES_PASSWORD)"
-  runtime_database="$(compose_server_environment_value POSTGRES_DB)"
+  runtime_database="${1:-$(compose_server_environment_value POSTGRES_DB)}"
   validate_postgres_identifier "$runtime_user"
   validate_postgres_identifier "$runtime_database"
   [[ -n "$runtime_password" ]] || fail "POSTGRES_PASSWORD is required for runtime role provisioning"
@@ -61,7 +61,7 @@ provision_postgres_runtime_role() {
     -e "DENSE_MEM_RUNTIME_POSTGRES_PASSWORD=$runtime_password" \
     -e "DENSE_MEM_RUNTIME_POSTGRES_DB=$runtime_database" \
     postgres sh -ec \
-      'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+      'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$DENSE_MEM_RUNTIME_POSTGRES_DB" \
       -v runtime_user="$DENSE_MEM_RUNTIME_POSTGRES_USER" \
       -v runtime_password="$DENSE_MEM_RUNTIME_POSTGRES_PASSWORD" \
       -v runtime_database="$DENSE_MEM_RUNTIME_POSTGRES_DB"' >/dev/null <<'SQL'
@@ -504,6 +504,7 @@ run_identity_cleanup_startup_matrix() {
 
 seed_ontology_upgrade_database() {
   local source_dir="$1" project="$2" variant="$3" seed_variable="${4:-DENSE_MEM_E2E_ONTOLOGY_UPGRADE_VARIANT}" go_image database_url
+  local interrupted_database="${5:-}"
   go_image="$(env_value DENSE_MEM_CI_GO_TEST_IMAGE 2>/dev/null || printf '%s' golang:1.26.11-bookworm)"
   database_url="$(node - "$DENSE_MEM_CI_IDENTITY_POSTGRES_USER" "$DENSE_MEM_CI_IDENTITY_POSTGRES_PASSWORD" "$DENSE_MEM_CI_IDENTITY_POSTGRES_DATABASE" <<'NODE'
 const [user, password, database] = process.argv.slice(2);
@@ -520,6 +521,7 @@ NODE
     "$DENSE_MEM_CI_PHASE" "$DENSE_MEM_CI_SCENARIO" "$DENSE_MEM_CI_IMAGE_DIGEST" "${project}_ci" "" "$ENV_FILE" \
     "$DENSE_MEM_CI_IDENTITY_POSTGRES_PASSWORD" -- \
     "${seed_variable}=${variant}" "DATABASE_URL=${database_url}" \
+    "DENSE_MEM_E2E_ONTOLOGY_INTERRUPTED_DATABASE=${interrupted_database}" \
     "DENSE_MEM_REQUIRE_POSTGRES_TESTS=1" -- \
     go -C cmd/e2e run . --root /workspace --phase scenario --scenario ontology_upgrade \
       --timeout 10m --total-timeout 12m >&2
@@ -620,6 +622,7 @@ restore_pre_cutover_backup() {
 
 run_ontology_upgrade_startup_matrix() {
   local source_dir="$1" project="$2" before archive observed=0 log_output state control_token
+  local interrupted_database=topic_upgrade_interrupted
   reset_identity_cleanup_database
   seed_ontology_upgrade_database "$source_dir" "$project" v2.8.1 || fail "v2.8.1 fixture seed failed"
   before="$(feature_storage_fixture_fingerprints ontology_revision_records)" || fail "v2.8.1 source snapshot failed"
@@ -634,7 +637,12 @@ run_ontology_upgrade_startup_matrix() {
     fail "v2.8.1 upgrade changed Evidence or Topic history"
 
   reset_identity_cleanup_database
-  seed_ontology_upgrade_database "$source_dir" "$project" v2.9.0-dirty || fail "dirty v2.9.0 fixture seed failed"
+  # Compile the driver once for both independently seeded databases.
+  ontology_backup_command createdb -h 127.0.0.1 -U "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER" \
+    --owner=densemem_e2e_database_owner "$interrupted_database" || fail "interrupted fixture database creation failed"
+  provision_postgres_runtime_role "$interrupted_database"
+  seed_ontology_upgrade_database "$source_dir" "$project" v2.9.0-dirty DENSE_MEM_E2E_ONTOLOGY_UPGRADE_VARIANT "$interrupted_database" ||
+    fail "dirty v2.9.0 and interrupted relational fixture seed failed"
   before="$(feature_storage_fixture_fingerprints topic_revision_records)" || fail "dirty v2.9.0 source snapshot failed"
   start_ontology_upgrade_helpers "$source_dir" "$project"
   ci_compose --profile verifier up -d --wait --wait-timeout 300 >/dev/null || fail "dirty v2.9.0 upgrade failed"
@@ -660,11 +668,17 @@ if (unreconciled_attempts !== 0 || unavailable_usage_attempts !== 3) {
 process.stdout.write(JSON.stringify({ scenario: 'ontology_upgrade', unreconciled_attempts, unavailable_usage_attempts }) + '\n');
 NODE
 
-  reset_identity_cleanup_database
-  seed_ontology_upgrade_database "$source_dir" "$project" interrupted || fail "interrupted relational fixture seed failed"
+  ci_compose stop server >/dev/null || fail "dirty v2.9.0 upgrade server failed to stop"
+  ontology_backup_command psql -X -v ON_ERROR_STOP=1 -h 127.0.0.1 -U "$DENSE_MEM_CI_BOOTSTRAP_POSTGRES_USER" \
+    -d template1 -v runtime_database="$DENSE_MEM_CI_IDENTITY_POSTGRES_DATABASE" \
+    -v interrupted_database="$interrupted_database" >/dev/null <<'SQL' || fail "interrupted relational fixture switch failed"
+BEGIN;
+ALTER DATABASE :"runtime_database" RENAME TO topic_upgrade_completed;
+ALTER DATABASE :"interrupted_database" RENAME TO :"runtime_database";
+COMMIT;
+SQL
   before="$(feature_storage_fixture_fingerprints topic_revision_records)" || fail "current-layout source snapshot failed"
-  start_ontology_upgrade_helpers "$source_dir" "$project"
-  ci_compose up -d server >/dev/null || fail "interrupted relational probe failed to start"
+  ci_compose up -d --force-recreate server >/dev/null || fail "interrupted relational probe failed to start"
   for _ in $(seq 1 90); do
     if ci_compose logs --no-color --no-log-prefix server 2>&1 | grep -F 'relational_topic_migration_failed' >/dev/null; then
       observed=1
