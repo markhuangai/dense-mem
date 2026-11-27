@@ -384,6 +384,16 @@ func (m *Migrator) RunUpTo(ctx context.Context, version int64) error {
 	if err != nil {
 		return err
 	}
+	// UpTo accepts bounds between migration versions. A bound alone does not start an upgrade.
+	var target int64
+	for _, source := range provider.ListSources() {
+		if source.Version <= version {
+			target = max(target, source.Version)
+		}
+	}
+	if err := m.cleanupInflightTopicMaintenance(ctx, target); err != nil {
+		return err
+	}
 	_, err = provider.UpTo(ctx, version)
 	if !isRelationalTopicPrepareLock(err) {
 		return err

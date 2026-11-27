@@ -619,7 +619,7 @@ restore_pre_cutover_backup() {
 }
 
 run_ontology_upgrade_startup_matrix() {
-  local source_dir="$1" project="$2" before archive observed=0 log_output state
+  local source_dir="$1" project="$2" before archive observed=0 log_output state control_token
   reset_identity_cleanup_database
   seed_ontology_upgrade_database "$source_dir" "$project" v2.8.1 || fail "v2.8.1 fixture seed failed"
   before="$(feature_storage_fixture_fingerprints ontology_revision_records)" || fail "v2.8.1 source snapshot failed"
@@ -632,6 +632,33 @@ run_ontology_upgrade_startup_matrix() {
   verify_postgres_runtime_migration_state
   [[ "$(feature_storage_fixture_fingerprints topic_revision_records)" == "$before" ]] ||
     fail "v2.8.1 upgrade changed Evidence or Topic history"
+
+  reset_identity_cleanup_database
+  seed_ontology_upgrade_database "$source_dir" "$project" v2.9.0-dirty || fail "dirty v2.9.0 fixture seed failed"
+  before="$(feature_storage_fixture_fingerprints topic_revision_records)" || fail "dirty v2.9.0 source snapshot failed"
+  start_ontology_upgrade_helpers "$source_dir" "$project"
+  ci_compose --profile verifier up -d --wait --wait-timeout 300 >/dev/null || fail "dirty v2.9.0 upgrade failed"
+  log_output="$(ci_compose logs --no-color --no-log-prefix server 2>&1)" || fail "dirty v2.9.0 stdout capture failed"
+  printf '%s\n' "$log_output" | node "$source_dir/scripts/verify-feature-storage-logs.mjs" topic-upgrade-cleanup >&2 ||
+    fail "dirty v2.9.0 cleanup log diagnosis failed"
+  verify_postgres_runtime_migration_state
+  [[ "$(feature_storage_fixture_fingerprints topic_revision_records)" == "$before" ]] ||
+    fail "dirty v2.9.0 upgrade changed Evidence or Topic history"
+  control_token="$(env_value CONTROL_PORTAL_TOKEN)" || fail "control credential unavailable for Topic usage verification"
+  ci_compose exec -T -e "DENSE_MEM_CI_CONTROL_TOKEN=$control_token" synchronous-write-provider \
+    node --input-type=module - <<'NODE' >&2 || fail "dirty v2.9.0 upgrade did not expose terminal unavailable usage"
+const response = await fetch('http://server:8090/control/api/topic-maintenance/status', {
+  headers: { Authorization: `Bearer ${process.env.DENSE_MEM_CI_CONTROL_TOKEN}` },
+  signal: AbortSignal.timeout(5000),
+});
+if (!response.ok) throw new Error(`Topic maintenance status returned HTTP ${response.status}`);
+const { data } = await response.json();
+const { unreconciled_attempts, unavailable_usage_attempts } = data.usage;
+if (unreconciled_attempts !== 0 || unavailable_usage_attempts !== 3) {
+  throw new Error('Topic usage did not retain the three interrupted attempts as unavailable');
+}
+process.stdout.write(JSON.stringify({ scenario: 'ontology_upgrade', unreconciled_attempts, unavailable_usage_attempts }) + '\n');
+NODE
 
   reset_identity_cleanup_database
   seed_ontology_upgrade_database "$source_dir" "$project" interrupted || fail "interrupted relational fixture seed failed"
@@ -672,5 +699,5 @@ run_ontology_upgrade_startup_matrix() {
     EXISTS(SELECT 1 FROM data_migration_runs WHERE migration_version=20261125010001 AND phase='complete'),'|',
     NOT EXISTS(SELECT 1 FROM pg_trigger WHERE tgname IN ('offline_upgrade_fence','feature_storage_write_gate')))")"
   [[ "$state" == "210|true|true" || "$state" == "210|t|t" ]] || fail "relational cutover receipt is incomplete"
-  printf '%s\n' '{"scenario":"ontology_upgrade","v2_8_1":true,"pre_cutover_restore_read":true,"relational_copy_resumed":true,"history_preserved":true}' >&2
+  printf '%s\n' '{"scenario":"ontology_upgrade","v2_8_1":true,"v2_9_0_dirty":true,"pre_cutover_restore_read":true,"relational_copy_resumed":true,"history_preserved":true}' >&2
 }

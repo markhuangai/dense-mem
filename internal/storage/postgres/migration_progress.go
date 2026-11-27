@@ -294,6 +294,9 @@ type MigrationFailure struct {
 }
 
 func (e *MigrationFailure) Error() string {
+	if strings.HasPrefix(e.Reason, topicMaintenanceCleanupFailurePrefix) {
+		return "topic_maintenance_upgrade_cleanup_failed: " + strings.TrimPrefix(e.Reason, topicMaintenanceCleanupFailurePrefix)
+	}
 	if strings.HasPrefix(e.Reason, "feature_storage_") {
 		return "feature_storage_migration_failed: " + e.Reason
 	}

@@ -3,7 +3,6 @@ package migrationapp
 import (
 	"context"
 	"fmt"
-	"time"
 
 	audit "github.com/markhuangai/dense-mem/internal/audit"
 	auditpostgres "github.com/markhuangai/dense-mem/internal/audit/postgres"
@@ -30,9 +29,6 @@ func migrateTopicStorage(ctx context.Context, db *gorm.DB, migrator *postgres.Mi
 	if err := migrateEvidenceOnly(ctx, db, migrator, logger); err != nil {
 		return err
 	}
-	if err := waitForTopicStorageDrain(ctx, db, logger); err != nil {
-		return err
-	}
 	if err := migrateFeatureStorage(ctx, migrator, logger); err != nil {
 		return err
 	}
@@ -54,54 +50,38 @@ func migrateTopicStorage(ctx context.Context, db *gorm.DB, migrator *postgres.Mi
 	return nil
 }
 
-// A stopped worker can leave a live lease behind. Its expiry releases capacity,
-// but only the provider accounting owner can reconcile an admitted attempt.
-func waitForTopicStorageDrain(ctx context.Context, db *gorm.DB, logger infoLogger) error {
-	ctx, cancel := context.WithTimeout(ctx, topics.MaintenanceUpgradeWaitLimit)
-	defer cancel()
-	var previous [3]int64
-	for {
-		var work [3]int64
-		err := postgres.NewRLS().WithSystemReadOnlyRepeatableTx(ctx, db, func(tx *gorm.DB) error {
-			var topicInstalled, ontologyInstalled bool
-			if err := tx.Raw(`SELECT to_regclass('public.topic_maintenance_state') IS NOT NULL,
-				to_regclass('public.ontology_maintenance_state') IS NOT NULL`).Row().Scan(&topicInstalled, &ontologyInstalled); err != nil {
-				return err
-			}
-			var prefix string
-			switch {
-			case topicInstalled:
-				prefix = "topic"
-			case ontologyInstalled:
-				prefix = "ontology"
-			default:
-				return nil
-			}
-			query := fmt.Sprintf(`SELECT
-				(SELECT count(*) FROM %[1]s_maintenance_batches WHERE status='running' AND lease_until>clock_timestamp()),
-				(SELECT count(*) FROM %[1]s_maintenance_teams WHERE lease_until>clock_timestamp()),
-				(SELECT count(*) FROM %[1]s_maintenance_attempts WHERE reconciled_at IS NULL)`, prefix)
-			return tx.Raw(query).Row().Scan(&work[0], &work[1], &work[2])
-		})
-		if err != nil {
-			return fmt.Errorf("observe topic storage drain: %w", err)
-		}
-		if work != previous {
-			logInfo(ctx, logger, "topic_storage_drain", "active_batches", work[0], "active_preparations", work[1], "unreconciled_attempts", work[2])
-			previous = work
-		}
-		if work[0] == 0 && work[1] == 0 {
-			if work[2] != 0 {
-				return fmt.Errorf("topic storage needs terminal provider usage for %d attempts", work[2])
-			}
-			return nil
-		}
-		timer := time.NewTimer(time.Second)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return fmt.Errorf("wait for topic storage drain: %w", ctx.Err())
-		case <-timer.C:
-		}
+func reportTopicMaintenanceCleanup(ctx context.Context, logger infoLogger, summary postgres.TopicMaintenanceCleanupSummary) {
+	const event = "topic_maintenance_upgrade_cleanup"
+	attrs := []any{
+		"migration_execution_id", summary.ExecutionID,
+		"relation_prefix", summary.RelationPrefix,
+		"current_version", summary.CurrentVersion,
+		"target_version", summary.TargetVersion,
+		"elapsed_ms", summary.Elapsed.Milliseconds(),
+		"transaction_outcome", summary.TransactionOutcome,
 	}
+	if summary.Err != nil {
+		logError(context.WithoutCancel(ctx), logger, event+"_failed", append(attrs,
+			"phase", summary.Phase,
+			"failure_reason", postgres.MigrationFailureReason(summary.Err),
+			"sqlstate", summary.SQLState,
+			"recovery_action", "stop_active_writers_and_retry_upgrade",
+		)...)
+		return
+	}
+	if !summary.Executed {
+		return
+	}
+	attrs = append(attrs,
+		"discarded_batches", summary.DiscardedBatches,
+		"cleared_team_leases", summary.ClearedTeamLeases,
+		"cleared_community_leases", summary.ClearedCommunityLeases,
+		"cleared_consolidation_leases", summary.ClearedConsolidationLeases,
+		"reconciled_attempts", summary.ReconciledAttempts,
+	)
+	if summary.DiscardedTotal() > 0 {
+		logWarn(ctx, logger, event, attrs...)
+		return
+	}
+	logInfo(ctx, logger, event, attrs...)
 }
