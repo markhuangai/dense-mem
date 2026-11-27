@@ -33,6 +33,12 @@ func (f testDecisions) Decide(c context.Context, r modelprovider.DecisionRequest
 	return f(c, r)
 }
 
+type testDecisionSettings domain.DecisionRuntimeConfig
+
+func (s testDecisionSettings) DecisionRuntimeConfig(context.Context) (domain.DecisionRuntimeConfig, error) {
+	return domain.DecisionRuntimeConfig(s), nil
+}
+
 type testCatalog []assignment.Topic
 
 func (c testCatalog) ReadAssignmentCandidates(context.Context, assignment.Scope, assignment.Slice) (assignment.Candidates, error) {
@@ -294,6 +300,68 @@ func TestEquivalenceDecisionBatchThresholdAndCompleteValidation(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, responses)
 	require.Equal(t, modelprovider.StructuredResponseLimit, calls)
+}
+
+func TestTopicConsolidationDecisionThresholdAndCompleteValidation(t *testing.T) {
+	pairs := []contract.TopicConsolidationPair{
+		{Left: contract.CommunityCandidate{ID: "left-0"}, Right: contract.CommunityCandidate{ID: "right-0"}},
+		{Left: contract.CommunityCandidate{ID: "left-1"}, Right: contract.CommunityCandidate{ID: "right-1"}},
+	}
+	complete := true
+	service := &MaintenanceService{deps: MaintenanceDependencies{
+		DecisionSettings: testDecisionSettings{Effective: domain.DecisionTasks{TopicAssignment: true}},
+		Decisions: testDecisions(func(_ context.Context, request modelprovider.DecisionRequest) (modelprovider.DecisionResult, error) {
+			require.NoError(t, modelprovider.ValidateDecisionRequest(request))
+			require.Len(t, request.Groups, 2)
+			yes, no := .95, .949
+			answers := map[string]modelprovider.DecisionAnswer{
+				"equivalent_0": {Type: modelprovider.DecisionPredicate, Probability: &yes},
+			}
+			if complete {
+				answers["equivalent_1"] = modelprovider.DecisionAnswer{Type: modelprovider.DecisionPredicate, Probability: &no}
+			}
+			return modelprovider.DecisionResult{Answers: answers}, nil
+		}),
+	}}
+	claim := contract.MaintenanceClaim{ID: uuid.NewString()}
+	accepted, probabilities, failures, err := service.assessTopicPairs(t.Context(), claim, pairs, domain.TopicMaintenanceConfig{}, nil)
+	require.NoError(t, err)
+	require.Equal(t, []bool{true, false}, accepted)
+	require.Equal(t, []float64{.95, .949}, probabilities)
+	require.NoError(t, failures[0])
+	require.NoError(t, failures[1])
+
+	complete = false
+	accepted, probabilities, failures, err = service.assessTopicPairs(t.Context(), claim, pairs, domain.TopicMaintenanceConfig{}, nil)
+	require.Error(t, err)
+	require.Nil(t, accepted)
+	require.Nil(t, probabilities)
+	require.Nil(t, failures)
+}
+
+func TestTopicConsolidationGenerationIsolatesInvalidResponses(t *testing.T) {
+	pairs := []contract.TopicConsolidationPair{
+		{Left: contract.CommunityCandidate{ID: "valid"}, Right: contract.CommunityCandidate{ID: "right-0"}},
+		{Left: contract.CommunityCandidate{ID: "invalid"}, Right: contract.CommunityCandidate{ID: "right-1"}},
+	}
+	var invalidCalls atomic.Int32
+	transport := testTransport(func(_ context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+		if strings.Contains(request.Messages[1].Content, `"invalid"`) {
+			invalidCalls.Add(1)
+			return modelprovider.StructuredResult{Content: `{"equivalent":null}`}, nil
+		}
+		return modelprovider.StructuredResult{Content: `{"equivalent":true}`}, nil
+	})
+	service := &MaintenanceService{deps: MaintenanceDependencies{Placement: CommunityAssessor{
+		Transport: transport, Limits: assessor.DefaultSemanticAssessmentLimits(),
+	}}}
+	accepted, _, failures, err := service.assessTopicPairs(t.Context(), contract.MaintenanceClaim{ID: uuid.NewString()}, pairs,
+		domain.TopicMaintenanceConfig{Model: "fixture"}, nil)
+	require.NoError(t, err)
+	require.Equal(t, []bool{true, false}, accepted)
+	require.NoError(t, failures[0])
+	require.Error(t, failures[1])
+	require.EqualValues(t, modelprovider.StructuredResponseLimit, invalidCalls.Load())
 }
 
 func TestMaintenanceAssignmentBatchesDecisionsAndIsolatesNamingFailure(t *testing.T) {

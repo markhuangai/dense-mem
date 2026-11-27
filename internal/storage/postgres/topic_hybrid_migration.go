@@ -22,7 +22,7 @@ func init() {
 }
 
 func topicHybridBackfillDown(context.Context, *sql.DB) error {
-	return errors.New("Topic hybrid backfill requires forward recovery")
+	return errors.New("topic hybrid backfill requires forward recovery")
 }
 
 func topicHybridBackfillUp(ctx context.Context, db *sql.DB) (resultErr error) {
@@ -60,7 +60,7 @@ func topicHybridBackfillUp(ctx context.Context, db *sql.DB) (resultErr error) {
 		for {
 			result, err := conn.ExecContext(ctx, statement)
 			if err != nil {
-				return fmt.Errorf("Topic hybrid backfill: %w", err)
+				return fmt.Errorf("topic hybrid backfill: %w", err)
 			}
 			count, err := result.RowsAffected()
 			if err != nil {
@@ -95,7 +95,7 @@ func topicHybridBackfillUp(ctx context.Context, db *sql.DB) (resultErr error) {
 			}
 		}
 		if _, err := conn.ExecContext(ctx, index.ddl); err != nil {
-			return fmt.Errorf("Topic hybrid index %s: %w", index.name, err)
+			return fmt.Errorf("topic hybrid index %s: %w", index.name, err)
 		}
 	}
 	return nil

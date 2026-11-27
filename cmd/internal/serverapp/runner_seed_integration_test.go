@@ -112,7 +112,7 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	migrator := storagepostgres.NewMigratorWithDB(f.native.DB)
 	const validationVersion int64 = 20261126010001
 	require.Equal(t, validationVersion, seed.SchemaVersion)
-	require.ErrorContains(t, migrator.RunDown(ctx), "Topic hybrid backfill requires forward recovery")
+	require.ErrorContains(t, migrator.RunDown(ctx), "topic hybrid backfill requires forward recovery")
 	var applied bool
 	require.NoError(t, f.native.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=$1 AND is_applied)", validationVersion).Scan(&applied))
 	require.True(t, applied)
