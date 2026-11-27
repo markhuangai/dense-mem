@@ -180,6 +180,13 @@ func seedInterruptedTopicMaintenance(t *testing.T, db *gorm.DB, version int64) s
 		embeddingContract = active.Contract.EmbeddingContractID
 	}
 	require.NoError(t, storage.NewRLS().WithSystemTx(ctx, db, func(tx *gorm.DB) error {
+		var team, space string
+		var generation int64
+		if err := tx.Raw(`SELECT spaces.team_id::text,spaces.id::text,spaces.generation
+			FROM memory_spaces AS spaces JOIN teams ON teams.id=spaces.team_id
+			WHERE spaces.kind='team_shared' AND teams.name='progress-fixture'`).Row().Scan(&team, &space, &generation); err != nil {
+			return err
+		}
 		if err := tx.Exec("SET LOCAL app.tx_mode = 'migration'").Error; err != nil {
 			return err
 		}
@@ -194,24 +201,20 @@ func seedInterruptedTopicMaintenance(t *testing.T, db *gorm.DB, version int64) s
 			return err
 		}
 		if err := exec(`INSERT INTO %[1]s_maintenance_teams(team_id,shared_space_id,space_generation,lease_token,lease_until)
-			SELECT spaces.team_id,spaces.id,spaces.generation,gen_random_uuid(),now()+interval '1 hour'
-			FROM memory_spaces AS spaces JOIN teams ON teams.id=spaces.team_id
-			WHERE spaces.kind='team_shared' AND teams.name='progress-fixture'
+			VALUES (?::uuid,?::uuid,?,gen_random_uuid(),now()+interval '1 hour')
 			ON CONFLICT (team_id,shared_space_id,space_generation) DO UPDATE
-			SET lease_token=excluded.lease_token,lease_until=excluded.lease_until`); err != nil {
+			SET lease_token=excluded.lease_token,lease_until=excluded.lease_until`, team, space, generation); err != nil {
 			return err
 		}
 		if err := exec(`INSERT INTO %[1]s_maintenance_batches(batch_id,run_id,window_id,team_id,shared_space_id,space_generation,
 			lease_token,lease_until,sources,revisions,status,failure_code,created_at,completed_at)
-			SELECT batch.id,?::uuid,?::uuid,state.team_id,state.shared_space_id,state.space_generation,
+			SELECT batch.id,?::uuid,?::uuid,?::uuid,?::uuid,?,
 				gen_random_uuid(),batch.lease_until,'[]','{}',batch.status,batch.failure,now(),batch.completed
-			FROM %[1]s_maintenance_teams AS state JOIN teams ON teams.id=state.team_id
-			CROSS JOIN (VALUES
+			FROM (VALUES
 				(?::uuid,now()+interval '1 hour','running','',NULL::timestamptz),
 				(?::uuid,now()-interval '1 second','running','fixture_failure',now()),
 				(?::uuid,now()-interval '1 second','lost','lease_lost',now())
-			) AS batch(id,lease_until,status,failure,completed)
-			WHERE teams.name='progress-fixture'`, run, window, live, expired, lost); err != nil {
+			) AS batch(id,lease_until,status,failure,completed)`, run, window, team, space, generation, live, expired, lost); err != nil {
 			return err
 		}
 		if err := exec(`INSERT INTO %[1]s_maintenance_attempts(batch_id,assessment_id,attempt,window_id,reserved_input,reserved_output,
