@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/markhuangai/dense-mem/internal/observability"
@@ -113,6 +114,75 @@ func TestMigrationProgressTransactionOutcome(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			require.Equal(t, test.want, evidenceOnlyTransactionOutcome(test.applied, test.compatible, test.xid, test.status))
+		})
+	}
+}
+
+func TestTopicMaintenanceUpgradeCleanupRealLogger(t *testing.T) {
+	const canary = "topic-cleanup-authentication-canary"
+	const payload = "private-database-payload-canary"
+	for _, tc := range []struct {
+		level string
+		want  []string
+	}{
+		{"TRACE", []string{"INFO", "WARN", "ERROR"}},
+		{"INFO", []string{"INFO", "WARN", "ERROR"}},
+		{"WARN", []string{"WARN", "ERROR"}},
+		{"ERROR", []string{"ERROR"}},
+	} {
+		t.Run(tc.level, func(t *testing.T) {
+			level, err := observability.ParseLevel(tc.level)
+			require.NoError(t, err)
+			var output bytes.Buffer
+			root := observability.NewWithHandler(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: level}))
+			logger := root.With(observability.String("credential_probe", canary)).(*observability.Logger).Slog()
+			ctx := observability.WithAuthenticationSecrets(t.Context(), canary)
+			clean := postgres.TopicMaintenanceCleanupSummary{
+				Executed: true, ExecutionID: "test-migration", RelationPrefix: "topic", CurrentVersion: 20261124010004,
+				TargetVersion: 20261127010000, Elapsed: 5 * time.Millisecond, TransactionOutcome: "committed",
+			}
+			dirty := clean
+			dirty.DiscardedBatches, dirty.ClearedTeamLeases, dirty.ClearedCommunityLeases, dirty.ClearedConsolidationLeases, dirty.ReconciledAttempts = 1, 2, 3, 4, 5
+			failed := clean
+			failed.Executed, failed.Phase, failed.TransactionOutcome, failed.SQLState = false, "cleanup_tx", "rolled_back", "55P03"
+			failed.Err = &pgconn.PgError{Code: "55P03", Message: "canceling statement due to lock timeout", Detail: payload}
+
+			reportTopicMaintenanceCleanup(ctx, logger, postgres.TopicMaintenanceCleanupSummary{})
+			reportTopicMaintenanceCleanup(ctx, logger, clean)
+			reportTopicMaintenanceCleanup(ctx, logger, dirty)
+			reportTopicMaintenanceCleanup(ctx, logger, failed)
+			require.NotContains(t, output.String(), canary)
+			require.NotContains(t, output.String(), payload)
+			lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+			require.Len(t, lines, len(tc.want))
+			for i, line := range lines {
+				var event map[string]any
+				require.NoError(t, json.Unmarshal([]byte(line), &event))
+				require.Equal(t, tc.want[i], event["level"])
+				require.Equal(t, "test-migration", event["migration_execution_id"])
+				require.Equal(t, "topic", event["relation_prefix"])
+				require.Equal(t, float64(20261124010004), event["current_version"])
+				require.Equal(t, float64(20261127010000), event["target_version"])
+				require.Equal(t, float64(5), event["elapsed_ms"])
+				if tc.want[i] == "ERROR" {
+					require.Equal(t, "topic_maintenance_upgrade_cleanup_failed", event["msg"])
+					require.Equal(t, "cleanup_tx", event["phase"])
+					require.Equal(t, "lock timeout", event["failure_reason"])
+					require.Equal(t, "55P03", event["sqlstate"])
+					require.Equal(t, "rolled_back", event["transaction_outcome"])
+					require.Equal(t, "stop_active_writers_and_retry_upgrade", event["recovery_action"])
+					continue
+				}
+				require.Equal(t, "topic_maintenance_upgrade_cleanup", event["msg"])
+				require.Equal(t, "committed", event["transaction_outcome"])
+				for pos, key := range []string{"discarded_batches", "cleared_team_leases", "cleared_community_leases", "cleared_consolidation_leases", "reconciled_attempts"} {
+					want := 0
+					if tc.want[i] == "WARN" {
+						want = pos + 1
+					}
+					require.Equal(t, float64(want), event[key], key)
+				}
+			}
 		})
 	}
 }

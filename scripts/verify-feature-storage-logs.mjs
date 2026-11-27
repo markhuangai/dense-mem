@@ -2,12 +2,39 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 
 const outcome = process.argv[2];
-assert.ok(['failed', 'resumed', 'relational-failed', 'relational-resumed'].includes(outcome), 'expected failed or resumed outcome');
+assert.ok(['failed', 'resumed', 'relational-failed', 'relational-resumed', 'topic-upgrade-cleanup'].includes(outcome), 'unknown migration log verification');
 let input = '';
 for await (const chunk of process.stdin) input += chunk;
 const events = input.split('\n').flatMap(line => {
   try { return [JSON.parse(line)]; } catch { return []; }
 });
+if (outcome === 'topic-upgrade-cleanup') {
+  const rows = events.filter(event => event.msg?.startsWith('topic_maintenance_upgrade_cleanup'));
+  assert.equal(rows.length, 1, 'dirty startup must emit one cleanup receipt');
+  const [cleanup] = rows;
+  assert.equal(cleanup.msg, 'topic_maintenance_upgrade_cleanup');
+  assert.equal(cleanup.level, 'WARN');
+  assert.equal(cleanup.relation_prefix, 'topic');
+  assert.equal(cleanup.current_version, 20261124010004);
+  assert.equal(cleanup.target_version, 20261127010000);
+  assert.ok(cleanup.migration_execution_id);
+  assert.ok(cleanup.elapsed_ms >= 0);
+  assert.equal(cleanup.transaction_outcome, 'committed');
+  assert.equal(cleanup.discarded_batches, 2);
+  assert.equal(cleanup.cleared_team_leases, 1);
+  assert.equal(cleanup.cleared_community_leases, 0);
+  assert.equal(cleanup.cleared_consolidation_leases, 0);
+  assert.equal(cleanup.reconciled_attempts, 3);
+  const terminal = events.slice(events.indexOf(cleanup) + 1).find(event => event.msg === 'postgres migrations completed');
+  assert.ok(terminal, 'migration completion must follow cleanup');
+  process.stdout.write(JSON.stringify({
+    scenario: 'ontology_upgrade', execution_id: cleanup.migration_execution_id,
+    discarded_batches: cleanup.discarded_batches, cleared_team_leases: cleanup.cleared_team_leases,
+    reconciled_attempts: cleanup.reconciled_attempts, outcome: cleanup.transaction_outcome,
+    verified_sha256: createHash('sha256').update(JSON.stringify([cleanup, terminal])).digest('hex'),
+  }) + '\n');
+  process.exit(0);
+}
 if (outcome.startsWith('relational-')) {
   const rows = events.filter(event => event.msg?.startsWith('relational_topic_migration_'));
   const stopped = outcome === 'relational-failed';

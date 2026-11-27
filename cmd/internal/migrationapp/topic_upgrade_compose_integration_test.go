@@ -3,6 +3,7 @@
 package migrationapp
 
 import (
+	"net/url"
 	"os"
 	"testing"
 
@@ -21,9 +22,23 @@ func TestOntologyUpgradeComposeSeed(t *testing.T) {
 	if variant == "" {
 		t.Skip("Topic upgrade seed requires its dedicated production-image scenario")
 	}
-	require.Contains(t, []string{"v2.8.1", "interrupted"}, variant)
+	require.Contains(t, []string{"v2.8.1", "v2.9.0-dirty", "interrupted"}, variant)
 	dsn := os.Getenv("DATABASE_URL")
 	require.NotEmpty(t, dsn)
+	seedOntologyUpgradeCompose(t, variant, dsn)
+	if interrupted := os.Getenv("DENSE_MEM_E2E_ONTOLOGY_INTERRUPTED_DATABASE"); interrupted != "" {
+		require.Equal(t, "v2.9.0-dirty", variant)
+		target, err := url.Parse(dsn)
+		require.NoError(t, err)
+		target.Path, target.RawPath = "/"+interrupted, ""
+		t.Run("interrupted", func(t *testing.T) {
+			seedOntologyUpgradeCompose(t, "interrupted", target.String())
+		})
+	}
+}
+
+func seedOntologyUpgradeCompose(t *testing.T, variant, dsn string) {
+	t.Helper()
 	db, err := gorm.Open(gormpostgres.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
 	pool, err := db.DB()
@@ -37,7 +52,12 @@ func TestOntologyUpgradeComposeSeed(t *testing.T) {
 	require.NoError(t, migrator.RunUpThroughEvidenceOnly(ctx))
 	seedFeatureStorageProgress(t, db, 210)
 	if variant == "v2.8.1" {
-		require.NoError(t, migrator.RunUpTo(ctx, 20261114010000))
+		require.NoError(t, migrator.RunUpTo(ctx, topicUpgradeV281))
+		return
+	}
+	if variant == "v2.9.0-dirty" {
+		require.NoError(t, migrator.RunUpTo(ctx, topicUpgradeV290))
+		seedInterruptedTopicMaintenance(t, db, topicUpgradeV290)
 		return
 	}
 	require.NoError(t, migrator.RunUpTo(ctx, storage.RelationalTopicDataVersion-1))

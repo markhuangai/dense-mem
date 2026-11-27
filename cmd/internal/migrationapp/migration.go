@@ -35,15 +35,12 @@ func RunUp(parent context.Context, db *gorm.DB, timeout time.Duration, logger in
 		if err != nil {
 			return err
 		}
-		version, err := migrator.CheckUpgradeFloor(ctx)
-		if err != nil {
+		if _, err := migrator.CheckUpgradeFloor(ctx); err != nil {
 			return err
 		}
-		if version > 0 && version < postgres.RelationalTopicCutoverVersion {
-			if err := waitForTopicStorageDrain(ctx, db, logger); err != nil {
-				return err
-			}
-		}
+		ctx = postgres.WithTopicMaintenanceCleanupObserver(ctx, func(summary postgres.TopicMaintenanceCleanupSummary) {
+			reportTopicMaintenanceCleanup(ctx, logger, summary)
+		})
 		return migrateFeatureStorage(ctx, migrator, logger)
 	})
 }
