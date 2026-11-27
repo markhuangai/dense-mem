@@ -18,6 +18,7 @@ const maintenanceObservationAttempts = 300;
 const original = (await control("/config/topic-maintenance")).data;
 let paused = false;
 let failure;
+let status;
 try {
   const initial = (await control("/topic-maintenance/status")).data;
   await control("/topic-maintenance/pause", { operation_key: randomUUID() });
@@ -65,7 +66,6 @@ try {
   assert.equal(command.id, replay.id);
   assert.equal(command.window_id, replay.window_id);
   await expectStatus("/topic-maintenance/runs", { operation_key: key, max_batches: 2 }, 409);
-  let status;
   for (let index = 0; index < maintenanceObservationAttempts; index++) {
     status = (await control("/topic-maintenance/status")).data;
     if (status.coverage_complete && status.counts.organized > initial.counts.organized) break;
@@ -78,7 +78,7 @@ try {
   assert(status.usage.attempts > 0, "provider dispatches must have durable attempt identities");
   assert.equal(status.usage.unreconciled_attempts, 0);
   assert.equal(status.active_work, 0);
-  assert.equal(status.coverage_complete, true, "Topic assignment and Community placement must both converge");
+  assert.equal(status.coverage_complete, true, `Topic assignment, Community placement, and equivalence must converge: ${JSON.stringify({ counts: status.counts, communities: status.communities, equivalence: status.equivalence })}`);
   const currentReceipts = JSON.parse(postgresQuery(`SELECT COALESCE(jsonb_agg(row_to_json(retained)),'[]') FROM (
     SELECT DISTINCT ON(evidence_id) evidence_id, status, method, input_hash FROM topic_assignment_outcomes
     WHERE team_id=${sqlLiteral(teamID)}::uuid AND evidence_id=ANY(ARRAY[${sourceIDs.map(sqlLiteral).join(",")}]::uuid[])
@@ -249,6 +249,11 @@ try {
     const window = captureSemanticAssessmentWindow({ project: required("DENSE_MEM_E2E_COMPOSE_PROJECT"), composeFile: required("DENSE_MEM_E2E_COMPOSE_FILE"), since: diagnosticSince,
       directory: `${failureDirectory}/ontology-organization` });
     const diagnosticTeams = new Set(credentialTeams.values());
+    for (const credential of [controlToken, ...credentialTeams.keys()]) assert(!window.includes(credential), "topic diagnostic capture exposed credentials");
+    const maintenanceRecords = window.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line))
+      .filter((record) => diagnosticTeams.has(record.team_id) && /^(community_placement\.|topic_equivalence\.|topic_maintenance\.|topic maintenance (discovery|preparation))/.test(record.msg))
+      .slice(-200);
+    for (const record of maintenanceRecords) console.log(`topic_maintenance_diagnostic_record ${JSON.stringify(record)}`);
     for (const record of assessmentRecords(window).filter((record) => diagnosticTeams.has(record.team_id))) console.log(`topic_semantic_diagnostic_record ${JSON.stringify(record)}`);
   } catch (captureError) { failure = new AggregateError([error, captureError], "ontology organization failure capture is incomplete"); }
 } finally {

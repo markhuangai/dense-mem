@@ -3,6 +3,7 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -108,6 +109,8 @@ func TestCommunityPlacementChecksRevisionsAndAccountsForProviderWork(t *testing.
 	t.Run("parent metadata revision preserves effective edges", testCommunityParentRevision)
 	t.Run("placement revalidates after a concurrent assignment refresh", testCommunityAssignmentRefresh)
 	t.Run("rejected hierarchy placement is deferred", testCommunityHierarchyRejectionDeferred)
+	t.Run("stale batch placement is retried", testCommunityStaleBatchPlacementRetried)
+	t.Run("stale single placement is retried", testCommunityStaleSinglePlacementRetried)
 	t.Run("admitted decision outlives the preparation lease", testCommunityDecisionRenewsLease)
 }
 
@@ -371,6 +374,160 @@ func testCommunityHierarchyRejectionDeferred(t *testing.T) {
 	current, err := f.store.GetRecord(manager, f.team, parent.ID, 0)
 	require.NoError(t, err)
 	require.Empty(t, current.CommunityPlacement, "the failure belongs to the previous Topic revision")
+}
+
+func testCommunityStaleBatchPlacementRetried(t *testing.T) {
+	ctx := t.Context()
+	f := newOntologyFixture(t)
+	manager := f.actor(0, "manager")
+	parent, child := testTopic("database"), testTopic("database-backup")
+	parent.ID, child.ID = "10000000-0000-4000-8000-000000000001", "10000000-0000-4000-8000-000000000002"
+	parent.Definition.Label, child.Definition.Label = "Database", "Database backup"
+	_, err := f.store.PublishManager(manager, f.team, testPublication("stale-community-batch", 0,
+		contract.Change{Record: parent}, contract.Change{Record: child}))
+	require.NoError(t, err)
+	require.NoError(t, f.admin.Exec(`UPDATE topic_maintenance_community_work SET ready_at=statement_timestamp()
+		WHERE team_id=?::uuid AND topic_id IN (?::uuid,?::uuid)`, f.team, parent.ID, child.ID).Error)
+
+	var calls atomic.Int32
+	transport := communityPlacementTransport(func(ctx context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+		if err := modelprovider.NotifyAdmission(ctx); err != nil {
+			return modelprovider.StructuredResult{}, err
+		}
+		var input contract.CommunityInput
+		if err := json.Unmarshal([]byte(request.Messages[1].Content), &input); err != nil {
+			return modelprovider.StructuredResult{}, err
+		}
+		selected := ""
+		if input.Topic.ID == child.ID {
+			if !slices.ContainsFunc(input.Candidates, func(candidate contract.CommunityCandidate) bool { return candidate.ID == parent.ID }) {
+				return modelprovider.StructuredResult{}, fmt.Errorf("parent missing from child candidates")
+			}
+			selected = parent.ID
+		}
+		calls.Add(1)
+		return modelprovider.StructuredResult{Content: `{"parent_id":"` + selected + `"}`}, nil
+	})
+	var logs bytes.Buffer
+	limits := maintenanceFixtureLimits()
+	service := topics.NewMaintenanceService(topics.MaintenanceDependencies{
+		Repository: f.store, Config: maintenanceSettings(t, f), Communities: f.store,
+		Logger:    slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		Placement: topics.CommunityAssessor{Transport: transport, Limits: limits},
+		Organizer: func(model string, capacity int64, _ assessment.AttemptAccounting) *topics.Service {
+			return topics.NewService(nil, assessment.NewProvider(nil, model, limits, int(capacity)))
+		},
+	})
+	progress, err := service.RunTurn(ctx)
+	require.True(t, progress)
+	require.ErrorIs(t, err, contract.ErrSourceStale)
+	require.EqualValues(t, 2, calls.Load())
+
+	status, err := f.store.MaintenanceStatus(ctx, time.Now())
+	require.NoError(t, err)
+	require.EqualValues(t, 1, status.Communities.Standalone)
+	require.EqualValues(t, 1, status.Communities.Pending)
+	require.Zero(t, status.Communities.Failed)
+	var ready, unleased bool
+	require.NoError(t, f.admin.Raw(`SELECT ready_at<=statement_timestamp(),lease_batch_id IS NULL
+		FROM topic_maintenance_community_work WHERE team_id=?::uuid AND topic_id=?::uuid`, f.team, child.ID).Row().Scan(&ready, &unleased))
+	require.True(t, ready)
+	require.True(t, unleased)
+	var failed int
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM community_placement_outcomes
+		WHERE team_id=?::uuid AND topic_id=?::uuid AND status='failed'`, f.team, child.ID).Row().Scan(&failed))
+	require.Zero(t, failed)
+	var staleLogged bool
+	decoder := json.NewDecoder(bytes.NewReader(logs.Bytes()))
+	for decoder.More() {
+		var entry map[string]any
+		require.NoError(t, decoder.Decode(&entry))
+		if entry["msg"] == "community_placement.outcome" && entry["topic_id"] == child.ID && entry["failure_code"] == "stale_input" && entry["status"] == "not_committed" {
+			staleLogged = true
+		}
+	}
+	require.True(t, staleLogged, "the rejected item must identify stale input in its outcome log")
+
+	progress, err = service.RunTurn(ctx)
+	require.True(t, progress)
+	require.NoError(t, err)
+	require.EqualValues(t, 3, calls.Load())
+	view, err := f.store.GetRecord(manager, f.team, child.ID, 0)
+	require.NoError(t, err)
+	require.Equal(t, "placed", view.CommunityPlacement)
+	require.Equal(t, parent.ID, view.CommunityParentID)
+}
+
+type singleCommunityRepository struct{ contract.CommunityRepository }
+
+func testCommunityStaleSinglePlacementRetried(t *testing.T) {
+	ctx := t.Context()
+	f := newOntologyFixture(t)
+	manager := f.actor(0, "manager")
+	child, parent := testTopic("database-backup"), testTopic("database")
+	child.ID, parent.ID = "10000000-0000-4000-8000-000000000001", "10000000-0000-4000-8000-000000000002"
+	child.Definition.Label, parent.Definition.Label = "Database backup", "Database"
+	_, err := f.store.PublishManager(manager, f.team, testPublication("stale-community-single", 0,
+		contract.Change{Record: child}, contract.Change{Record: parent}))
+	require.NoError(t, err)
+	require.NoError(t, f.admin.Exec(`UPDATE topic_maintenance_community_work SET ready_at=statement_timestamp()
+		WHERE team_id=?::uuid AND topic_id IN (?::uuid,?::uuid)`, f.team, child.ID, parent.ID).Error)
+
+	var calls atomic.Int32
+	transport := communityPlacementTransport(func(ctx context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+		if err := modelprovider.NotifyAdmission(ctx); err != nil {
+			return modelprovider.StructuredResult{}, err
+		}
+		var input contract.CommunityInput
+		if err := json.Unmarshal([]byte(request.Messages[1].Content), &input); err != nil {
+			return modelprovider.StructuredResult{}, err
+		}
+		if input.Topic.ID != child.ID || !slices.ContainsFunc(input.Candidates, func(candidate contract.CommunityCandidate) bool { return candidate.ID == parent.ID }) {
+			return modelprovider.StructuredResult{}, fmt.Errorf("expected child with its parent candidate")
+		}
+		if calls.Add(1) == 1 {
+			view, err := f.store.GetRecord(manager, f.team, parent.ID, 0)
+			if err != nil {
+				return modelprovider.StructuredResult{}, err
+			}
+			view.Definition.Description = "Updated while placement was assessed."
+			if _, err := f.store.PublishManager(manager, f.team, testPublication("update-community-parent", 1,
+				contract.Change{Record: view.Record, ExpectedVersion: 1})); err != nil {
+				return modelprovider.StructuredResult{}, err
+			}
+		}
+		return modelprovider.StructuredResult{Content: `{"parent_id":"` + parent.ID + `"}`}, nil
+	})
+	var logs bytes.Buffer
+	limits := maintenanceFixtureLimits()
+	service := topics.NewMaintenanceService(topics.MaintenanceDependencies{
+		Repository: f.store, Config: maintenanceSettings(t, f), Communities: singleCommunityRepository{f.store},
+		Logger:    slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		Placement: topics.CommunityAssessor{Transport: transport, Limits: limits},
+		Organizer: func(model string, capacity int64, _ assessment.AttemptAccounting) *topics.Service {
+			return topics.NewService(nil, assessment.NewProvider(nil, model, limits, int(capacity)))
+		},
+	})
+	progress, err := service.RunTurn(ctx)
+	require.True(t, progress)
+	require.ErrorIs(t, err, contract.ErrSourceStale)
+	status, err := f.store.MaintenanceStatus(ctx, time.Now())
+	require.NoError(t, err)
+	require.Zero(t, status.Communities.Failed)
+	var failed int
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM community_placement_outcomes
+		WHERE team_id=?::uuid AND topic_id=?::uuid AND status='failed'`, f.team, child.ID).Row().Scan(&failed))
+	require.Zero(t, failed)
+	require.Contains(t, logs.String(), `"failure_code":"stale_input"`)
+
+	progress, err = service.RunTurn(ctx)
+	require.True(t, progress)
+	require.NoError(t, err)
+	view, err := f.store.GetRecord(manager, f.team, child.ID, 0)
+	require.NoError(t, err)
+	require.Equal(t, "placed", view.CommunityPlacement)
+	require.Equal(t, parent.ID, view.CommunityParentID)
+	require.EqualValues(t, 2, calls.Load())
 }
 
 func testCommunityMixedHierarchyPublicationRollback(t *testing.T) {

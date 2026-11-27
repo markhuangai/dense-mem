@@ -299,13 +299,16 @@ func (s *MaintenanceService) placeCommunity(ctx context.Context, work maintenanc
 		errors.Is(err, contract.ErrWindowClosed) || errors.Is(err, contract.ErrLeaseLost)
 	if !interrupted {
 		persistErr = s.deps.Communities.CompleteCommunity(finishCtx, claim, input, outcome, failure, s.deps.Now())
-		if errors.Is(persistErr, contract.ErrConflict) {
+		if errors.Is(persistErr, contract.ErrConflict) && !errors.Is(persistErr, contract.ErrSourceStale) {
 			err = persistErr
 			failure = "community_hierarchy_conflict"
 			rejected := outcome
 			rejected.Status, rejected.ParentID = "failed", ""
 			persistErr = s.deps.Communities.CompleteCommunity(finishCtx, claim, input, rejected, failure, s.deps.Now())
 			status = rejected.Status
+		}
+		if errors.Is(persistErr, contract.ErrSourceStale) {
+			failure = "stale_input"
 		}
 		committed = persistErr == nil
 	}
@@ -369,13 +372,16 @@ func (s *MaintenanceService) placeCommunityBatch(ctx context.Context, work maint
 	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
 	defer finishCancel()
 	var failures []error
+	hasOtherFailure := false
 	committed := 0
 	if batchErr != nil {
 		failures = append(failures, batchErr)
+		hasOtherFailure = true
 	} else {
 		for i, input := range work.communities {
 			if err := opCtx.Err(); err != nil {
 				failures = append(failures, errors.Join(err, context.Cause(opCtx)))
+				hasOtherFailure = true
 				break
 			}
 			outcome, itemErr := outcomes[i], itemErrors[i]
@@ -385,16 +391,20 @@ func (s *MaintenanceService) placeCommunityBatch(ctx context.Context, work maint
 				outcome.Status, outcome.ParentID = "failed", ""
 			}
 			persistErr := repository.CompleteCommunityItem(finishCtx, claim, input, outcome, failure, s.deps.Now())
-			if errors.Is(persistErr, contract.ErrConflict) {
+			if errors.Is(persistErr, contract.ErrConflict) && !errors.Is(persistErr, contract.ErrSourceStale) {
 				itemErr = errors.Join(itemErr, persistErr)
 				failure = "community_hierarchy_conflict"
 				outcome.Status, outcome.ParentID = "failed", ""
 				persistErr = repository.CompleteCommunityItem(finishCtx, claim, input, outcome, failure, s.deps.Now())
 			}
+			if errors.Is(persistErr, contract.ErrSourceStale) {
+				failure = "stale_input"
+			}
 			if itemErr == nil && persistErr == nil {
 				committed++
 			} else {
 				failures = append(failures, errors.Join(itemErr, persistErr))
+				hasOtherFailure = hasOtherFailure || itemErr != nil || !errors.Is(persistErr, contract.ErrSourceStale)
 				if s.deps.Logger != nil {
 					s.deps.Logger.WarnContext(finishCtx, "community_placement.item_rejected", "team_id", claim.TeamID,
 						"space_id", claim.SpaceID, "space_generation", claim.Generation, "run_id", claim.RunID,
@@ -423,6 +433,9 @@ func (s *MaintenanceService) placeCommunityBatch(ctx context.Context, work maint
 	failure := ""
 	if combined != nil {
 		failure = maintenanceDiagnosticError(combined)
+		if !hasOtherFailure {
+			failure = "stale_input"
+		}
 	}
 	combined = errors.Join(combined, s.deps.Repository.CompleteMaintenanceBatch(finishCtx, claim, contract.OrganizationResult{}, failure, s.deps.Now()))
 	if combined != nil {
