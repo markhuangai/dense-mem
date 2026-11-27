@@ -530,7 +530,7 @@ func (s *Store) CommitOrganization(ctx context.Context, teamID string, receipt t
 				if err != nil {
 					return err
 				}
-				publication, err := s.writePublication(tx, fence, input, "automatic", "", receipt.InputHash, receipt.ID, false)
+				publication, err := s.writePublication(tx, fence, input, "automatic", "", receipt.InputHash, receipt.ID, false, nil)
 				if err != nil {
 					return err
 				}

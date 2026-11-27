@@ -3,6 +3,13 @@
   "capability": "postgres",
   "cases": [
     {
+      "id": "postgres/TestTopicHybridBackfillResumesAndRepairsInvalidIndex",
+      "package": "./internal/storage/postgres",
+      "run": "^TestTopicHybridBackfillResumesAndRepairsInvalidIndex$",
+      "phase": "precheck",
+      "source": "internal/storage/postgres/topic_storage_migration_integration_test.go"
+    },
+    {
       "id": "postgres/TestWithSystemModeInTxRestoresAndRollsBack",
       "package": "./internal/storage/postgres",
       "run": "^TestWithSystemModeInTxRestoresAndRollsBack$",

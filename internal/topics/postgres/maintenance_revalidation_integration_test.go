@@ -262,7 +262,7 @@ func TestOntologyMaintenanceRevalidationChurn(t *testing.T) {
 		require.NoError(t, received.err)
 		require.True(t, received.result.Current)
 		for _, source := range claim.Sources {
-			require.Greater(t, revalidationQueue(t, f, source).Revision, claim.Revisions[topiccontract.SourceKey(source)])
+			require.Equal(t, claim.Revisions[topiccontract.SourceKey(source)], revalidationQueue(t, f, source).Revision, "a new Topic must not requeue a dispatched source")
 		}
 		require.NoError(t, f.store.CompleteMaintenanceBatch(context.Background(), *claim, received.result, "", time.Now().UTC()))
 		for _, source := range claim.Sources {

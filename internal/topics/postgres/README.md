@@ -1,5 +1,21 @@
 # Topics PostgreSQL verification
 
+Topic maintenance selects a bounded hybrid shortlist from scoped Topic vectors
+and indexed full-text search. Missing Topic vectors are backfilled in batches
+of at most 256; Manager Save does not call a provider. A new Topic does not
+enqueue definition invalidation. Material edits and retirement requeue direct
+members, while Evidence dependency invalidation remains active. Consolidation
+locks the catalog, Topic names and rows, then Evidence in sorted order; an
+over-bound publication rolls back. Alias-only survivor revisions retain the
+accepted Assignment fingerprint and effective placement.
+
+The registered PostgreSQL cases include vector revision and scope fences,
+Community batch eligibility and stale-item isolation, and consolidation
+membership, hierarchy, and publication-bound regressions. They run through
+the exact-source Development E2E PostgreSQL shards, not a local database
+fallback. Migrations use the offline backup and quiescence procedure in
+ADR 0021; interrupted backfills and concurrent index builds are resumable.
+
 `TestOntologyMaintenanceCoalescingMeasurement` and `TestOntologyMaintenanceRevalidationDiscoveryMeasurement`
 are historical regression selectors. They run deterministic HTTP providers against real PostgreSQL on dedicated seven-job shards 0 and 1, respectively.
 They retain `coalescing-markers-v3` and `discovery-receipts-v1`; neither calls a live model. Paired samples

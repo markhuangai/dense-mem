@@ -93,10 +93,18 @@ func (s *Store) TeamTopicStatus(ctx context.Context, teamID string) (topic.TeamT
 			return err
 		}
 		result.DiscoveryComplete = result.DiscoveryComplete && result.PendingMarkers == 0
-		if err := tx.Raw(`SELECT count(*) FILTER(WHERE eligible),count(*) FILTER(WHERE eligible AND status='organized'),count(*) FILTER(WHERE eligible AND status='pending'),count(*) FILTER(WHERE eligible AND status='ambiguous'),count(*) FILTER(WHERE eligible AND status='failed'),count(*) FILTER(WHERE eligible AND status='uncategorized') FROM topic_maintenance_sources WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?`, fence.TeamID, fence.SpaceID, fence.Generation).Row().Scan(&result.Counts.Eligible, &result.Counts.Organized, &result.Counts.Pending, &result.Counts.Ambiguous, &result.Counts.Failed, &result.Counts.Uncategorized); err != nil {
+		if err := tx.Raw(`SELECT count(*) FILTER(WHERE eligible),count(*) FILTER(WHERE eligible AND status='organized'),count(*) FILTER(WHERE eligible AND status='pending'),count(*) FILTER(WHERE eligible AND status='ambiguous'),count(*) FILTER(WHERE eligible AND status='failed'),count(*) FILTER(WHERE eligible AND status='uncategorized'),count(*) FILTER(WHERE eligible AND equivalence_status='pending'),count(*) FILTER(WHERE eligible AND equivalence_status='completed'),count(*) FILTER(WHERE eligible AND equivalence_status='failed') FROM topic_maintenance_sources WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?`, fence.TeamID, fence.SpaceID, fence.Generation).Row().Scan(&result.Counts.Eligible, &result.Counts.Organized, &result.Counts.Pending, &result.Counts.Ambiguous, &result.Counts.Failed, &result.Counts.Uncategorized, &result.Equivalence.Pending, &result.Equivalence.Completed, &result.Equivalence.Failed); err != nil {
 			return err
 		}
-		result.CoverageComplete = result.DiscoveryComplete && result.Counts.Pending == 0 && result.Counts.Ambiguous == 0 && result.Counts.Failed == 0
+		if err := tx.Raw(`SELECT count(*) FILTER(WHERE current.placement='placed'),count(*) FILTER(WHERE current.placement='standalone'),
+			count(*) FILTER(WHERE current.placement='declared' AND latest.status IS DISTINCT FROM 'failed' AND `+communityEligible+`),
+			count(*) FILTER(WHERE latest.status='failed' AND `+communityEligible+`)
+			FROM topics AS current `+latestCommunityOutcome+`
+			WHERE current.team_id=?::uuid AND current.shared_space_id=?::uuid AND current.space_generation=? AND NOT current.retired`,
+			fence.TeamID, fence.SpaceID, fence.Generation).Row().Scan(&result.Communities.Placed, &result.Communities.Standalone, &result.Communities.Pending, &result.Communities.Failed); err != nil {
+			return err
+		}
+		result.CoverageComplete = result.DiscoveryComplete && result.Counts.Pending == 0 && result.Counts.Ambiguous == 0 && result.Counts.Failed == 0 && result.Equivalence.Pending == 0 && result.Equivalence.Failed == 0 && result.Communities.Pending == 0 && result.Communities.Failed == 0
 		return nil
 	})
 	return result, err

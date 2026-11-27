@@ -22,6 +22,9 @@ func TestOntologyMaintenanceRevalidationRecovery(t *testing.T) {
 			topic := testTopic("postgresql")
 			revalidationPublish(t, f, topiccontract.Change{Record: topic})
 			revalidationDiscover(t, f, x.window)
+			for _, source := range x.claim.Sources {
+				revalidationRefresh(t, f, source)
+			}
 			require.Greater(t, revalidationQueue(t, f, source).Revision, x.claim.Revisions[topiccontract.SourceKey(source)])
 			x.stage(t)
 			switch change {
@@ -73,6 +76,10 @@ func TestOntologyMaintenanceRevalidationRecovery(t *testing.T) {
 			if change == "unchanged" || change == "override" || change == "busy_catalog" || change == "busy_source" {
 				require.Equal(t, "organized", after.Status)
 				require.Equal(t, x.result.AssessmentID, after.AssessmentID)
+				var state, fingerprint string
+				require.NoError(t, f.admin.Raw(`SELECT equivalence_status,equivalence_fingerprint FROM topic_maintenance_sources WHERE team_id=?::uuid AND source_id=?`, f.team, source.ID).Row().Scan(&state, &fingerprint))
+				require.Equal(t, "completed", state)
+				require.Equal(t, after.Fingerprint, fingerprint)
 			} else {
 				require.Equal(t, before, after, "recovery must preserve changed inputs")
 			}

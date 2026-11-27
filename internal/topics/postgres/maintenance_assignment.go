@@ -2,7 +2,9 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
 	"time"
 
 	assignment "github.com/markhuangai/dense-mem/internal/topics/assignment"
@@ -70,4 +72,77 @@ func (s *Store) CommitMaintenanceAssignments(ctx context.Context, claim topic.Ma
 		return completeMaintenanceBatch(tx, claim, result, "", time.Now(), &phase)
 	})
 	return outcomes, err
+}
+
+func (s *Store) CommitMaintenanceItemAssignment(ctx context.Context, claim topic.MaintenanceClaim, publication assignment.Publication) (topic.OrganizationOutcome, error) {
+	source := topic.SourceHandle{Kind: topic.EvidenceSource, ID: publication.EvidenceID, Version: 1}
+	outcome := topic.OrganizationOutcome{Source: source}
+	err := s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
+		if _, err := maintenanceState(tx); err != nil {
+			return err
+		}
+		fence, err := sharedScope(ctx, tx, claim.TeamID)
+		if err != nil {
+			return err
+		}
+		if fence.SpaceID != claim.SpaceID || fence.Generation != claim.Generation {
+			return topic.ErrLeaseLost
+		}
+		if err := maintenancePublicationFence(ctx, tx, fence); err != nil {
+			return err
+		}
+		snapshot, err := readSource(tx, fence, source)
+		if err != nil {
+			return err
+		}
+		fingerprint, err := topic.SourceFingerprint(snapshot)
+		if err != nil {
+			return err
+		}
+		if fingerprint != publication.ExpectedFingerprint {
+			return topic.ErrSourceStale
+		}
+		if !publication.Outcome.Unchanged {
+			input := assignment.Scope{TeamID: fence.TeamID, SpaceID: fence.SpaceID, Generation: fence.Generation, OperationID: claim.ID}
+			if err := s.PublishAssignmentsTx(ctx, tx, input, []assignment.Publication{publication}); err != nil {
+				return err
+			}
+		}
+		var status, inputHash string
+		if err := tx.Raw(`SELECT status,input_hash FROM topic_assignment_outcomes WHERE team_id=?::uuid AND shared_space_id=?::uuid
+			AND space_generation=? AND evidence_id=?::uuid AND (? OR operation_id=?::uuid) ORDER BY created_at DESC,outcome_id LIMIT 1`,
+			fence.TeamID, fence.SpaceID, fence.Generation, source.ID, publication.Outcome.Unchanged, claim.ID).Row().Scan(&status, &inputHash); err != nil {
+			return err
+		}
+		outcome.Status = "organized"
+		if status == "uncategorized" || status == "ambiguous" {
+			outcome.Status, outcome.Reason = status, status
+		} else if status != "assigned" {
+			return errors.New("topic assignment did not reach a valid outcome")
+		}
+		updated := tx.Exec(`UPDATE topic_maintenance_sources SET status=?,reason=?,last_assignment_input_hash=?,last_run_id=?::uuid,force_reassessment=false,updated_at=clock_timestamp()
+			WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND source_kind=? AND source_id=?
+			AND revision=? AND status IN ('pending','failed')`, outcome.Status, outcome.Reason, inputHash, claim.RunID,
+			fence.TeamID, fence.SpaceID, fence.Generation, source.Kind, source.ID, claim.Revisions[topic.SourceKey(source)])
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			var current int64
+			var status string
+			err := tx.Raw(`SELECT revision,status FROM topic_maintenance_sources WHERE team_id=?::uuid AND shared_space_id=?::uuid
+				AND space_generation=? AND source_kind=? AND source_id=?`, fence.TeamID, fence.SpaceID, fence.Generation, source.Kind, source.ID).Row().Scan(&current, &status)
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
+			observed := "missing"
+			if err == nil {
+				observed = fmt.Sprintf("%d:%s", current, status)
+			}
+			return &topic.PublicationRejection{Cause: topic.ErrSourceStale, Reason: "maintenance_source_revision_or_state", RecordID: source.ID,
+				Expected: fmt.Sprintf("%d:pending_or_failed", claim.Revisions[topic.SourceKey(source)]), Observed: observed}
+		}
+		return tx.Exec(`UPDATE topic_maintenance_state SET last_successful_progress=clock_timestamp() WHERE singleton`).Error
+	})
+	return outcome, err
 }

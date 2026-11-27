@@ -4,11 +4,15 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -107,6 +111,83 @@ func TestCommunityPlacementChecksRevisionsAndAccountsForProviderWork(t *testing.
 	t.Run("admitted decision outlives the preparation lease", testCommunityDecisionRenewsLease)
 }
 
+func TestCommunityBatchEligibilityAndPerItemFences(t *testing.T) {
+	ctx := t.Context()
+	f := newOrganizationFixture(t)
+	manager := f.actor(0, "manager")
+	window := maintenanceWindow(t, f, maintenanceSettings(t, f))
+	first, second, third, automatic := testTopic("batch-first"), testTopic("batch-second"), testTopic("batch-third"), testTopic("batch-automatic")
+	publication, err := f.store.PublishManager(manager, f.team, testPublication("community-batch-manager", 0,
+		contract.Change{Record: first}, contract.Change{Record: second}, contract.Change{Record: third}))
+	require.NoError(t, err)
+	_, err = f.store.PublishAutomatic(ctx, f.team, testPublication("community-batch-auto", publication.Revision, contract.Change{Record: automatic}))
+	require.NoError(t, err)
+	firstMember := f.organizationEvidence(t, 0, "First automatic Topic member.", nil)
+	secondMember := f.organizationEvidence(t, 1, "Second automatic Topic member.", nil)
+	publishMember := func(source contract.SourceHandle, text string) {
+		t.Helper()
+		input := assignment.Scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation, OperationID: uuid.NewString()}
+		item := assignment.Publication{EvidenceID: source.ID, Outcome: assignment.Outcome{Text: text, Method: "decision", InputHash: testHash(text), Matches: []assignment.Match{{ID: automatic.ID, Version: 1}}}}
+		require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
+			return f.store.PublishAssignmentsTx(ctx, tx, input, []assignment.Publication{item})
+		}))
+	}
+	publishMember(firstMember, "First automatic Topic member.")
+	status, err := f.store.MaintenanceStatus(ctx, time.Now())
+	require.NoError(t, err)
+	require.EqualValues(t, 3, status.Communities.Pending)
+
+	turn, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now(), 3*time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, turn)
+	inputs, claim, err := f.store.ClaimCommunities(ctx, *turn, window.ID, time.Now())
+	require.NoError(t, err)
+	require.NotNil(t, claim)
+	require.Len(t, inputs, 3)
+	var leased int
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM topic_maintenance_community_work WHERE lease_batch_id=?::uuid`, claim.ID).Row().Scan(&leased))
+	require.Equal(t, 3, leased)
+	second.Definition.Description = "Edited during the placement assessment."
+	revalidationPublish(t, f, contract.Change{Record: second, ExpectedVersion: 1})
+	stale, committed := 0, 0
+	for _, input := range inputs {
+		err := f.store.CompleteCommunityItem(ctx, *claim, input, contract.CommunityOutcome{InputHash: testHash(input.Topic.ID), Method: "decision", Status: "standalone"}, "", time.Now())
+		if input.Topic.ID == second.ID {
+			require.ErrorIs(t, err, contract.ErrSourceStale)
+			stale++
+		} else {
+			require.NoError(t, err)
+			committed++
+		}
+	}
+	require.Equal(t, 1, stale)
+	require.Equal(t, 2, committed)
+	require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, contract.OrganizationResult{}, "stale_input", time.Now()))
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM topic_maintenance_community_work WHERE lease_batch_id=?::uuid`, claim.ID).Row().Scan(&leased))
+	require.Zero(t, leased)
+	status, err = f.store.MaintenanceStatus(ctx, time.Now())
+	require.NoError(t, err)
+	require.EqualValues(t, 2, status.Communities.Standalone)
+	require.EqualValues(t, 1, status.Communities.Pending)
+	publishMember(secondMember, "Second automatic Topic member.")
+	status, err = f.store.MaintenanceStatus(ctx, time.Now())
+	require.NoError(t, err)
+	require.EqualValues(t, 2, status.Communities.Pending, "a second active member makes the automatic Topic eligible")
+	turn, err = f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now(), 3*time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, turn)
+	inputs, expired, err := f.store.ClaimCommunities(ctx, *turn, window.ID, time.Now())
+	require.NoError(t, err)
+	require.NotNil(t, expired)
+	require.True(t, slices.ContainsFunc(inputs, func(input contract.CommunityInput) bool { return input.Topic.ID == automatic.ID }))
+	require.NoError(t, f.store.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
+		_, err := expireMaintenanceBatches(tx, time.Now().Add(4*time.Minute))
+		return err
+	}))
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM topic_maintenance_community_work WHERE lease_batch_id=?::uuid`, expired.ID).Row().Scan(&leased))
+	require.Zero(t, leased, "expired community leases must be released")
+}
+
 type communityDecisionSettings struct{}
 
 func (communityDecisionSettings) DecisionRuntimeConfig(context.Context) (domain.DecisionRuntimeConfig, error) {
@@ -128,6 +209,21 @@ func testCommunityDecisionRenewsLease(t *testing.T) {
 	const decisionTimeout = 30 * time.Second
 	const preparationLease = 3*providerTimeout + 15*time.Second
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Input     string                           `json:"input"`
+			Questions []modelprovider.DecisionQuestion `json:"questions"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		var groups map[string]contract.CommunityInput
+		if err := json.Unmarshal([]byte(request.Input), &groups); err != nil {
+			t.Error(err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		timer := time.NewTimer(preparationLease + time.Second)
 		defer timer.Stop()
 		select {
@@ -136,7 +232,26 @@ func testCommunityDecisionRenewsLease(t *testing.T) {
 		case <-timer.C:
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintf(w, `{"model":"fixture","answers":[{"name":"parent","type":"choice","choice":%[1]q,"confidence":1,"probabilities":[{"value":%[1]q,"probability":1},{"value":"standalone","probability":0}]}],"usage":{"input_tokens":8,"output_tokens":2,"total_tokens":10}}`, parent.ID)
+		answers := make([]map[string]any, 0, len(request.Questions))
+		for _, question := range request.Questions {
+			group := groups["community_"+strings.TrimPrefix(question.Name, "parent_")]
+			selected := "standalone"
+			if group.Topic.ID == child.ID {
+				selected = parent.ID
+			}
+			probabilities := make([]map[string]any, 0, len(question.Choices))
+			for _, option := range question.Choices {
+				probability := 0
+				if option.Value == selected {
+					probability = 1
+				}
+				probabilities = append(probabilities, map[string]any{"value": option.Value, "probability": probability})
+			}
+			answers = append(answers, map[string]any{"name": question.Name, "type": "choice", "choice": selected, "confidence": 1, "probabilities": probabilities})
+		}
+		if err := json.NewEncoder(w).Encode(map[string]any{"model": "fixture", "answers": answers, "usage": map[string]int{"input_tokens": 8, "output_tokens": 2, "total_tokens": 10}}); err != nil && r.Context().Err() == nil {
+			t.Error(err)
+		}
 	}))
 	defer upstream.Close()
 	limits := maintenanceFixtureLimits()
@@ -188,16 +303,23 @@ func testCommunityHierarchyRejectionDeferred(t *testing.T) {
 		contract.Change{Record: parent}, contract.Change{Record: child}))
 	require.NoError(t, err)
 
-	choices := []string{child.ID, parent.ID}
-	calls := 0
+	var calls atomic.Int32
 	transport := communityPlacementTransport(func(ctx context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
 		if err := modelprovider.NotifyAdmission(ctx); err != nil {
 			return modelprovider.StructuredResult{}, err
 		}
-		require.Equal(t, "community_placement_v1", request.SchemaName)
-		require.Less(t, calls, len(choices))
-		selected := choices[calls]
-		calls++
+		if request.SchemaName != "community_placement_v1" {
+			return modelprovider.StructuredResult{}, fmt.Errorf("unexpected schema %s", request.SchemaName)
+		}
+		var input contract.CommunityInput
+		if err := json.Unmarshal([]byte(request.Messages[1].Content), &input); err != nil {
+			return modelprovider.StructuredResult{}, err
+		}
+		selected := parent.ID
+		if input.Topic.ID == parent.ID {
+			selected = child.ID
+		}
+		calls.Add(1)
 		return modelprovider.StructuredResult{Content: `{"parent_id":"` + selected + `"}`}, nil
 	})
 	limits := maintenanceFixtureLimits()
@@ -211,7 +333,7 @@ func testCommunityHierarchyRejectionDeferred(t *testing.T) {
 	progress, err := service.RunTurn(ctx)
 	require.True(t, progress)
 	require.ErrorIs(t, err, contract.ErrConflict)
-	require.Equal(t, 1, calls)
+	require.EqualValues(t, 2, calls.Load())
 	var disposition, failure string
 	var deferred bool
 	require.NoError(t, f.admin.Raw(`SELECT outcome.status,batch.failure_code,work.ready_at>statement_timestamp()
@@ -222,17 +344,13 @@ func testCommunityHierarchyRejectionDeferred(t *testing.T) {
 		WHERE work.team_id=?::uuid AND work.topic_id=?::uuid`, f.team, parent.ID).
 		Row().Scan(&disposition, &failure, &deferred))
 	require.Equal(t, "failed", disposition)
-	require.Equal(t, "community_hierarchy_conflict", failure)
+	require.Equal(t, "conflict", failure)
 	require.True(t, deferred)
 	failed, err := f.store.GetRecord(f.actor(1, "member"), f.team, parent.ID, 0)
 	require.NoError(t, err)
 	require.Equal(t, "failed", failed.CommunityPlacement)
 	require.Empty(t, failed.Definition.ParentID)
 
-	progress, err = service.RunTurn(ctx)
-	require.NoError(t, err)
-	require.True(t, progress)
-	require.Equal(t, 2, calls)
 	view, err := f.store.GetRecord(manager, f.team, child.ID, 0)
 	require.NoError(t, err)
 	require.Equal(t, parent.ID, view.CommunityParentID)
@@ -388,7 +506,7 @@ func testCommunityAssignmentRefresh(t *testing.T) {
 			if variant.declaredParent {
 				parent.Definition.ParentID = child.ID
 			}
-			_, err := f.store.PublishAutomatic(ctx, f.team, testPublication("placement-refresh-fixture", 0,
+			_, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("placement-refresh-fixture", 0,
 				contract.Change{Record: parent}, contract.Change{Record: child}))
 			require.NoError(t, err)
 

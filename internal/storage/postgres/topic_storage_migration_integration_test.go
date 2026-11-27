@@ -213,3 +213,63 @@ func testTopicStorageUpgrade(t *testing.T) {
 		return nil
 	}))
 }
+
+func TestTopicHybridBackfillResumesAndRepairsInvalidIndex(t *testing.T) {
+	ctx := t.Context()
+	db, fixture := featureStorageFixture(t, 1001)
+	require.NoError(t, NewMigratorWithDB(db).RunUpTo(ctx, 20261126010000))
+	var lastTopic string
+	require.NoError(t, execPostgresTxMode(ctx, db, "migration", func(tx *sql.Tx) error {
+		if err := tx.QueryRowContext(ctx, `SELECT topic_id::text FROM topics WHERE team_id=$1::uuid ORDER BY topic_id DESC LIMIT 1`, fixture.team).Scan(&lastTopic); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO topic_maintenance_sources(team_id,shared_space_id,space_generation,source_kind,source_id,source_version,fingerprint,eligible,status)
+			VALUES($1::uuid,$2::uuid,$3,'evidence',$4,1,'accepted-fingerprint',true,'organized')
+			ON CONFLICT(team_id,shared_space_id,space_generation,source_kind,source_id) DO UPDATE SET
+			fingerprint=excluded.fingerprint,eligible=true,status='organized',equivalence_status='uninitialized'`,
+			fixture.team, fixture.space, fixture.generation, fixture.evidence)
+		return err
+	}))
+	_, err := db.ExecContext(ctx, fmt.Sprintf(`CREATE FUNCTION topic_hybrid_interrupt_fixture() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN IF NEW.topic_id='%s'::uuid THEN RAISE EXCEPTION 'fixture interruption'; END IF; RETURN NEW; END $$;
+		CREATE TRIGGER topic_hybrid_interrupt_fixture BEFORE UPDATE OF search_tsv ON topics
+		FOR EACH ROW EXECUTE FUNCTION topic_hybrid_interrupt_fixture()`, lastTopic))
+	require.NoError(t, err)
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	_, err = db.ExecContext(ctx, `SET lock_timeout='175ms'`)
+	require.NoError(t, err)
+	require.ErrorContains(t, topicHybridBackfillUp(ctx, db), "fixture interruption")
+	var timeout string
+	require.NoError(t, db.QueryRowContext(ctx, `SHOW lock_timeout`).Scan(&timeout))
+	require.Equal(t, "175ms", timeout)
+	var completed int
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM topics WHERE team_id=$1::uuid AND search_tsv IS NOT NULL`, fixture.team).Scan(&completed))
+	require.Equal(t, 1000, completed, "the completed page must survive the interrupted next page")
+	_, err = db.ExecContext(ctx, `DROP TRIGGER topic_hybrid_interrupt_fixture ON topics`)
+	require.NoError(t, err)
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(4)
+	createCanceledRelationshipTelemetryIndex(t, ctx, db, "topics_fts_idx", "topics", "topic_id")
+	require.False(t, indexIsValid(t, ctx, db, "topics_fts_idx"))
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	_, err = db.ExecContext(ctx, `SET lock_timeout='175ms'`)
+	require.NoError(t, err)
+	require.NoError(t, topicHybridBackfillUp(ctx, db))
+	require.NoError(t, db.QueryRowContext(ctx, `SHOW lock_timeout`).Scan(&timeout))
+	require.Equal(t, "175ms", timeout)
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT count(*) FROM topics WHERE team_id=$1::uuid AND search_tsv IS NOT NULL`, fixture.team).Scan(&completed))
+	require.Equal(t, 1001, completed)
+	var state, fingerprint, indexDefinition string
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT equivalence_status,equivalence_fingerprint FROM topic_maintenance_sources WHERE team_id=$1::uuid AND source_id=$2`, fixture.team, fixture.evidence).Scan(&state, &fingerprint))
+	require.Equal(t, "completed", state)
+	require.Equal(t, "accepted-fingerprint", fingerprint)
+	require.True(t, indexIsValid(t, ctx, db, "topics_fts_idx"))
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT pg_get_indexdef('topics_fts_idx'::regclass)`).Scan(&indexDefinition))
+	require.Contains(t, strings.ToLower(indexDefinition), "using gin")
+	require.NoError(t, topicHybridBackfillUp(ctx, db), "a completed backfill must be idempotent")
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(4)
+	require.NoError(t, NewMigratorWithDB(db).RunUp(ctx), "the registered migration must accept recovered pages and indexes")
+}

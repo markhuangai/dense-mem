@@ -56,6 +56,44 @@ func TestCommunityPlacementWithoutCandidatesIsStandalone(t *testing.T) {
 	require.NotEmpty(t, outcome.InputHash)
 }
 
+func TestCommunityBatchUsesOneValidatedDecision(t *testing.T) {
+	parents := []string{uuid.NewString(), uuid.NewString()}
+	inputs := make([]contract.CommunityInput, len(parents))
+	for i := range inputs {
+		inputs[i] = contract.CommunityInput{Topic: contract.CommunityCandidate{ID: uuid.NewString(), Version: 1, Name: "Specific"},
+			Candidates: []contract.CommunityCandidate{{ID: parents[i], Version: 1, Name: "Broader"}}}
+	}
+	calls := 0
+	complete := true
+	service := CommunityAssessor{Settings: communityDecisionFixture{}, Decisions: testDecisions(func(_ context.Context, request modelprovider.DecisionRequest) (modelprovider.DecisionResult, error) {
+		calls++
+		require.Len(t, request.Groups, 2)
+		confidence := .9
+		answers := map[string]modelprovider.DecisionAnswer{
+			"parent_0": {Type: modelprovider.DecisionChoice, Choice: parents[0], Confidence: &confidence, Probabilities: map[string]float64{"standalone": .2, parents[0]: .8}},
+		}
+		if complete {
+			answers["parent_1"] = modelprovider.DecisionAnswer{Type: modelprovider.DecisionChoice, Choice: parents[1], Confidence: &confidence, Probabilities: map[string]float64{"standalone": .201, parents[1]: .799}}
+		}
+		return modelprovider.DecisionResult{Answers: answers}, nil
+	})}
+	outcomes, failures, err := service.AssessBatch(t.Context(), uuid.NewString(), inputs, "fixture")
+	require.NoError(t, err)
+	require.Equal(t, 1, calls)
+	require.NoError(t, failures[0])
+	require.NoError(t, failures[1])
+	require.Equal(t, parents[0], outcomes[0].ParentID)
+	require.Equal(t, "standalone", outcomes[1].Status)
+
+	complete = false
+	outcomes, failures, err = service.AssessBatch(t.Context(), uuid.NewString(), inputs, "fixture")
+	require.NoError(t, err)
+	require.Error(t, failures[0])
+	require.Error(t, failures[1])
+	require.Empty(t, outcomes[0].ParentID)
+	require.Empty(t, outcomes[1].ParentID)
+}
+
 func TestCommunityPlacementRejectsWindowWithoutProviderInputCapacity(t *testing.T) {
 	service := CommunityAssessor{contextWindow: 1}
 	input := contract.CommunityInput{

@@ -202,15 +202,19 @@ func TestOntologyMaintenanceDefinitionMarkersTargetReceiptsAndVocabulary(t *test
 	}
 	handles := selectSources(maintenanceMarker{AnchorKind: "source_dependency", AnchorID: topiccontract.SourceKey(support), TargetKind: "definition", TargetID: support.ID})
 	require.Equal(t, []topiccontract.SourceHandle{support}, handles, "a source dependency marker follows materialized catalog dependencies")
+	membership := topiccontract.Record{ID: uuid.NewString(), Kind: topiccontract.AssignmentKind,
+		Assignment: &topiccontract.Assignment{Source: dependent, DefinitionID: child.ID}, Sources: []topiccontract.SourceDependency{f.source(t, dependent)}}
+	revalidationPublish(t, f, topiccontract.Change{Record: membership})
 	handles = selectSources(maintenanceMarker{AnchorKind: "topic_record_heads", AnchorID: child.ID, TargetKind: "definition", TargetID: child.ID})
-	require.Equal(t, []topiccontract.SourceHandle{dependent}, handles, "a Topic revision marker finds matching Evidence without reading failed receipts")
+	require.Equal(t, []topiccontract.SourceHandle{dependent}, handles, "a Topic revision marker finds its direct members")
 	page, err := f.store.ListRecords(ctx, f.team, "", "", 1)
 	require.NoError(t, err)
 	topic := testTopic("swift")
 	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("new-vocabulary", page.Revision, topiccontract.Change{Record: topic}))
 	require.NoError(t, err)
 	handles = selectSources(maintenanceMarker{AnchorKind: "topic_record_heads", AnchorID: topic.ID, TargetKind: "definition", TargetID: topic.ID})
-	require.Equal(t, []topiccontract.SourceHandle{unrelated}, handles, "new vocabulary must reach a failed source with no previous dependency on the new record")
+	require.Empty(t, handles, "new vocabulary must not reach an unlinked failed source")
+	require.NotContains(t, handles, unrelated)
 }
 
 func TestOntologyMaintenanceTransitiveInvalidation(t *testing.T) {
@@ -252,7 +256,7 @@ func TestOntologyMaintenanceTransitiveInvalidation(t *testing.T) {
 	require.Equal(t, "pending", state)
 	view, err := f.store.GetRecord(context.Background(), f.team, dependent, 0)
 	require.NoError(t, err)
-	require.False(t, view.Current)
+	require.True(t, view.Current, "the accepted Assignment remains visible while its dependent source is queued for reassessment")
 	require.NoError(t, f.store.ReleaseMaintenanceTurn(context.Background(), *turn))
 }
 

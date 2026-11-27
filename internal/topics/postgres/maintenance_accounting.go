@@ -56,12 +56,23 @@ func (s *Store) AdmitMaintenanceAttempt(ctx context.Context, claim topic.Mainten
 			return topic.ErrConfiguration
 		}
 		renewedUntil := now.Add(claim.AttemptLease)
-		return tx.Exec(`WITH recorded AS (
+		if err := tx.Exec(`WITH recorded AS (
 			INSERT INTO topic_maintenance_attempts(batch_id,assessment_id,attempt,window_id,reserved_input,reserved_output,estimated_input_tokens,max_output_tokens,admitted_at)
 			VALUES(?::uuid,?::uuid,?,?::uuid,0,0,?,?,?) RETURNING batch_id
 		)
 		UPDATE topic_maintenance_batches SET lease_until=? WHERE ? AND lease_until<? AND batch_id IN(SELECT batch_id FROM recorded)`,
-			claim.ID, assessmentID, number, claim.WindowID, input, output, now, renewedUntil, claim.AttemptLease > 0, renewedUntil).Error
+			claim.ID, assessmentID, number, claim.WindowID, input, output, now, renewedUntil, claim.AttemptLease > 0, renewedUntil).Error; err != nil {
+			return err
+		}
+		if claim.Kind == "community" && claim.AttemptLease > 0 {
+			return tx.Exec(`UPDATE topic_maintenance_community_work AS work SET lease_until=batch.lease_until
+				FROM topic_maintenance_batches AS batch WHERE batch.batch_id=?::uuid AND work.lease_batch_id=batch.batch_id`, claim.ID).Error
+		}
+		if claim.Kind == "consolidation" && claim.AttemptLease > 0 {
+			return tx.Exec(`UPDATE topic_embeddings AS embedding SET consolidation_lease_until=batch.lease_until
+				FROM topic_maintenance_batches AS batch WHERE batch.batch_id=?::uuid AND embedding.consolidation_batch_id=batch.batch_id`, claim.ID).Error
+		}
+		return nil
 	})
 }
 

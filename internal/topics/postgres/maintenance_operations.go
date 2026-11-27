@@ -88,7 +88,7 @@ func maintenanceCommandTx(ctx context.Context, tx *gorm.DB, input domain.TopicMa
 			result.Status = "pending"
 			if input.Action == "retry" {
 				var exists bool
-				if err := tx.Raw(`SELECT EXISTS(SELECT 1 FROM topic_maintenance_runs WHERE run_id=?::uuid AND kind IN ('scheduled','run','retry'))`, input.RetryRunID).Row().Scan(&exists); err != nil {
+				if err := tx.Raw(`SELECT EXISTS(SELECT 1 FROM topic_maintenance_runs WHERE run_id=?::uuid AND kind IN ('scheduled','run','retry','reassess'))`, input.RetryRunID).Row().Scan(&exists); err != nil {
 					return err
 				}
 				if !exists {
@@ -114,6 +114,11 @@ func maintenanceCommandTx(ctx context.Context, tx *gorm.DB, input domain.TopicMa
 		if err := tx.Exec(`INSERT INTO topic_maintenance_runs(run_id,window_id,operation_key,request_hash,command,kind,status,max_batches,created_at,updated_at) VALUES(?::uuid,?::uuid,?,?,?::jsonb,?,?,?,?,?)`, result.ID, windowID, input.OperationKey, hash, string(encoded), result.Kind, result.Status, result.MaxBatches, now, now).Error; err != nil {
 			return err
 		}
+		if input.Action == "reassess" {
+			if err := queueUncategorizedReassessment(ctx, tx, input, result.ID); err != nil {
+				return err
+			}
+		}
 		result, err = scanMaintenanceRun(tx.Raw(`SELECT `+maintenanceRunColumns+` FROM topic_maintenance_runs WHERE run_id=?::uuid`, result.ID).Row())
 		if err != nil {
 			return err
@@ -121,6 +126,57 @@ func maintenanceCommandTx(ctx context.Context, tx *gorm.DB, input domain.TopicMa
 		return appendMaintenanceAuditTx(ctx, tx, result, prepareAudit)
 	}()
 	return result, err
+}
+
+func queueUncategorizedReassessment(ctx context.Context, tx *gorm.DB, input domain.TopicMaintenanceCommand, runID string) error {
+	fence, err := sharedScope(ctx, tx, input.TeamID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return topic.ErrInvalid
+	}
+	if err != nil {
+		return err
+	}
+	for _, id := range input.EvidenceIDs {
+		if err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtextextended(?::text,25022))`, fence.SpaceID+":"+id).Error; err != nil {
+			return err
+		}
+	}
+	for _, id := range input.EvidenceIDs {
+		handle := topic.SourceHandle{Kind: topic.EvidenceSource, ID: id, Version: 1}
+		if _, err := readSource(tx, fence, handle); err != nil {
+			if errors.Is(err, topic.ErrSourceStale) {
+				return topic.ErrInvalid
+			}
+			return err
+		}
+		var status string
+		err := tx.Raw(`SELECT status FROM topic_assignment_outcomes WHERE team_id=?::uuid AND shared_space_id=?::uuid
+			AND space_generation=? AND evidence_id=?::uuid ORDER BY created_at DESC,outcome_id LIMIT 1`,
+			fence.TeamID, fence.SpaceID, fence.Generation, id).Row().Scan(&status)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && status != "uncategorized") {
+			return topic.ErrInvalid
+		}
+		if err != nil {
+			return err
+		}
+	}
+	for _, id := range input.EvidenceIDs {
+		handle := topic.SourceHandle{Kind: topic.EvidenceSource, ID: id, Version: 1}
+		if err := refreshMaintenanceSource(tx, fence, handle, false); err != nil {
+			return err
+		}
+		updated := tx.Exec(`UPDATE topic_maintenance_sources SET status='pending',reason='operator_reassessment',
+			force_reassessment=true,revision=revision+1,pending_at=clock_timestamp(),last_run_id=?::uuid,updated_at=clock_timestamp()
+			WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND source_kind='evidence' AND source_id=? AND eligible`,
+			runID, fence.TeamID, fence.SpaceID, fence.Generation, id)
+		if updated.Error != nil {
+			return updated.Error
+		}
+		if updated.RowsAffected != 1 {
+			return topic.ErrInvalid
+		}
+	}
+	return nil
 }
 
 func appendMaintenanceAuditTx(ctx context.Context, tx *gorm.DB, run topic.MaintenanceRun, prepareAudit topic.MaintenanceAudit) error {
@@ -144,8 +200,12 @@ const maintenanceActiveSourceJoin = ` FROM topic_maintenance_sources AS source
 func completeMaintenanceRun(tx *gorm.DB, runID, retryRunID string, allSources bool, requiredFailure string) error {
 	var unresolved bool
 	if err := tx.Raw(`SELECT EXISTS(SELECT 1`+maintenanceActiveSourceJoin+`
-	 WHERE source.eligible AND (source.status IN ('failed','ambiguous') OR (NOT ? AND source.status='pending'))
-	 AND (? OR source.last_run_id IN (?::uuid,NULLIF(?,'')::uuid)))`, allSources, allSources, runID, retryRunID).Row().Scan(&unresolved); err != nil {
+	 WHERE source.eligible AND (
+	 ((source.status IN ('failed','ambiguous') OR (NOT ? AND source.status='pending'))
+	  AND (? OR source.last_run_id IN (?::uuid,NULLIF(?,'')::uuid))) OR
+	 ((source.equivalence_status='failed' OR (NOT ? AND source.equivalence_status='pending'))
+	  AND (? OR source.equivalence_last_run_id IN (?::uuid,NULLIF(?,'')::uuid)))))`,
+		allSources, allSources, runID, retryRunID, allSources, allSources, runID, retryRunID).Row().Scan(&unresolved); err != nil {
 		return err
 	}
 	var previousFailure string
@@ -165,13 +225,29 @@ func maintenanceRetryableRuns(tx *gorm.DB, runIDs []string) (map[string]bool, er
 		return result, nil
 	}
 	var matches []string
-	if err := tx.Raw(`SELECT DISTINCT source.last_run_id::text`+maintenanceActiveSourceJoin+` WHERE source.eligible AND source.status='failed' AND source.last_run_id=ANY(?::uuid[])`, pq.Array(runIDs)).Scan(&matches).Error; err != nil {
+	if err := tx.Raw(`SELECT DISTINCT run_id FROM (
+	 SELECT source.last_run_id::text AS run_id`+maintenanceActiveSourceJoin+` WHERE source.eligible AND source.status='failed' AND source.last_run_id=ANY(?::uuid[])
+	 UNION ALL
+	 SELECT source.equivalence_last_run_id::text AS run_id`+maintenanceActiveSourceJoin+` WHERE source.eligible AND source.equivalence_status='failed' AND source.equivalence_last_run_id=ANY(?::uuid[])
+	) AS retryable`, pq.Array(runIDs), pq.Array(runIDs)).Scan(&matches).Error; err != nil {
 		return nil, err
 	}
 	for _, id := range matches {
 		result[id] = true
 	}
 	return result, nil
+}
+
+func (s *Store) MaintenanceRunRetryable(ctx context.Context, runID string) (bool, error) {
+	var retryable bool
+	err := s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
+		values, err := maintenanceRetryableRuns(tx, []string{runID})
+		if err == nil {
+			retryable = values[runID]
+		}
+		return err
+	})
+	return retryable, err
 }
 
 func (s *Store) RecordMaintenanceFailure(ctx context.Context, runID, code string, now time.Time) error {
@@ -202,7 +278,10 @@ func (s *Store) MaintenanceStatus(ctx context.Context, now time.Time) (topic.Mai
 		if err := tx.Raw(`SELECT count(*) FILTER(WHERE source.eligible),count(*) FILTER(WHERE source.eligible AND source.status='organized'),count(*) FILTER(WHERE source.eligible AND source.status='pending'),
 		 count(*) FILTER(WHERE source.eligible AND source.status='ambiguous'),count(*) FILTER(WHERE source.eligible AND source.status='failed'),
 		 count(*) FILTER(WHERE source.eligible AND source.status='uncategorized'),
-		 min(source.pending_at) FILTER(WHERE source.eligible AND source.status='pending')`+maintenanceActiveSourceJoin).Row().Scan(&result.Counts.Eligible, &result.Counts.Organized, &result.Counts.Pending, &result.Counts.Ambiguous, &result.Counts.Failed, &result.Counts.Uncategorized, &result.OldestPendingAt); err != nil {
+		 min(source.pending_at) FILTER(WHERE source.eligible AND source.status='pending'),
+		 count(*) FILTER(WHERE source.eligible AND source.equivalence_status='pending'),
+		 count(*) FILTER(WHERE source.eligible AND source.equivalence_status='completed'),
+		 count(*) FILTER(WHERE source.eligible AND source.equivalence_status='failed')`+maintenanceActiveSourceJoin).Row().Scan(&result.Counts.Eligible, &result.Counts.Organized, &result.Counts.Pending, &result.Counts.Ambiguous, &result.Counts.Failed, &result.Counts.Uncategorized, &result.OldestPendingAt, &result.Equivalence.Pending, &result.Equivalence.Completed, &result.Equivalence.Failed); err != nil {
 			return err
 		}
 		if err := tx.Raw(`SELECT NOT EXISTS(SELECT 1 FROM teams AS team JOIN memory_spaces AS space ON space.team_id=team.id AND space.kind='team_shared' AND space.lifecycle_state='active'
@@ -213,8 +292,8 @@ func (s *Store) MaintenanceStatus(ctx context.Context, now time.Time) (topic.Mai
 		}
 		if err := tx.Raw(`SELECT count(*) FILTER (WHERE current.placement='placed'),
             count(*) FILTER (WHERE current.placement='standalone'),
-            count(*) FILTER (WHERE current.placement='declared' AND latest.status IS DISTINCT FROM 'failed'),
-            count(*) FILTER (WHERE latest.status='failed')
+			count(*) FILTER (WHERE current.placement='declared' AND latest.status IS DISTINCT FROM 'failed' AND `+communityEligible+`),
+			count(*) FILTER (WHERE latest.status='failed' AND `+communityEligible+`)
             FROM topics AS current JOIN teams AS team ON team.id=current.team_id AND team.status='active' AND team.deleted_at IS NULL
             JOIN memory_spaces AS space ON space.team_id=current.team_id AND space.id=current.shared_space_id
                 AND space.generation=current.space_generation AND space.lifecycle_state='active' AND space.kind='team_shared'
@@ -222,7 +301,7 @@ func (s *Store) MaintenanceStatus(ctx context.Context, now time.Time) (topic.Mai
             WHERE NOT current.retired`).Row().Scan(&result.Communities.Placed, &result.Communities.Standalone, &result.Communities.Pending, &result.Communities.Failed); err != nil {
 			return err
 		}
-		result.CoverageComplete = result.DiscoveryComplete && result.Counts.Pending == 0 && result.Counts.Failed == 0 && result.Counts.Ambiguous == 0 && result.Communities.Pending == 0 && result.Communities.Failed == 0
+		result.CoverageComplete = result.DiscoveryComplete && result.Counts.Pending == 0 && result.Counts.Failed == 0 && result.Counts.Ambiguous == 0 && result.Communities.Pending == 0 && result.Communities.Failed == 0 && result.Equivalence.Pending == 0 && result.Equivalence.Failed == 0
 		result.Window, err = currentMaintenanceWindow(tx, now)
 		if err != nil {
 			return err

@@ -20,6 +20,8 @@ func TestOntologyMatchingConcurrentInvalidation(t *testing.T) {
 	definition := testTopic("concurrentcatalog")
 	definition.Definition.Description = "of and the"
 	revalidationPublish(t, f, topic.Change{Record: definition})
+	definition.Definition.Description = "of and the, revised"
+	revalidationPublish(t, f, topic.Change{ExpectedVersion: 1, Record: definition})
 	before := f.canonicalSnapshot(t)
 	writerCtx, cancelWriter := context.WithTimeout(f.actor(0, "manager"), 15*time.Second)
 	defer cancelWriter()
@@ -42,7 +44,7 @@ func TestOntologyMatchingConcurrentInvalidation(t *testing.T) {
 		require.True(t, page.Exhausted[0])
 		definition.Definition.Description = "heliostat"
 		go func() {
-			_, err := f.store.PublishManager(writerCtx, f.team, testPublication("meaningful-concurrent-change", 1, topic.Change{ExpectedVersion: 1, Record: definition}))
+			_, err := f.store.PublishManager(writerCtx, f.team, testPublication("meaningful-concurrent-change", 2, topic.Change{ExpectedVersion: 2, Record: definition}))
 			done <- err
 		}()
 		require.False(t, discoveryWriterState(t, f, done), "publication must wait for the claimed marker")
@@ -56,7 +58,7 @@ func TestOntologyMatchingConcurrentInvalidation(t *testing.T) {
 		require.Equal(t, 1, count, "the meaningful change must survive consumption of the old empty page")
 		handles, err := maintenanceMarkerSources(tx, fence, marker, topic.MaintenancePageSize)
 		require.NoError(t, err)
-		require.Equal(t, []topic.SourceHandle{source}, handles)
+		require.Empty(t, handles, "lexical overlap alone must not invalidate an unlinked source")
 		page, err := maintenanceDefinitionGroupPage(tx, fence, []maintenanceMarker{marker}, topic.MaintenancePageSize)
 		require.NoError(t, err)
 		require.Equal(t, handles, page.Sources)

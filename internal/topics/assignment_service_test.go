@@ -7,13 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/assessor"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	"github.com/markhuangai/dense-mem/internal/topics/assessment"
 	"github.com/markhuangai/dense-mem/internal/topics/assignment"
+	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
 
@@ -109,11 +113,16 @@ func TestAssignmentUncoveredSubjectAndPriorInputs(t *testing.T) {
 	scope := assignment.Scope{TeamID: uuid.NewString(), SpaceID: uuid.NewString(), Generation: 1, OperationID: uuid.NewString()}
 	source := assignment.Slice{Text: "Replicate Postgres across regions for disaster recovery."}
 	genCalls, decisionCalls := 0, 0
+	narrow := false
 	gen := testTransport(func(_ context.Context, req modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
 		genCalls++
 		var input assignmentRequest
 		require.NoError(t, json.Unmarshal([]byte(req.Messages[1].Content), &input))
-		output := map[string]any{"request_id": input.RequestID, "status": "assigned", "matches": []map[string]string{{"id": topic.ID, "quote": "Postgres"}}, "proposals": []map[string]string{{"label": "Disaster recovery", "description": "Restoring service after failure.", "quote": "disaster recovery"}}}
+		matches := []map[string]string{}
+		if !narrow {
+			matches = append(matches, map[string]string{"id": topic.ID, "quote": "Postgres"})
+		}
+		output := map[string]any{"request_id": input.RequestID, "status": "assigned", "matches": matches, "proposals": []map[string]string{{"label": "Disaster recovery", "description": "Restoring service after failure.", "quote": "disaster recovery"}}}
 		b, err := json.Marshal(output)
 		return modelprovider.StructuredResult{Content: string(b)}, err
 	})
@@ -138,6 +147,7 @@ func TestAssignmentUncoveredSubjectAndPriorInputs(t *testing.T) {
 	require.Equal(t, 1, decisionCalls)
 	source.PriorInputHash = ""
 	uncovered = 0.999
+	narrow = true
 	result, err = s.Prepare(context.Background(), scope, []assignment.Slice{source}, settings)
 	require.NoError(t, err)
 	require.Len(t, result[0].Matches, 1)
@@ -145,6 +155,7 @@ func TestAssignmentUncoveredSubjectAndPriorInputs(t *testing.T) {
 	require.Equal(t, "generation", result[0].Method)
 	require.Equal(t, 1, genCalls)
 	settings.Effective.TopicAssignment = false
+	narrow = false
 	_, err = s.Prepare(context.Background(), scope, []assignment.Slice{source}, settings)
 	require.NoError(t, err)
 	require.Equal(t, 2, genCalls)
@@ -161,7 +172,7 @@ func TestAssignmentAuthoritativeDecisionRoutingAndLogs(t *testing.T) {
 	}{
 		{name: "match", match: .85, uncovered: .20, matches: 1},
 		{name: "uncategorized", match: .20, uncovered: .20},
-		{name: "uncovered", match: .85, uncovered: .85, generation: 1},
+		{name: "uncovered", match: .85, uncovered: .85, matches: 1, generation: 1},
 		{name: "budget", decisionErr: modelprovider.ErrDecisionInputBudgetExceeded},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -237,4 +248,180 @@ func TestRequiredDecisionOutageCannotCreateTopic(t *testing.T) {
 	out, err = s.Prepare(ctx, scope, slices, settings)
 	require.NoError(t, err)
 	require.Empty(t, out)
+}
+
+func TestEquivalenceDecisionBatchThresholdAndCompleteValidation(t *testing.T) {
+	items := []preparedEquivalence{
+		{seed: contract.SourceHandle{ID: "first"}, request: assessment.Request{RequestID: "one", EquivalenceOnly: true,
+			Items: []assessment.Item{{Ref: "a", Kind: contract.EvidenceSource}, {Ref: "b", Kind: contract.EvidenceSource}},
+			Pairs: []assessment.Pair{{Ref: "p0", LeftRef: "a", RightRef: "b"}}}},
+		{seed: contract.SourceHandle{ID: "second"}, request: assessment.Request{RequestID: "two", EquivalenceOnly: true,
+			Items: []assessment.Item{{Ref: "a", Kind: contract.EvidenceSource}, {Ref: "b", Kind: contract.EvidenceSource}},
+			Pairs: []assessment.Pair{{Ref: "p0", LeftRef: "a", RightRef: "b"}}}},
+	}
+	var calls int
+	service := &MaintenanceService{deps: MaintenanceDependencies{Decisions: testDecisions(func(_ context.Context, request modelprovider.DecisionRequest) (modelprovider.DecisionResult, error) {
+		calls++
+		require.Len(t, request.Groups, 2)
+		yes, no := .95, .949
+		return modelprovider.DecisionResult{Answers: map[string]modelprovider.DecisionAnswer{
+			"e0_p0": {Type: modelprovider.DecisionPredicate, Probability: &yes},
+			"e1_p0": {Type: modelprovider.DecisionPredicate, Probability: &no},
+		}}, nil
+	})}}
+	responses, err := service.decideEquivalence(t.Context(), contract.MaintenanceClaim{ID: uuid.NewString()}, items, domain.DecisionRuntimeConfig{}, nil)
+	require.NoError(t, err)
+	require.Equal(t, 1, calls)
+	require.Equal(t, "equivalent", responses[0].Equivalence[0].Relation)
+	require.Equal(t, "distinct", responses[1].Equivalence[0].Relation)
+
+	items = items[:1]
+	items[0].request.Items = append(items[0].request.Items, assessment.Item{Ref: "c", Kind: contract.EvidenceSource})
+	items[0].request.Pairs = append(items[0].request.Pairs,
+		assessment.Pair{Ref: "p1", LeftRef: "b", RightRef: "c"},
+		assessment.Pair{Ref: "p2", LeftRef: "a", RightRef: "c"})
+	calls = 0
+	service.deps.Decisions = testDecisions(func(_ context.Context, request modelprovider.DecisionRequest) (modelprovider.DecisionResult, error) {
+		calls++
+		yes, no := .99, .01
+		return modelprovider.DecisionResult{Answers: map[string]modelprovider.DecisionAnswer{
+			"e0_p0": {Type: modelprovider.DecisionPredicate, Probability: &yes},
+			"e0_p1": {Type: modelprovider.DecisionPredicate, Probability: &yes},
+			"e0_p2": {Type: modelprovider.DecisionPredicate, Probability: &no},
+		}}, nil
+	})
+	responses, err = service.decideEquivalence(t.Context(), contract.MaintenanceClaim{ID: uuid.NewString()}, items, domain.DecisionRuntimeConfig{}, nil)
+	require.Error(t, err)
+	require.Nil(t, responses)
+	require.Equal(t, modelprovider.StructuredResponseLimit, calls)
+}
+
+func TestMaintenanceAssignmentBatchesDecisionsAndIsolatesNamingFailure(t *testing.T) {
+	target := assignment.Topic{ID: uuid.NewString(), Version: 1, Label: "Databases"}
+	var decisionCalls atomic.Int32
+	decisions := testDecisions(func(_ context.Context, request modelprovider.DecisionRequest) (modelprovider.DecisionResult, error) {
+		decisionCalls.Add(1)
+		require.Len(t, request.Groups, 20)
+		require.NoError(t, modelprovider.ValidateDecisionRequest(request))
+		answers := make(map[string]modelprovider.DecisionAnswer)
+		for i, group := range request.Groups {
+			for _, question := range group.Questions {
+				probability := 0.90
+				if strings.HasSuffix(question.Name, "uncovered") && i != 3 {
+					probability = 0.10
+				}
+				answers[question.Name] = modelprovider.DecisionAnswer{Type: modelprovider.DecisionPredicate, Probability: &probability}
+			}
+		}
+		return modelprovider.DecisionResult{Answers: answers}, nil
+	})
+	var generations atomic.Int32
+	generate := testTransport(func(_ context.Context, _ modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+		generations.Add(1)
+		return modelprovider.StructuredResult{Content: `{}`}, nil
+	})
+	service := NewAssignmentService(testCatalog{target}, testConfig(true), generate, decisions, assessor.DefaultSemanticAssessmentLimits(), "fixture", nil)
+	scope := assignment.Scope{TeamID: uuid.NewString(), SpaceID: uuid.NewString(), Generation: 1, OperationID: uuid.NewString()}
+	inputs := make([]assignment.Slice, 20)
+	for i := range inputs {
+		inputs[i] = assignment.Slice{Index: i, EvidenceID: uuid.NewString(), Text: fmt.Sprintf("Evidence %d", i)}
+	}
+	settings := &domain.DecisionRuntimeConfig{Effective: domain.DecisionTasks{TopicAssignment: true}}
+	window := domain.TopicMaintenanceConfig{Enabled: true, Model: "fixture", ContextWindowTokens: 500000}
+	outcomes, err := service.PrepareMaintenance(t.Context(), scope, inputs, settings, window, nil)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, decisionCalls.Load())
+	require.Greater(t, generations.Load(), int32(0))
+	for i, outcome := range outcomes {
+		if i == 3 {
+			require.Error(t, outcome.Failure)
+			continue
+		}
+		require.NoError(t, outcome.Failure)
+		require.Equal(t, []assignment.Match{{ID: target.ID, Version: 1}}, outcome.Matches)
+	}
+}
+
+func TestRememberAssignmentBatchesDecisionsAndFailsAtomically(t *testing.T) {
+	target := assignment.Topic{ID: uuid.NewString(), Version: 1, Label: "Databases"}
+	var sizes []int
+	decisions := testDecisions(func(_ context.Context, request modelprovider.DecisionRequest) (modelprovider.DecisionResult, error) {
+		if err := modelprovider.ValidateDecisionRequest(request); err != nil {
+			return modelprovider.DecisionResult{}, err
+		}
+		sizes = append(sizes, len(request.Groups))
+		answers := make(map[string]modelprovider.DecisionAnswer)
+		for _, group := range request.Groups {
+			input := group.Input.(assignmentRequest)
+			for _, question := range group.Questions {
+				probability := 0.9
+				if strings.HasSuffix(question.Name, "uncovered") && input.Text != "Evidence 3" {
+					probability = 0.1
+				}
+				answers[question.Name] = modelprovider.DecisionAnswer{Type: modelprovider.DecisionPredicate, Probability: &probability}
+			}
+		}
+		return modelprovider.DecisionResult{Answers: answers}, nil
+	})
+	var invalid atomic.Bool
+	var calls atomic.Int32
+	generate := testTransport(func(_ context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+		calls.Add(1)
+		if invalid.Load() {
+			return modelprovider.StructuredResult{Content: `{}`}, nil
+		}
+		var input assignmentRequest
+		if err := json.Unmarshal([]byte(request.Messages[1].Content), &input); err != nil {
+			return modelprovider.StructuredResult{}, err
+		}
+		body, err := json.Marshal(modelAnswer{RequestID: input.RequestID, Status: "assigned", Matches: []modelMatch{},
+			Proposals: []assignment.Proposal{{Label: "Evidence notes", Description: "Recorded notes", Quote: input.Text}}})
+		return modelprovider.StructuredResult{Content: string(body)}, err
+	})
+	service := NewAssignmentService(testCatalog{target}, testConfig(true), generate, decisions, assessor.DefaultSemanticAssessmentLimits(), "fixture", nil)
+	scope := assignment.Scope{TeamID: uuid.NewString(), SpaceID: uuid.NewString(), Generation: 1, OperationID: uuid.NewString()}
+	inputs := make([]assignment.Slice, 21)
+	for i := range inputs {
+		inputs[i] = assignment.Slice{Index: i, EvidenceID: uuid.NewString(), Text: fmt.Sprintf("Evidence %d", i)}
+	}
+	settings := &domain.DecisionRuntimeConfig{Effective: domain.DecisionTasks{TopicAssignment: true}}
+	outcomes, err := service.Prepare(t.Context(), scope, inputs, settings)
+	require.NoError(t, err)
+	require.Equal(t, []int{20, 1}, sizes)
+	require.EqualValues(t, 1, calls.Load())
+	require.Len(t, outcomes, len(inputs))
+	for i, outcome := range outcomes {
+		require.Equal(t, i, outcome.Index)
+		require.Equal(t, []assignment.Match{{ID: target.ID, Version: 1}}, outcome.Matches)
+	}
+	require.Len(t, outcomes[3].Proposals, 1)
+	invalid.Store(true)
+	outcomes, err = service.Prepare(t.Context(), scope, inputs, settings)
+	require.Error(t, err)
+	require.Nil(t, outcomes)
+}
+
+func TestAssignmentWithoutCandidatesStillUsesDecisionGate(t *testing.T) {
+	var decisions, generations int
+	provider := testDecisions(func(_ context.Context, request modelprovider.DecisionRequest) (modelprovider.DecisionResult, error) {
+		decisions++
+		require.Len(t, request.Groups[0].Questions, 1)
+		probability := 0.1
+		return modelprovider.DecisionResult{Answers: map[string]modelprovider.DecisionAnswer{
+			"uncovered": {Type: modelprovider.DecisionPredicate, Probability: &probability},
+		}}, nil
+	})
+	generate := testTransport(func(context.Context, modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+		generations++
+		return modelprovider.StructuredResult{}, errors.New("unexpected generation")
+	})
+	service := NewAssignmentService(testCatalog{}, testConfig(true), generate, provider, assessor.DefaultSemanticAssessmentLimits(), "fixture", nil)
+	scope := assignment.Scope{TeamID: uuid.NewString(), SpaceID: uuid.NewString(), Generation: 1, OperationID: uuid.NewString()}
+	settings := &domain.DecisionRuntimeConfig{Effective: domain.DecisionTasks{TopicAssignment: true}}
+	outcomes, err := service.Prepare(t.Context(), scope, []assignment.Slice{{Text: "Evidence"}}, settings)
+	require.NoError(t, err)
+	require.Len(t, outcomes, 1)
+	require.Empty(t, outcomes[0].Matches)
+	require.Equal(t, 1, decisions)
+	require.Zero(t, generations)
 }

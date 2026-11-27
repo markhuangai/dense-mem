@@ -115,6 +115,16 @@ func (r *Store) EnsureActiveSearchContract(
 			return nil, err
 		}
 		result.CreatedPhysicalIndex = result.CreatedPhysicalIndex || created
+		generation := searchIndexGenerationDefinition{
+			EmbeddingContractID: active.EmbeddingContractID,
+			EmbeddingDimensions: active.EmbeddingDimensions,
+			AnnStrategy:         active.IndexStrategy,
+			OperatorClass:       active.OperatorClass,
+			PhysicalIndexName:   strings.Replace(derivedSearchIndexName(active.EmbeddingContractID, active.EmbeddingDimensions, active.IndexStrategy), "search_", "topic_", 1),
+		}
+		if err := r.createVectorPhysicalIndex(ctx, generation, true); err != nil {
+			return nil, err
+		}
 	}
 	result.Contract = active
 	return result, nil
@@ -530,6 +540,10 @@ func (r *Store) createSearchPhysicalIndex(
 	ctx context.Context,
 	generation searchIndexGenerationDefinition,
 ) error {
+	return r.createVectorPhysicalIndex(ctx, generation, false)
+}
+
+func (r *Store) createVectorPhysicalIndex(ctx context.Context, generation searchIndexGenerationDefinition, topics bool) error {
 	if generation.AnnStrategy == string(domain.VectorIndexExact) {
 		return nil
 	}
@@ -587,25 +601,34 @@ func (r *Store) createSearchPhysicalIndex(
 	`, indexName).Scan(&existingValid)
 	if err == nil {
 		if !existingValid {
-			return fmt.Errorf("%w: physical index %q is invalid", ErrSearchContractMismatch, indexName)
+			if !topics {
+				return fmt.Errorf("%w: physical index %q is invalid", ErrSearchContractMismatch, indexName)
+			}
+			if _, err := conn.ExecContext(ctx, "DROP INDEX CONCURRENTLY "+pq.QuoteIdentifier(indexName)); err != nil {
+				return fmt.Errorf("search bootstrap: remove invalid Topic index %q: %w", indexName, err)
+			}
+		} else {
+			return nil
 		}
-		return nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	} else if !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("search bootstrap: check physical index %q: %w", indexName, err)
+	}
+	table, predicate := "search_documents", "AND search_state = 'current'"
+	if topics {
+		table, predicate = "topic_embeddings", ""
 	}
 	ddl := fmt.Sprintf(`
 		CREATE INDEX CONCURRENTLY IF NOT EXISTS %s
-		    ON search_documents
+		    ON %s
 		    USING hnsw ((%s) %s)
 		    WITH (m = %d, ef_construction = %d)
 		    WHERE embedding_contract_id = '%s'::uuid
 		      AND embedding_dimensions = %d
-		      AND search_state = 'current'
+		      %s
 		      AND embedding IS NOT NULL
-	`, pq.QuoteIdentifier(indexName), expression, generation.OperatorClass,
+	`, pq.QuoteIdentifier(indexName), table, expression, generation.OperatorClass,
 		searchDefaultHNSWM, searchDefaultHNSWEFConstruction,
-		generation.EmbeddingContractID, generation.EmbeddingDimensions)
+		generation.EmbeddingContractID, generation.EmbeddingDimensions, predicate)
 	if _, err := conn.ExecContext(ctx, ddl); err != nil {
 		return fmt.Errorf("search bootstrap: create physical index %q: %w", indexName, err)
 	}

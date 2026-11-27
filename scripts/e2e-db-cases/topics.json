@@ -3,6 +3,69 @@
   "capability": "topics",
   "cases": [
     {
+      "id": "repository/TestTopicMaintenanceFiveStageInterleaving",
+      "package": "./internal/topics/postgres",
+      "run": "^TestTopicMaintenanceFiveStageInterleaving$",
+      "phase": "precheck",
+      "source": "internal/topics/postgres/scheduler_interleaving_integration_test.go"
+    },
+    {
+      "id": "repository/TestTopicHybridSearchIndexTiersAndIsolation",
+      "package": "./internal/topics/postgres",
+      "run": "^TestTopicHybridSearchIndexTiersAndIsolation$",
+      "phase": "precheck",
+      "source": "internal/topics/postgres/topic_embeddings_integration_test.go"
+    },
+    {
+      "id": "repository/TestTopicMaintenancePartialAssignmentCommitAndRetry",
+      "package": "./internal/topics/postgres",
+      "run": "^TestTopicMaintenancePartialAssignmentCommitAndRetry$",
+      "phase": "precheck",
+      "source": "internal/topics/postgres/maintenance_service_integration_test.go"
+    },
+    {
+      "id": "repository/TestTopicConsolidationConcurrentPublishers",
+      "package": "./internal/topics/postgres",
+      "run": "^TestTopicConsolidationConcurrentPublishers$",
+      "phase": "precheck",
+      "source": "internal/topics/postgres/consolidation_integration_test.go"
+    },
+    {
+      "id": "repository/TestTopicMaintenanceReassessmentReplayAndIsolation",
+      "package": "./internal/topics/postgres",
+      "run": "^TestTopicMaintenanceReassessmentReplayAndIsolation$",
+      "phase": "precheck",
+      "source": "internal/topics/postgres/maintenance_invalidation_integration_test.go"
+    },
+    {
+      "id": "repository/TestTopicConsolidationOverBoundRollsBack",
+      "package": "./internal/topics/postgres",
+      "run": "^TestTopicConsolidationOverBoundRollsBack$",
+      "phase": "precheck",
+      "source": "internal/topics/postgres/consolidation_integration_test.go"
+    },
+    {
+      "id": "repository/TestTopicConsolidationPreservesMembershipsAndHierarchy",
+      "package": "./internal/topics/postgres",
+      "run": "^TestTopicConsolidationPreservesMembershipsAndHierarchy$",
+      "phase": "precheck",
+      "source": "internal/topics/postgres/consolidation_integration_test.go"
+    },
+    {
+      "id": "repository/TestCommunityBatchEligibilityAndPerItemFences",
+      "package": "./internal/topics/postgres",
+      "run": "^TestCommunityBatchEligibilityAndPerItemFences$",
+      "phase": "precheck",
+      "source": "internal/topics/postgres/community_integration_test.go"
+    },
+    {
+      "id": "repository/TestTopicEmbeddingBackfillRevisionAndScopeFences",
+      "package": "./internal/topics/postgres",
+      "run": "^TestTopicEmbeddingBackfillRevisionAndScopeFences$",
+      "phase": "precheck",
+      "source": "internal/topics/postgres/topic_embeddings_integration_test.go"
+    },
+    {
       "id": "repository/TestConcurrentTopicProposalsReuseScopedName",
       "package": "./internal/topics/postgres",
       "run": "^TestConcurrentTopicProposalsReuseScopedName$",

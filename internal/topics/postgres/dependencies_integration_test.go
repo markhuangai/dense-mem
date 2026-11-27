@@ -31,7 +31,7 @@ func TestOntologyTransitiveSourceFreshness(t *testing.T) {
 	require.NoError(t, err)
 	view, err = f.store.GetRecord(context.Background(), f.team, assignment.ID, 0)
 	require.NoError(t, err)
-	require.False(t, view.Current)
+	require.True(t, view.Current, "an accepted assignment stays current while its Topic is active")
 	assignment.ID = uuid.NewString()
 	_, err = f.store.PublishAutomatic(context.Background(), f.team, testPublication("stale-definition", result.Revision, topiccontract.Change{Record: assignment}))
 	require.ErrorIs(t, err, topiccontract.ErrSourceStale)

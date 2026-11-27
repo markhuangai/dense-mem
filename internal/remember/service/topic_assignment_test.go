@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/uuid"
@@ -22,7 +23,7 @@ type topicIntakeFixture struct {
 	readError    error
 	quote        string
 	contextLimit int64
-	dispatched   int
+	dispatched   atomic.Int32
 }
 
 func (f *topicIntakeFixture) TopicMaintenanceRuntimeConfig(context.Context) (domain.TopicMaintenanceConfig, error) {
@@ -40,7 +41,7 @@ func (f *topicIntakeFixture) ReadAssignmentCandidates(_ context.Context, scope a
 }
 
 func (f *topicIntakeFixture) Complete(_ context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
-	f.dispatched++
+	f.dispatched.Add(1)
 	var input struct {
 		RequestID string `json:"request_id"`
 	}
@@ -63,10 +64,10 @@ func TestRememberTopicBudgetFailureGuidesOperator(t *testing.T) {
 		TeamID: uuid.NewString(), SpaceID: uuid.NewString(), SpaceGeneration: 1, IngestID: uuid.NewString(),
 		Evidence: []knowledge.EvidenceInput{{Content: "PostgreSQL backups record the last known restore point."}},
 	}
-	err := processor.prepareTopics(t.Context(), domain.MemorySpaceTeamShared, &input, nil, nil)
+	err := processor.prepareTopics(t.Context(), domain.MemorySpaceTeamShared, &input, nil, nil, nil, nil, nil)
 	require.ErrorIs(t, err, ErrRememberInputBudgetExceeded)
 	require.Empty(t, input.TopicAssignments)
-	require.Zero(t, fixture.dispatched)
+	require.Zero(t, fixture.dispatched.Load())
 	code := rememberFailureCode("assessment", err)
 	reason, details := RememberFailureDetails(err, "assessment")
 	failure := TerminalStatusErrorWithDetails(TerminalErrorCode(code), reason, details)
@@ -88,6 +89,7 @@ func TestRememberTopicPreparationUsesCanonicalEvidenceAndFailsAtomically(t *test
 		{name: "shared", quote: "recovery drills", target: domain.MemorySpaceTeamShared},
 		{name: "private", target: domain.MemorySpacePrivate},
 		{name: "stale reuse", target: domain.MemorySpaceTeamShared, missingCanonical: true, want: ErrRememberStaleInput},
+		{name: "stale candidate", target: domain.MemorySpaceTeamShared, readError: assignment.ErrStale, want: ErrRememberStaleInput},
 		{name: "catalog failure", target: domain.MemorySpaceTeamShared, readError: storageFailure, want: ErrRememberDatabaseFailure},
 		{name: "ungrounded generation", quote: "submitted paraphrase", target: domain.MemorySpaceTeamShared, want: ErrRememberProviderResponseInvalid},
 	} {
@@ -108,7 +110,7 @@ func TestRememberTopicPreparationUsesCanonicalEvidenceAndFailsAtomically(t *test
 			if tc.missingCanonical {
 				groups = nil
 			}
-			err := processor.prepareTopics(t.Context(), tc.target, &input, groups, nil)
+			err := processor.prepareTopics(t.Context(), tc.target, &input, groups, nil, nil, nil, nil)
 			if tc.want != nil {
 				require.ErrorIs(t, err, tc.want)
 				require.Empty(t, input.TopicAssignments)
@@ -120,7 +122,7 @@ func TestRememberTopicPreparationUsesCanonicalEvidenceAndFailsAtomically(t *test
 				require.Empty(t, input.TopicAssignments)
 				return
 			}
-			require.Equal(t, []assignment.Slice{{Index: 0, Text: canonical}}, fixture.slices)
+			require.Equal(t, []assignment.Slice{{Index: 0, Text: canonical, CanonicalEvidenceID: id}}, fixture.slices)
 			require.Equal(t, []assignment.Scope{{TeamID: input.TeamID, SpaceID: input.SpaceID, Generation: 2, OperationID: input.IngestID}}, fixture.scopes)
 			if tc.want == nil {
 				require.Len(t, input.TopicAssignments, 1)
@@ -130,4 +132,43 @@ func TestRememberTopicPreparationUsesCanonicalEvidenceAndFailsAtomically(t *test
 			}
 		})
 	}
+}
+
+func TestRememberTopicPreparationReusesOnlyCanonicalEmbeddings(t *testing.T) {
+	fixture := &topicIntakeFixture{quote: "evidence"}
+	service := topics.NewAssignmentService(fixture, fixture, fixture, nil, assessor.DefaultSemanticAssessmentLimits(), "fixture", nil)
+	processor := &rememberSynchronousProcessor{topicAssignment: service}
+	semanticID, exactID := uuid.NewString(), uuid.NewString()
+	input := knowledge.SynchronousRememberCommitInput{
+		TeamID: uuid.NewString(), SpaceID: uuid.NewString(), SpaceGeneration: 1, IngestID: uuid.NewString(),
+		Evidence: []knowledge.EvidenceInput{
+			{Content: "New evidence"},
+			{Content: "Submitted evidence paraphrase"},
+			{Content: "Exact evidence"},
+			{Content: "Quarantined evidence", InitialEvent: &knowledge.SecurityEventDraft{Decision: "quarantine"}},
+		},
+		DuplicateResolutions: []knowledge.RememberDuplicateResolution{
+			{EvidenceIndex: 1, CandidateFragmentID: semanticID, Disposition: "reuse"},
+			{EvidenceIndex: 2, CandidateFragmentID: exactID, Disposition: "reuse", Exact: true},
+		},
+	}
+	candidates := []knowledge.RememberDuplicateCandidateGroup{{Candidates: []knowledge.RememberDuplicateCandidate{{FragmentID: semanticID, Content: "Canonical evidence"}}}}
+	documents := []knowledge.SearchDocumentForEmbedding{
+		{DocumentText: "New evidence", DocumentHash: "new"},
+		{DocumentText: "Submitted evidence paraphrase", DocumentHash: "paraphrase"},
+	}
+	active := &knowledge.InlineEmbeddingPlan{EmbeddingContractID: "contract", SearchIndexGenerationID: "generation", IndexGeneration: 1}
+	embeddings := []knowledge.InlineEmbeddingResult{
+		{DocumentHash: "new", Embedding: []float32{1, 0}, EmbeddingContractID: "contract", SearchIndexGenerationID: "generation", IndexGeneration: 1},
+		{DocumentHash: "paraphrase", Embedding: []float32{0, 1}, EmbeddingContractID: "contract", SearchIndexGenerationID: "generation", IndexGeneration: 1},
+	}
+	require.NoError(t, processor.prepareTopics(t.Context(), domain.MemorySpaceTeamShared, &input, candidates, documents, embeddings, active, nil))
+	require.Len(t, fixture.slices, 3)
+	require.Equal(t, []float32{1, 0}, fixture.slices[0].Embedding)
+	require.Equal(t, "contract", fixture.slices[0].EmbeddingContractID)
+	require.Equal(t, "Canonical evidence", fixture.slices[1].Text)
+	require.Equal(t, semanticID, fixture.slices[1].CanonicalEvidenceID)
+	require.Empty(t, fixture.slices[1].Embedding)
+	require.Equal(t, exactID, fixture.slices[2].CanonicalEvidenceID)
+	require.Empty(t, fixture.slices[2].Embedding)
 }

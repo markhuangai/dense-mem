@@ -59,6 +59,9 @@ func (s *Service) AssessMaintenanceEquivalence(ctx context.Context, claim contra
 	assessor := *s
 	assessor.provider = s.provider.ForEquivalence()
 	for _, neighborhood := range neighborhoods {
+		if neighborhood.Failure != nil {
+			return contract.OrganizationResult{}, neighborhood.Failure
+		}
 		input := contract.OrganizationInput{
 			OperationKey: "equivalence:" + claim.ID + ":" + neighborhood.Seed.ID,
 			Sources:      neighborhood.Sources, EquivalenceOnly: true,

@@ -146,8 +146,8 @@ func TestOntologyGroupingOverridesPreserveAssignmentFreshness(t *testing.T) {
 	require.NoError(t, err)
 	view, err := f.store.GetRecord(context.Background(), f.team, assignment.ID, 0)
 	require.NoError(t, err)
-	require.False(t, view.Current)
-	require.Equal(t, "dependency_changed", view.StaleReason)
+	require.True(t, view.Current)
+	require.Equal(t, previous.Record, view.Record, "a Topic revision must retain the accepted assignment")
 	require.Equal(t, before, f.canonicalSnapshot(t))
 }
 

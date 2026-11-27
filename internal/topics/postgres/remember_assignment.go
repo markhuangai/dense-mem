@@ -28,11 +28,16 @@ func (s *Store) ReadAssignmentCandidates(ctx context.Context, input assignment.S
 			forced = changed
 			candidates.NeedsRepair = len(changed) > 0 || len(retired) > 0
 		}
-		source := organization.SourceSnapshot{State: map[string]string{"content": slice.Text}}
-		views, err := s.organizationVocabulary(tx, fence, []organization.SourceSnapshot{source}, forced)
+		views, stats, err := s.assignmentCandidates(tx, fence, slice, forced)
 		if err != nil {
 			return err
 		}
+		candidates.VectorCount = stats.VectorCount
+		candidates.FullTextCount = stats.FullTextCount
+		candidates.UnembeddedTopicCount = stats.UnembeddedTopicCount
+		candidates.ForcedRepairCount = len(forced)
+		candidates.EmbeddingContractID = stats.EmbeddingContractID
+		candidates.VectorUnavailable = stats.VectorUnavailable
 		for _, v := range views {
 			d := v.Definition
 			candidates.Topics = append(candidates.Topics, assignment.Topic{ID: v.ID, Version: v.Version, Label: d.Label, Description: d.Description, Aliases: append([]string{d.Key}, d.Aliases...)})
@@ -50,7 +55,7 @@ func touchedAssignmentTopics(tx *gorm.DB, fence scope, evidenceID, fingerprint s
 		JOIN topics AS target USING(team_id,shared_space_id,space_generation,topic_id)
 		WHERE membership.team_id=?::uuid AND membership.shared_space_id=?::uuid AND membership.space_generation=?
 		  AND membership.evidence_id=?::uuid AND NOT membership.retired
-		  AND (target.retired OR membership.topic_version<>target.definition_version OR membership.source_fingerprint<>?)
+		  AND (target.retired OR membership.topic_version<target.material_definition_version OR membership.source_fingerprint<>?)
 		ORDER BY target.topic_id LIMIT ?`, fence.TeamID, fence.SpaceID, fence.Generation, evidenceID, fingerprint, organization.MaxDependencyRecords+1).Rows()
 	if err != nil {
 		return nil, nil, err
@@ -96,16 +101,35 @@ func (s *Store) PublishAssignmentsTx(ctx context.Context, tx *gorm.DB, input ass
 	}
 	var ids []string
 	var proposalNames []string
+	var topicIDs []string
 	for _, item := range items {
 		if item.Outcome.Unchanged {
 			continue
 		}
 		ids = append(ids, item.EvidenceID)
+		for _, match := range item.Outcome.Matches {
+			topicIDs = append(topicIDs, match.ID)
+		}
+		for _, reviewed := range item.Outcome.Reviewed {
+			topicIDs = append(topicIDs, reviewed.ID)
+		}
 		for _, proposal := range item.Outcome.Proposals {
-			proposalNames = append(proposalNames, organization.NormalizeName(proposal.Label))
+			name := organization.NormalizeName(proposal.Label)
+			proposalNames = append(proposalNames, name)
+			topicIDs = append(topicIDs, organization.OrganizationRecordID(fence.TeamID, organization.Topic, name))
 		}
 	}
 	if err := lockTopicNames(tx, fence, proposalNames); err != nil {
+		return err
+	}
+	var locked []string
+	if err := tx.Raw(`SELECT target.topic_id::text FROM topics AS target
+		JOIN topic_record_heads AS head ON (head.team_id,head.shared_space_id,head.space_generation,head.record_id)=
+			(target.team_id,target.shared_space_id,target.space_generation,target.topic_id)
+		WHERE target.team_id=?::uuid AND target.shared_space_id=?::uuid AND target.space_generation=?
+		  AND (target.topic_id=ANY(?::uuid[]) OR (NOT target.retired AND head.names && ?::text[]))
+		ORDER BY target.topic_id FOR SHARE OF target`,
+		fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(topicIDs), pq.Array(proposalNames)).Scan(&locked).Error; err != nil {
 		return err
 	}
 	sort.Strings(ids)
@@ -198,15 +222,20 @@ func (s *Store) publishAssignment(tx *gorm.DB, fence scope, operationID string, 
 		return err
 	}
 	var retiredTopics map[string]bool
+	repairTopics := map[string]bool{}
 	if len(remaining) > 0 && item.ExpectedFingerprint != "" {
-		_, retiredTopics, err = touchedAssignmentTopics(tx, fence, handle.ID, fingerprint)
+		var changedTopics []string
+		changedTopics, retiredTopics, err = touchedAssignmentTopics(tx, fence, handle.ID, fingerprint)
 		if err != nil {
 			return err
+		}
+		for _, id := range changedTopics {
+			repairTopics[id] = true
 		}
 	}
 	for _, view := range views {
 		topicID := view.Assignment.DefinitionID
-		if view.Current {
+		if view.Current && !repairTopics[topicID] {
 			currentIDs[topicID] = true
 		} else if (reviewed[topicID] || retiredTopics[topicID]) && item.ExpectedFingerprint != "" {
 			record := view.Record
@@ -224,7 +253,7 @@ func (s *Store) publishAssignment(tx *gorm.DB, fence scope, operationID string, 
 		if err != nil {
 			return err
 		}
-		if _, err = s.writePublication(tx, fence, publication, "automatic", "", hash, "", false); err != nil {
+		if _, err = s.writePublication(tx, fence, publication, "automatic", "", hash, "", false, nil); err != nil {
 			return err
 		}
 	}
@@ -288,16 +317,6 @@ func (s *Store) assignmentDefinitions(tx *gorm.DB, fence scope, outcome assignme
 	}
 	if len(ids) == 0 {
 		return nil, nil, nil
-	}
-	var locked []string
-	if err := tx.Raw(`SELECT target.topic_id::text FROM topics AS target
-		JOIN topic_record_heads AS head ON (head.team_id,head.shared_space_id,head.space_generation,head.record_id)=
-			(target.team_id,target.shared_space_id,target.space_generation,target.topic_id)
-		WHERE target.team_id=?::uuid AND target.shared_space_id=?::uuid AND target.space_generation=?
-		  AND (target.topic_id=ANY(?::uuid[]) OR (NOT target.retired AND head.names && ?::text[]))
-		ORDER BY target.topic_id FOR SHARE OF target`,
-		fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(ids), pq.Array(names)).Scan(&locked).Error; err != nil {
-		return nil, nil, err
 	}
 	heads, err := loadHeads(tx, fence, ids, names)
 	if err != nil {

@@ -142,9 +142,6 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 		input.AssessorSecurityRejected = true
 		return fail(AssessmentSecurityRejectionFailure(prepared), "assessment")
 	}
-	if err := p.prepareTopics(ctx, input.SpaceKind, &commitInput, snapshot.DuplicateCandidates, decisionSnapshot); err != nil {
-		return fail(err, "assessment")
-	}
 	embeddingStarted = time.Now()
 	embeddingCtx, embeddingCancel := ContextForPhase(ctx, RememberPhaseEmbedding)
 	embeddingCtx = requestctx.WithProgressOperation(embeddingCtx, "embedding")
@@ -168,6 +165,10 @@ func (p *rememberSynchronousProcessor) prepareRemember(ctx context.Context, inpu
 	}
 	inlineEmbeddings := inlineEmbeddingResultsFromDocuments(plannedEmbeddings, plan)
 	inlineEmbeddings = mergeInlineEmbeddingResults(duplicateEmbeddings, inlineEmbeddings)
+	documents := append(append([]repository.SearchDocumentForEmbedding{}, duplicatePlan.Documents...), plan.Documents...)
+	if err := p.prepareTopics(ctx, input.SpaceKind, &commitInput, snapshot.DuplicateCandidates, documents, inlineEmbeddings, plan, decisionSnapshot); err != nil {
+		return fail(err, "assessment")
+	}
 	return &preparedRemember{Commit: commitInput, Embeddings: inlineEmbeddings, AssessorTurns: assessorTurns}, nil
 }
 

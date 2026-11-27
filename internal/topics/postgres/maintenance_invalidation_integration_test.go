@@ -9,9 +9,12 @@ import (
 
 	"github.com/google/uuid"
 	access "github.com/markhuangai/dense-mem/internal/access/postgres"
+	auditapp "github.com/markhuangai/dense-mem/internal/audit"
+	auditpostgres "github.com/markhuangai/dense-mem/internal/audit/postgres"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
+	"github.com/markhuangai/dense-mem/internal/topics/assignment"
 	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -163,6 +166,82 @@ func TestOntologyMaintenanceInvalidationFamilies(t *testing.T) {
 			require.Equal(t, priorCalls, calls(), "discovery must not dispatch assessments")
 			require.NoError(t, f.store.ReleaseMaintenanceTurn(ctx, *turn))
 		})
+	}
+}
+
+func TestTopicMaintenanceReassessmentReplayAndIsolation(t *testing.T) {
+	f := newOrganizationFixture(t)
+	ctx := context.Background()
+	first := f.organizationEvidence(t, 0, "A foreground uncategorized note.", nil)
+	second := f.organizationEvidence(t, 1, "Another uncategorized note.", nil)
+	assigned := f.organizationEvidence(t, 0, "Already categorized note.", nil)
+	other := maintenanceOtherTeam(t, f)
+	foreign := other.organizationEvidence(t, 0, "Other team's note.", nil)
+	private := &domain.Credential{ID: uuid.New(), TeamID: uuid.MustParse(f.team), Name: "private reassessment", KeyHash: "synthetic-" + uuid.NewString(), KeyPrefix: uuid.NewString()[:24], KeySuffix: "test", Scopes: []string{"read", "write"}}
+	require.NoError(t, access.NewCredentialRepository(f.app, f.rls, nil).CreateCredential(ctx, private))
+	privateCtx := requestctx.WithAllowedSpaces(ctx, []domain.MemorySpaceAccess{{ID: private.MemorySpaceID, Kind: domain.MemorySpacePrivate, Generation: private.MemorySpaceGeneration}})
+	privateResult, err := f.knowledge.CreateIngestForTest(privateCtx, knowledge.CreateIngestInput{TeamID: f.team, OwnerProfileID: private.ID.String(), SpaceID: private.MemorySpaceID.String(), SpaceGeneration: private.MemorySpaceGeneration, Evidence: []knowledge.EvidenceInput{{Content: "Private note."}}})
+	require.NoError(t, err)
+	definition := testTopic("categorized")
+	revalidationPublish(t, f, topic.Change{Record: definition})
+	scope := assignment.Scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation, OperationID: uuid.NewString()}
+	items := []assignment.Publication{
+		{EvidenceID: first.ID, Outcome: assignment.Outcome{Text: "A foreground uncategorized note.", Method: "decision", InputHash: testHash("first")}},
+		{EvidenceID: second.ID, Outcome: assignment.Outcome{Text: "Another uncategorized note.", Method: "decision", InputHash: testHash("second")}},
+		{EvidenceID: assigned.ID, Outcome: assignment.Outcome{Text: "Already categorized note.", Method: "decision", InputHash: testHash("assigned"), Matches: []assignment.Match{{ID: definition.ID, Version: 1}}}},
+	}
+	require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error { return f.store.PublishAssignmentsTx(ctx, tx, scope, items) }))
+	config := maintenanceSettings(t, f)
+	service, _ := maintenanceServiceFixture(t, f, config, nil, auditapp.New(auditpostgres.NewStore(f.app, f.rls)))
+	for _, rejected := range []string{assigned.ID, foreign.ID, privateResult.Evidence[0].FragmentID, uuid.NewString()} {
+		command := domain.TopicMaintenanceCommand{Action: "reassess", OperationKey: uuid.NewString(), TeamID: f.team, EvidenceIDs: []string{first.ID, rejected}}
+		_, err := service.Command(ctx, command, "192.0.2.30", "reassess-test")
+		require.ErrorIs(t, err, topic.ErrInvalid)
+		var rows int
+		require.NoError(t, f.admin.Raw(`SELECT count(*) FROM topic_maintenance_sources WHERE team_id=?::uuid AND source_id=?`, f.team, first.ID).Row().Scan(&rows))
+		require.Zero(t, rows, "a rejected selection must not queue its valid member")
+		require.NoError(t, f.admin.Raw(`SELECT count(*) FROM topic_maintenance_runs WHERE operation_key=?`, command.OperationKey).Row().Scan(&rows))
+		require.Zero(t, rows, "a rejected selection must not retain a run")
+	}
+	command := domain.TopicMaintenanceCommand{Action: "reassess", OperationKey: uuid.NewString(), TeamID: f.team, EvidenceIDs: []string{second.ID, first.ID}}
+	run, err := service.Command(ctx, command, "192.0.2.30", "reassess-test")
+	require.NoError(t, err)
+	replay, err := service.Command(ctx, command, "192.0.2.30", "reassess-test")
+	require.NoError(t, err)
+	require.Equal(t, run.ID, replay.ID)
+	var audits int
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM audit_log WHERE operation='TOPIC_MAINTENANCE_COMMAND' AND entity_id=? AND correlation_id='reassess-test'`, run.ID).Row().Scan(&audits))
+	require.Equal(t, 2, audits)
+	turn, err := f.store.ClaimMaintenanceTurn(ctx, run.WindowID, time.Now(), time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, turn)
+	require.Equal(t, run.ID, turn.RunID)
+	_, err = f.store.DiscoverMaintenance(ctx, *turn, topic.MaintenancePageSize)
+	require.NoError(t, err)
+	claim, err := f.store.ClaimMaintenanceBatch(ctx, *turn, run.WindowID, time.Now())
+	require.NoError(t, err)
+	require.NotNil(t, claim)
+	require.ElementsMatch(t, []topic.SourceHandle{first, second}, claim.Sources)
+	result := topic.OrganizationResult{Current: true, IsolatedOutcomes: true}
+	for _, source := range claim.Sources {
+		require.Empty(t, claim.PriorAssignmentHashes[topic.SourceKey(source)])
+		snapshot, err := f.store.ReadSources(ctx, f.team, []topic.SourceHandle{source})
+		require.NoError(t, err)
+		fingerprint, err := topic.SourceFingerprint(snapshot[0])
+		require.NoError(t, err)
+		outcome, err := f.store.CommitMaintenanceItemAssignment(topic.WithMaintenanceClaim(ctx, *claim), *claim, assignment.Publication{EvidenceID: source.ID, ExpectedFingerprint: fingerprint,
+			Outcome: assignment.Outcome{Text: topic.SourceDisplayText(snapshot[0]), Method: "decision", InputHash: testHash("reassessed:" + source.ID)}})
+		require.NoError(t, err)
+		require.Equal(t, "uncategorized", outcome.Status)
+		result.Outcomes = append(result.Outcomes, outcome)
+	}
+	require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, result, "", time.Now()))
+	for _, source := range claim.Sources {
+		var status string
+		var forced bool
+		require.NoError(t, f.admin.Raw(`SELECT status,force_reassessment FROM topic_maintenance_sources WHERE team_id=?::uuid AND source_id=?`, f.team, source.ID).Row().Scan(&status, &forced))
+		require.Equal(t, "uncategorized", status)
+		require.False(t, forced)
 	}
 }
 

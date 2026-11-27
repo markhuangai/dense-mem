@@ -15,7 +15,7 @@ export function handleDecisionFixture(request, response, payload, topicAssignmen
   const state = vendor === "openai" ? JSON.parse(payload.input) : payload.state;
   const questions = vendor === "openai" ? payload.questions : Object.entries(payload.questions).map(([name, question]) => ({ ...question, name }));
   exchanges.push({ vendor, mode, question_count: questions.length, names: questions.map((question) => question.name), types: questions.map((question) => question.type) });
-  if (mode === "community-partial-outage" && state.community?.topic?.name === "memory-storage" && questions.some((question) => question.name === "parent")) {
+  if (mode === "community-partial-outage" && Object.values(state).some((group) => group?.topic?.name === "memory-storage") && questions.some((question) => /^parent(?:_\d+)?$/.test(question.name))) {
     send(response, 529, { error: { message: "community placement fixture outage", code: "fixture_community_unavailable" } });
     return true;
   }
@@ -33,20 +33,33 @@ export function handleDecisionFixture(request, response, payload, topicAssignmen
         probability = normalize(group.submitted_content) === normalize(group.authorized_candidates[Number(candidateIndex)]?.content || "") ? 0.999 : 0.001;
         if (mode === "uncertain") probability = 0.5;
       }
-      if (assignment && mode !== "uncertain") {
-        if (question.name === "uncovered") probability = mode === "topic-uncategorized" ? 0.20 : mode === "topic-boundary" ? (assignment.proposals.length ? 0.85 : 0.20) : (assignment.proposals.length ? 0.999 : 0.001);
-        if (question.name.startsWith("match_")) {
-          const candidate = state.assignment.topics[Number(question.name.slice(6))];
-          const matches = assignment.matches.some((match) => match.id === candidate.id);
+      const assignmentQuestion = /^(?:item_(\d+)_)?(uncovered|match_(\d+))$/.exec(question.name);
+      const assignmentInput = assignmentQuestion?.[1] === undefined ? state.assignment : state[`assignment_${assignmentQuestion[1]}`];
+      const assignmentResult = assignmentInput ? topicAssignment(assignmentInput) : assignment;
+      if (assignmentResult && assignmentQuestion && mode !== "uncertain") {
+        if (assignmentQuestion[2] === "uncovered") probability = mode === "topic-uncategorized" ? 0.20 : mode === "topic-boundary" ? (assignmentResult.proposals.length ? 0.85 : 0.20) : (assignmentResult.proposals.length ? 0.999 : 0.001);
+        if (assignmentQuestion[3] !== undefined) {
+          const candidate = assignmentInput.topics[Number(assignmentQuestion[3])];
+          const matches = assignmentResult.matches.some((match) => match.id === candidate.id);
           probability = mode === "topic-uncategorized" ? 0.20 : mode === "topic-boundary" ? (matches ? 0.85 : 0.20) : (matches ? 0.999 : 0.001);
         }
+      }
+      const equivalence = /^e(\d+)_(.+)$/.exec(question.name);
+      if (equivalence) {
+        const group = state[`evidence_${equivalence[1]}`];
+        const pair = group?.pairs?.find((item) => item.ref === equivalence[2]);
+        const texts = (group?.items || []).filter((item) => item.ref === pair?.left_ref || item.ref === pair?.right_ref).map((item) => item.text);
+        const equivalent = new Set(["Atlas stores PostgreSQL data.", "Atlas uses PostgreSQL for data storage."]);
+        probability = texts.length === 2 && texts.every((text) => equivalent.has(text)) ? 0.999 : 0.001;
       }
       if (question.name === "sufficiently_supported") probability = mode === "uncertain" ? 0.5 : 0.999;
       return { ...base, [vendor === "openai" ? "probability" : "noul"]: probability };
     }
     if (question.type === "choice") {
       const choices = vendor === "openai" ? question.choices : Object.entries(question.criteria).map(([value, description]) => ({ value, description }));
-      const selected = question.name === "parent" && state.community ? communityParent(state.community) || "standalone" : choices[0].value;
+      const communityQuestion = /^parent(?:_(\d+))?$/.exec(question.name);
+      const community = communityQuestion?.[1] === undefined ? state.community : state[`community_${communityQuestion[1]}`];
+      const selected = communityQuestion && community ? communityParent(community) || "standalone" : choices[0].value;
       const probabilities = choices.map((choice) => ({ value: choice.value, probability: choice.value === selected ? 1 : 0 }));
       return { ...base, choice: selected, confidence: 1, probabilities: vendor === "openai" ? probabilities : Object.fromEntries(probabilities.map((item) => [item.value, item.probability])) };
     }

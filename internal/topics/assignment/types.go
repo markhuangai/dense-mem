@@ -17,16 +17,26 @@ type Scope struct {
 }
 
 type Slice struct {
-	EvidenceID        string
-	SourceFingerprint string
-	PriorInputHash    string
-	Index             int
-	Text              string
+	EvidenceID              string
+	CanonicalEvidenceID     string
+	SourceFingerprint       string
+	PriorInputHash          string
+	Embedding               []float32
+	EmbeddingContractID     string
+	SearchIndexGenerationID string
+	Index                   int
+	Text                    string
 }
 
 type Candidates struct {
-	Topics      []Topic
-	NeedsRepair bool
+	Topics               []Topic
+	NeedsRepair          bool
+	VectorCount          int
+	FullTextCount        int
+	UnembeddedTopicCount int
+	ForcedRepairCount    int
+	EmbeddingContractID  string
+	VectorUnavailable    bool
 }
 
 type Topic struct {
@@ -51,6 +61,7 @@ type Match struct {
 
 type Outcome struct {
 	Unchanged bool
+	Failure   error `json:"-"`
 	Reviewed  []Topic
 	Index     int
 	Text      string `json:"-"`

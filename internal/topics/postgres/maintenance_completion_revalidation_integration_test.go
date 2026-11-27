@@ -52,7 +52,8 @@ func TestOntologyMaintenanceCurrentReceiptCompletion(t *testing.T) {
 			revalidationPublish(t, f, topiccontract.Change{Record: topic})
 			revalidationDiscover(t, f, window)
 			for _, source := range claim.Sources {
-				require.Greater(t, revalidationQueue(t, f, source).Revision, claim.Revisions[topiccontract.SourceKey(source)], "definition discovery must overlap the dispatched claim")
+				revalidationRefresh(t, f, source)
+				require.Greater(t, revalidationQueue(t, f, source).Revision, claim.Revisions[topiccontract.SourceKey(source)], "forced revalidation must overlap the dispatched claim")
 			}
 			service, calls := organizationFixtureService(t, f, nil, func(_ assessment.Request, response *assessment.Response) {
 				if testCase.change == "ambiguous" {

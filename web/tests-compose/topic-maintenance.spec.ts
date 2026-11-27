@@ -286,3 +286,61 @@ retryTest("loaded older retry actions follow successful work and server eligibil
     expect(rejected.status()).toBe(422);
   });
 });
+
+retryTest("operators reassess selected uncategorized Evidence", async ({ page, topicRequest: request }) => {
+  test.setTimeout(180000);
+  const headers = { Authorization: `Bearer ${token}` };
+  async function control(path: string, body?: unknown, method = body ? "POST" : "GET") {
+    const response = await request.fetch(`${controlURL}/control/api${path}`, { method, headers, ...(body ? { data: body } : {}) });
+    expect(response.ok()).toBeTruthy();
+    return (await response.json()).data;
+  }
+  await control("/topic-maintenance/pause", { operation_key: randomUUID() });
+  await control("/config/topic-maintenance", { items: [{ key: "TOPIC_MAINTENANCE_ENABLED", value: "true" }, { key: "TOPIC_MAINTENANCE_CONTEXT_WINDOW_TOKENS", value: "300000" }] }, "PATCH");
+  const team = await control("/teams", { name: `Reassessment ${randomUUID()}` });
+  const credential = await control(`/teams/${team.id}/credentials`, { name: "Reassessment browser", scopes: ["read", "write"], rate_limit: 300 });
+  const mode = (value: string) => request.post(`${process.env.DENSE_MEM_E2E_PROVIDER_URL}/ontology-fixture`, { data: { mode: value } });
+  expect((await mode("ambiguous")).ok()).toBeTruthy();
+  const response = await request.post(`${process.env.DENSE_MEM_USER_URL}/mcp`, {
+    headers: { Authorization: `Bearer ${credential.api_key}`, Accept: "application/json" },
+    data: { jsonrpc: "2.0", id: randomUUID(), method: "tools/call", params: { name: "remember", arguments: {
+      target_space: "team_shared", idempotency_key: randomUUID(), evidence: [{ content: `A constellation observation ${randomUUID()}.`, source_type: "manual" }],
+    } } },
+  });
+  expect(response.status()).toBe(200);
+  const rpc = await response.json();
+  const remembered = JSON.parse(rpc.result.content[0].text);
+  expect(remembered.processing_state).toBe("completed");
+  const evidenceID = remembered.evidence[0].evidence_id;
+  expect((await mode("normal")).ok()).toBeTruthy();
+  await control("/topic-maintenance/resume", { operation_key: randomUUID() });
+  await page.goto(controlURL);
+  await page.getByLabel("Control token").fill(token);
+  await page.getByRole("button", { name: "Unlock" }).click();
+  await navigate(page, "Topic maintenance");
+  await page.getByLabel("Team ID", { exact: true }).fill(team.id);
+  const evidence = page.getByLabel("Evidence IDs");
+  const submit = page.getByRole("button", { name: "Reassess selected Evidence" });
+  await evidence.fill(`${evidenceID}, ${evidenceID}`);
+  await expect(submit).toBeDisabled();
+  await evidence.fill(`${evidenceID}, ${randomUUID()}`);
+  const rejected = page.waitForResponse((item) => item.request().method() === "POST" && item.url().endsWith(`/teams/${team.id}/topic-maintenance/reassess`));
+  await submit.click();
+  expect((await rejected).status()).toBe(422);
+  await evidence.fill(evidenceID);
+  const accepted = page.waitForResponse((item) => item.request().method() === "POST" && item.url().endsWith(`/teams/${team.id}/topic-maintenance/reassess`));
+  await submit.click();
+  const acceptedResponse = await accepted;
+  expect(acceptedResponse.status()).toBe(200);
+  const command = acceptedResponse.request().postDataJSON();
+  const run = (await acceptedResponse.json()).data;
+  expect(command.evidence_ids).toEqual([evidenceID]);
+  const replay = await control(`/teams/${team.id}/topic-maintenance/reassess`, command);
+  expect(replay.id).toBe(run.id);
+  await expect(page.getByRole("status")).toContainText(`Reassessment ${run.id.slice(0, 8)} accepted`);
+  await expect.poll(async () => {
+    const history = await control("/topic-maintenance/runs?limit=100");
+    return history.runs.find((item: { id: string }) => item.id === run.id)?.status;
+  }, { timeout: 120000 }).toBe("completed");
+  await expectPageContained(page);
+});

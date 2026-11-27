@@ -170,16 +170,23 @@ func refreshMaintenanceSource(tx *gorm.DB, fence scope, handle topic.SourceHandl
 	if !snapshot.Eligible {
 		status, reason = "unavailable", "source_unavailable"
 	}
+	equivalenceStatus := "pending"
+	if !snapshot.Eligible {
+		equivalenceStatus = "unavailable"
+	}
 	text := []rune(topic.SourceDisplayText(snapshot))
 	_, vocabularyWords := topic.VocabularyQuery([]topic.SourceSnapshot{snapshot})
 	if len(text) > 8192 {
 		text = text[:8192]
 	}
 	// A pending revision may already be inside a live provider call with an older Topic shortlist.
-	write := tx.Exec(`INSERT INTO topic_maintenance_sources(team_id,shared_space_id,space_generation,source_kind,source_id,source_version,fingerprint,meaning_key,search_tsv,vocabulary_words,eligible,status,reason)
-	 VALUES(?::uuid,?::uuid,?,?,?,?,?,?,to_tsvector('simple',?),?::text[],?,?,?)
+	write := tx.Exec(`INSERT INTO topic_maintenance_sources(team_id,shared_space_id,space_generation,source_kind,source_id,source_version,fingerprint,meaning_key,search_tsv,vocabulary_words,eligible,status,reason,equivalence_status,equivalence_fingerprint)
+	 VALUES(?::uuid,?::uuid,?,?,?,?,?,?,to_tsvector('simple',?),?::text[],?,?,?,?,?)
 	 ON CONFLICT(team_id,shared_space_id,space_generation,source_kind,source_id) DO UPDATE SET
 	 source_version=EXCLUDED.source_version,fingerprint=EXCLUDED.fingerprint,meaning_key=EXCLUDED.meaning_key,search_tsv=EXCLUDED.search_tsv,vocabulary_words=EXCLUDED.vocabulary_words,eligible=EXCLUDED.eligible,
+	 equivalence_status=CASE WHEN topic_maintenance_sources.fingerprint<>EXCLUDED.fingerprint THEN EXCLUDED.equivalence_status ELSE topic_maintenance_sources.equivalence_status END,
+	 equivalence_fingerprint=CASE WHEN topic_maintenance_sources.fingerprint<>EXCLUDED.fingerprint THEN EXCLUDED.equivalence_fingerprint ELSE topic_maintenance_sources.equivalence_fingerprint END,
+	 equivalence_last_run_id=CASE WHEN topic_maintenance_sources.fingerprint<>EXCLUDED.fingerprint THEN NULL ELSE topic_maintenance_sources.equivalence_last_run_id END,
 	 revision=topic_maintenance_sources.revision+1,status=EXCLUDED.status,reason=EXCLUDED.reason,
 	 pending_at=CASE WHEN topic_maintenance_sources.status='pending' THEN topic_maintenance_sources.pending_at ELSE clock_timestamp() END,
 	 updated_at=clock_timestamp() WHERE topic_maintenance_sources.fingerprint<>EXCLUDED.fingerprint OR (? AND (
@@ -188,7 +195,7 @@ func refreshMaintenanceSource(tx *gorm.DB, fence scope, handle topic.SourceHandl
 	   WHERE (batch.team_id,batch.shared_space_id,batch.space_generation)=(EXCLUDED.team_id,EXCLUDED.shared_space_id,EXCLUDED.space_generation)
 	     AND batch.status='running' AND batch.lease_until>clock_timestamp()
 	     AND batch.revisions->>(EXCLUDED.source_kind || ':' || EXCLUDED.source_id)=topic_maintenance_sources.revision::text
-	 )))`, fence.TeamID, fence.SpaceID, fence.Generation, handle.Kind, handle.ID, handle.Version, fingerprint, snapshot.MeaningKey, string(text), pq.Array(vocabularyWords), snapshot.Eligible, status, reason, force)
+	 )))`, fence.TeamID, fence.SpaceID, fence.Generation, handle.Kind, handle.ID, handle.Version, fingerprint, snapshot.MeaningKey, string(text), pq.Array(vocabularyWords), snapshot.Eligible, status, reason, equivalenceStatus, fingerprint, force)
 	if write.Error == nil && write.RowsAffected > 0 && status == "pending" {
 		observeMaintenanceSource(tx.Statement.Context, fence, handle, "source_requeued", nil)
 	}
@@ -249,7 +256,7 @@ func maintenanceMarkerSources(tx *gorm.DB, fence scope, marker maintenanceMarker
 			sourceKind, _, _ = strings.Cut(marker.AnchorID, ":")
 			sourceID = marker.TargetID
 		}
-		err := appendRows(maintenanceDefinitionPageSQL, fence.TeamID, fence.SpaceID, fence.Generation, recordID, sourceKind, sourceID, kind, id, pq.Array(topic.VocabularyStopWords()), limit)
+		err := appendRows(maintenanceDefinitionPageSQL, fence.TeamID, fence.SpaceID, fence.Generation, recordID, sourceKind, sourceID, kind, id, limit)
 		return result, err
 	}
 	direct := topic.SourceHandle{ID: marker.TargetID, Version: 1}

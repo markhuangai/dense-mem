@@ -310,6 +310,28 @@ func currentRecordView(record topic.Record, catalog map[string]topic.Record, ava
 		view.StaleReason = "historical_revision"
 		return view, nil
 	}
+	if record.Kind == topic.AssignmentKind {
+		if err := fingerprints.CheckSourceDependencies(record); err != nil {
+			if errors.Is(err, topic.ErrSourceStale) {
+				view.StaleReason = "source_changed"
+				return view, nil
+			}
+			return view, err
+		}
+		fingerprint, err := fingerprints.AcceptedAssignmentFingerprint(record)
+		if errors.Is(err, topic.ErrSourceStale) {
+			view.StaleReason = "dependency_changed"
+			return view, nil
+		}
+		if err != nil {
+			return view, err
+		}
+		view.Current = fingerprint == record.Fingerprint
+		if !view.Current {
+			view.StaleReason = "dependency_changed"
+		}
+		return view, nil
+	}
 	dependencies, err := topic.DependencyRecords([]topic.Record{record}, catalog)
 	if err != nil {
 		if errors.Is(err, topic.ErrSourceStale) {

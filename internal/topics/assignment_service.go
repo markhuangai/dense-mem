@@ -18,6 +18,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/generation"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
 	"github.com/markhuangai/dense-mem/internal/topics/assignment"
+	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
+	"golang.org/x/sync/errgroup"
 )
 
 type AssignmentCandidateReader interface {
@@ -83,12 +85,20 @@ func (s *AssignmentService) prepare(ctx context.Context, scope assignment.Scope,
 		return nil, errors.New("topic assignment decision settings unavailable")
 	}
 	ctx = requestctx.WithProgressOperation(ctx, "topic_assignment")
+	ctx = requestctx.WithSynchronizedProgress(ctx)
 	ctx = observability.WithAIOperation(ctx, "topic_assignment", len(slices))
 	requestctx.ReportProgress(ctx, requestctx.ProgressUpdate{Stage: "topic_assignment"})
 	seen := make(map[int]bool, len(slices))
 	type inputKey struct{ evidenceID, fingerprint, text, prior string }
-	byText := make(map[inputKey]assignment.Outcome)
-	out := make([]assignment.Outcome, 0, len(slices))
+	type workItem struct {
+		request    assignmentRequest
+		outcome    assignment.Outcome
+		evidenceID string
+		pending    bool
+	}
+	byText := make(map[inputKey]*workItem)
+	positions := make([]*workItem, 0, len(slices))
+	var pending []*workItem
 	for _, slice := range slices {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -98,11 +108,20 @@ func (s *AssignmentService) prepare(ctx context.Context, scope assignment.Scope,
 		}
 		seen[slice.Index] = true
 		cacheKey := inputKey{slice.EvidenceID, slice.SourceFingerprint, slice.Text, slice.PriorInputHash}
-		outcome, found := byText[cacheKey]
+		item, found := byText[cacheKey]
 		if !found {
 			catalog, err := s.reader.ReadAssignmentCandidates(ctx, scope, slice)
 			if err != nil {
-				return nil, fmt.Errorf("%w: read assignment candidates: %w", assignment.ErrStorage, err)
+				if !errors.Is(err, assignment.ErrStale) {
+					err = fmt.Errorf("%w: read assignment candidates: %w", assignment.ErrStorage, err)
+				}
+				if window == nil {
+					return nil, err
+				}
+				item = &workItem{evidenceID: slice.EvidenceID, outcome: assignment.Outcome{Text: slice.Text, Failure: err}}
+				byText[cacheKey] = item
+				positions = append(positions, item)
+				continue
 			}
 			candidates := catalog.Topics
 			if len(candidates) > assignment.MaxTopics {
@@ -113,6 +132,16 @@ func (s *AssignmentService) prepare(ctx context.Context, scope assignment.Scope,
 				request.Topics = []assignment.Topic{}
 			}
 			if s.logger != nil {
+				level := slog.LevelDebug
+				if catalog.VectorUnavailable || catalog.UnembeddedTopicCount > 0 {
+					level = slog.LevelWarn
+				}
+				s.logger.Log(ctx, level, "topic_assignment.candidates_retrieved", "team_id", scope.TeamID,
+					"space_id", scope.SpaceID, "space_generation", scope.Generation, "operation_id", scope.OperationID,
+					"evidence_id", slice.EvidenceID, "embedding_contract_id", catalog.EmbeddingContractID,
+					"pgvector_count", catalog.VectorCount, "fts_count", catalog.FullTextCount,
+					"merged_count", len(candidates), "unembedded_topic_count", catalog.UnembeddedTopicCount,
+					"forced_repair_count", catalog.ForcedRepairCount, "vector_unavailable", catalog.VectorUnavailable)
 				refs := make([]string, 0, len(candidates))
 				for _, candidate := range candidates {
 					refs = append(refs, fmt.Sprintf("%s@%d", candidate.ID, candidate.Version))
@@ -136,29 +165,95 @@ func (s *AssignmentService) prepare(ctx context.Context, scope assignment.Scope,
 			if err != nil {
 				return nil, err
 			}
-			if slice.PriorInputHash == inputHash && !catalog.NeedsRepair {
-				outcome.Unchanged = true
-			} else {
-				exchange := observability.ExchangeScopeFromContext(ctx)
-				exchange.TeamID, exchange.OperationID, exchange.AssessmentID = scope.TeamID, scope.OperationID, request.RequestID
-				assessmentCtx := observability.WithExchangeScope(ctx, exchange)
-				outcome, err = s.assess(assessmentCtx, request, model, policy, decisionSettings, accounting)
-				if err != nil {
-					return nil, err
-				}
-				if s.logger != nil {
-					s.logger.InfoContext(assessmentCtx, "topic_assignment.prepared", "team_id", scope.TeamID,
-						"operation_id", scope.OperationID, "assessment_id", request.RequestID, "method", outcome.Method,
-						"matched_topics", len(outcome.Matches), "proposed_topics", len(outcome.Proposals))
-				}
+			evidenceID := slice.EvidenceID
+			if evidenceID == "" {
+				evidenceID = slice.CanonicalEvidenceID
 			}
-			outcome.Text = slice.Text
-			outcome.Reviewed = candidates
-			outcome.InputHash = inputHash
-			byText[cacheKey] = outcome
+			item = &workItem{request: request, evidenceID: evidenceID, pending: slice.PriorInputHash != inputHash || catalog.NeedsRepair}
+			item.outcome = assignment.Outcome{Unchanged: !item.pending, Text: slice.Text, Reviewed: candidates, InputHash: inputHash}
+			byText[cacheKey] = item
+			if item.pending {
+				pending = append(pending, item)
+			}
 		}
-		outcome.Index = slice.Index
-		out = append(out, outcome)
+		positions = append(positions, item)
+	}
+	var decisions []assignmentDecisionOutcome
+	if len(pending) > 0 && s.decisions != nil && decisionSettings.Effective.TopicAssignment {
+		decisions = make([]assignmentDecisionOutcome, 0, len(pending))
+		for start := 0; start < len(pending); start += contract.MaxOrganizationSources {
+			end := min(start+contract.MaxOrganizationSources, len(pending))
+			inputs := make([]assignmentRequest, end-start)
+			for i, item := range pending[start:end] {
+				inputs[i] = item.request
+			}
+			batch, err := s.assessDecisionBatch(ctx, scope, inputs, *decisionSettings, accounting)
+			if err != nil {
+				return nil, err
+			}
+			decisions = append(decisions, batch...)
+		}
+	}
+	limits := s.limits
+	if policy.ContextWindowTokens > 0 {
+		limits.MaxInputTokens = min(limits.MaxInputTokens, int(policy.ContextWindowTokens)-limits.MaxOutputTokens)
+	}
+	assess := func(index int, item *workItem) {
+		exchange := observability.ExchangeScopeFromContext(ctx)
+		exchange.TeamID, exchange.OperationID, exchange.AssessmentID = scope.TeamID, scope.OperationID, item.request.RequestID
+		assessmentCtx := observability.WithExchangeScope(ctx, exchange)
+		var outcome assignment.Outcome
+		var err error
+		var preserved []string
+		if decisions != nil {
+			outcome = decisions[index].Outcome
+			if !decisions[index].Clear {
+				for _, match := range outcome.Matches {
+					preserved = append(preserved, match.ID)
+				}
+				outcome, err = s.generate(assessmentCtx, item.request, model, limits, accounting, outcome.Matches, true)
+			}
+		} else if window != nil {
+			outcome, err = s.generate(assessmentCtx, item.request, model, limits, accounting, nil, false)
+		} else {
+			outcome, err = s.assess(assessmentCtx, item.request, model, policy, decisionSettings, accounting)
+		}
+		outcome.Text, outcome.Reviewed, outcome.InputHash = item.outcome.Text, item.outcome.Reviewed, item.outcome.InputHash
+		outcome.Failure = err
+		item.outcome = outcome
+		if s.logger != nil {
+			if err != nil {
+				s.logger.ErrorContext(assessmentCtx, "topic_assignment.generation_failed", "team_id", scope.TeamID,
+					"space_id", scope.SpaceID, "space_generation", scope.Generation, "operation_id", scope.OperationID,
+					"stage", "assignment", "evidence_id", item.evidenceID, "assessment_id", item.request.RequestID,
+					"reason_code", maintenanceDiagnosticError(err), "preserved_decision_match_ids", preserved, "error", err)
+			} else {
+				s.logger.InfoContext(assessmentCtx, "topic_assignment.prepared", "team_id", scope.TeamID,
+					"operation_id", scope.OperationID, "assessment_id", item.request.RequestID, "method", outcome.Method,
+					"matched_topics", len(outcome.Matches), "proposed_topics", len(outcome.Proposals))
+			}
+		}
+	}
+	var group errgroup.Group
+	group.SetLimit(4)
+	for i, item := range pending {
+		group.Go(func() error { assess(i, item); return nil })
+	}
+	_ = group.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if window == nil {
+		for _, item := range pending {
+			if item.outcome.Failure != nil {
+				return nil, item.outcome.Failure
+			}
+		}
+	}
+	out := make([]assignment.Outcome, len(slices))
+	for i, item := range positions {
+		out[i] = item.outcome
+		out[i].Index = slices[i].Index
 	}
 	return out, nil
 }
@@ -170,15 +265,19 @@ type assignmentRequest struct {
 }
 
 func (s *AssignmentService) assess(ctx context.Context, input assignmentRequest, model string, policy domain.TopicMaintenanceConfig, settings *domain.DecisionRuntimeConfig, accounting assessment.AttemptAccounting) (assignment.Outcome, error) {
-	if s.decisions != nil && settings != nil && settings.Effective.TopicAssignment && len(input.Topics) > 0 {
+	var matched []assignment.Match
+	proposalOnly := false
+	if s.decisions != nil && settings != nil && settings.Effective.TopicAssignment {
 		outcome, clear, err := s.assessDecisions(ctx, input, *settings, accounting)
 		if err != nil || clear {
 			return outcome, err
 		}
+		matched = outcome.Matches
+		proposalOnly = true
 	}
 	limits := s.limits
 	if policy.ContextWindowTokens > 0 {
 		limits.MaxInputTokens = min(limits.MaxInputTokens, int(policy.ContextWindowTokens)-limits.MaxOutputTokens)
 	}
-	return s.generate(ctx, input, model, limits, accounting)
+	return s.generate(ctx, input, model, limits, accounting, matched, proposalOnly)
 }

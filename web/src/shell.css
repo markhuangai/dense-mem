@@ -274,6 +274,10 @@ label[data-slot=label]:has(> [data-slot=input], > [data-slot=textarea], > [data-
 .topic-manual .section-heading { margin: 0; }
 .topic-manual .button-row { gap: 12px; }
 .topic-manual [data-slot="input"] { width: 80px; }
+.topic-reassess { display: grid; gap: 8px; width: 100%; }
+.topic-reassess h3, .topic-reassess p { margin: 0; }
+.topic-manual .topic-reassess [data-slot="input"] { width: 100%; }
+.topic-reassess button { justify-self: start; }
 .topic-history .data-table td:first-child { font-family: ui-monospace, monospace; font-size: 12px; }
 .topic-team-coverage { padding: 22px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
 .topic-team-coverage > .section-heading { margin-bottom: 10px; }

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/markhuangai/dense-mem/internal/topics/assignment"
 	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -17,8 +18,12 @@ func coalescingDefinitions(t *testing.T, x *discoveryFixture, count int, shape s
 	t.Helper()
 	before := x.queue(t)
 	definitions := make([]topic.Record, count)
-	changes := make([]topic.Change, count)
+	changes := make([]topic.Change, 0, count)
 	for i := range definitions {
+		if shape == "overlap" && i == 0 {
+			definitions[i] = x.topic
+			continue
+		}
 		definitions[i] = testTopic(fmt.Sprintf("coalescing-bucket-%02d", i))
 		switch shape {
 		case "overlap":
@@ -33,15 +38,43 @@ func coalescingDefinitions(t *testing.T, x *discoveryFixture, count int, shape s
 		default:
 			t.Fatalf("unknown marker shape %s", shape)
 		}
-		changes[i] = topic.Change{Record: definitions[i]}
+		changes = append(changes, topic.Change{Record: definitions[i]})
 	}
-	revalidationPublish(t, x.f, changes...)
+	if len(changes) > 0 {
+		revalidationPublish(t, x.f, changes...)
+	}
+	dependencies := make(map[string]topic.SourceDependency, len(x.sources))
+	for _, source := range x.sources {
+		dependencies[source.ID] = x.f.source(t, source)
+	}
+	changes = nil
+	for i, definition := range definitions {
+		if shape == "empty" || (shape == "overlap" && (i == 0 || i >= assignment.MaxTopics)) {
+			continue
+		}
+		sources := x.sources
+		if shape == "disjoint" {
+			sources = x.sources[i*len(x.sources)/count : (i+1)*len(x.sources)/count]
+		}
+		for _, source := range sources {
+			record := topic.Record{ID: topic.OrganizationRecordID(x.f.team, topic.AssignmentKind, topic.SourceKey(source)+":"+definition.ID), Kind: topic.AssignmentKind,
+				Assignment: &topic.Assignment{Source: source, DefinitionID: definition.ID}, Sources: []topic.SourceDependency{dependencies[source.ID]}}
+			changes = append(changes, topic.Change{Record: record})
+			if len(changes) == topic.MaxChanges {
+				revalidationPublish(t, x.f, changes...)
+				changes = nil
+			}
+		}
+	}
+	if len(changes) > 0 {
+		revalidationPublish(t, x.f, changes...)
+	}
 	for i, definition := range definitions {
 		expected := x.sources
 		if shape == "disjoint" {
 			expected = x.sources[i*len(x.sources)/count : (i+1)*len(x.sources)/count]
 		}
-		if shape == "empty" {
+		if shape == "empty" || (shape == "overlap" && i >= assignment.MaxTopics) {
 			expected = nil
 		}
 		require.NoError(t, x.f.store.withScope(context.Background(), x.f.team, false, func(tx *gorm.DB, fence scope) error {

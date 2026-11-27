@@ -126,6 +126,9 @@ func testOntologyCohortWithMatching(t *testing.T, maintenance bool, matching []e
 				require.Len(t, contextData.Candidates, 1)
 				require.Equal(t, vocabularyID, contextData.Candidates[0].ID)
 			}
+			if maintenance {
+				seedOrganizationVectors(t, f, handles)
+			}
 			before := f.canonicalSnapshot(t)
 			var maintained *organization.MaintenanceService
 			ctx := context.Background()

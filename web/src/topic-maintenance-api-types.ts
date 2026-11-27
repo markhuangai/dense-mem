@@ -39,6 +39,7 @@ export type TopicMaintenanceStatus = {
   discovery_complete: boolean;
   coverage_complete: boolean;
   communities?: { placed: number; standalone: number; pending: number; failed: number };
+  equivalence?: { pending: number; completed: number; failed: number };
   counts: Record<"eligible" | "organized" | "pending" | "ambiguous" | "failed", number> & { uncategorized?: number };
   oldest_pending_at?: string;
   last_successful_progress?: string;

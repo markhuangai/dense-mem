@@ -44,9 +44,10 @@ func (s *Store) ClaimMaintenanceBatch(ctx context.Context, turn topic.Maintenanc
 		var seeds []topic.SourceHandle
 		rows, err := tx.Raw(`SELECT source_kind,source_id,source_version FROM topic_maintenance_sources AS source WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND eligible AND
          NOT (source_kind || ':' || source_id=ANY(?::text[])) AND
+         (NOT ? OR (source_kind='evidence' AND source_id=ANY(?::text[]))) AND
          ((?<>'' AND source.last_run_id=NULLIF(?,'')::uuid AND status='failed') OR
          (?='' AND status='pending'))
-         ORDER BY pending_at,source_kind,source_id LIMIT ?`, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(keys), turn.RetryRunID, turn.RetryRunID, turn.RetryRunID, topic.MaintenancePageSize).Rows()
+         ORDER BY pending_at,source_kind,source_id LIMIT ?`, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(keys), len(turn.ReassessEvidenceIDs) > 0, pq.Array(turn.ReassessEvidenceIDs), turn.RetryRunID, turn.RetryRunID, turn.RetryRunID, topic.MaintenancePageSize).Rows()
 		if err != nil {
 			return err
 		}
@@ -91,72 +92,84 @@ func (s *Store) ClaimMaintenanceBatch(ctx context.Context, turn topic.Maintenanc
 }
 
 func (s *Store) admitMaintenanceBatch(ctx context.Context, turn topic.MaintenanceTurn, claim *topic.MaintenanceClaim, community *topic.CommunityInput, now time.Time) (*topic.MaintenanceClaim, error) {
+	var admitted bool
 	err := s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
-		paused, err := maintenanceState(tx)
-		if err != nil {
-			return err
-		}
-		if paused {
-			return topic.ErrMaintenancePaused
-		}
-		enabled, err := maintenanceEnabled(tx)
-		if err != nil {
-			return err
-		}
-		if !enabled {
-			return topic.ErrMaintenanceDisabled
-		}
-		if err := checkMaintenanceTurn(tx, turn); err != nil {
-			return err
-		}
-		var runID string
-		err = tx.Raw(`SELECT run.run_id::text FROM topic_maintenance_runs AS run WHERE run.run_id=?::uuid AND run.window_id=?::uuid AND run.kind IN ('scheduled','run','retry') AND run.status IN ('pending','running')
-		 AND (run.max_batches=0 OR run.completed_batches+(SELECT count(*) FROM topic_maintenance_batches AS batch WHERE batch.run_id=run.run_id AND batch.status='running')<run.max_batches)
-		 ORDER BY run.created_at,run.run_id LIMIT 1 FOR UPDATE`, turn.RunID, claim.WindowID).Row().Scan(&runID)
-		if errors.Is(err, sql.ErrNoRows) {
-			claim = nil
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		claim.RunID = runID
-
-		var communityTopicID string
-		if community != nil {
-			err := tx.Raw(`SELECT topic_id::text FROM topic_maintenance_community_work
-				WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?
-				AND topic_id=?::uuid AND topic_version=? AND work_id=?::uuid
-				AND ready_at<=statement_timestamp() FOR UPDATE`, claim.TeamID, claim.SpaceID, claim.Generation,
-				community.Topic.ID, community.Topic.Version, community.WorkID).Row().Scan(&communityTopicID)
-			if errors.Is(err, sql.ErrNoRows) {
-				return topic.ErrSourceStale
-			}
-			if err != nil {
-				return err
-			}
-		}
-
-		sources, err := json.Marshal(claim.Sources)
-		if err != nil {
-			return err
-		}
-		revisions, err := json.Marshal(claim.Revisions)
-		if err != nil {
-			return err
-		}
-		if err := tx.Exec(`INSERT INTO topic_maintenance_batches(batch_id,run_id,window_id,team_id,shared_space_id,space_generation,lease_token,lease_until,sources,revisions,created_at,community_topic_id) VALUES(?::uuid,?::uuid,?::uuid,?::uuid,?::uuid,?,?::uuid,?,?::jsonb,?::jsonb,?,NULLIF(?,'')::uuid)`, claim.ID, runID, claim.WindowID, claim.TeamID, claim.SpaceID, claim.Generation, claim.LeaseToken, claim.LeaseUntil, string(sources), string(revisions), now, communityTopicID).Error; err != nil {
-			return err
-		}
-		if err := tx.Exec(`UPDATE topic_maintenance_runs SET status='running',updated_at=clock_timestamp() WHERE run_id=?::uuid`, runID).Error; err != nil {
-			return err
-		}
-		return releaseMaintenanceTurnTx(tx, turn)
+		var err error
+		admitted, err = admitMaintenanceBatchTx(tx, turn, claim, community, now)
+		return err
 	})
-	if err != nil {
+	if err != nil || !admitted {
 		return nil, err
 	}
 	return claim, nil
+}
+
+func admitMaintenanceBatchTx(tx *gorm.DB, turn topic.MaintenanceTurn, claim *topic.MaintenanceClaim, community *topic.CommunityInput, now time.Time) (bool, error) {
+	paused, err := maintenanceState(tx)
+	if err != nil {
+		return false, err
+	}
+	if paused {
+		return false, topic.ErrMaintenancePaused
+	}
+	enabled, err := maintenanceEnabled(tx)
+	if err != nil {
+		return false, err
+	}
+	if !enabled {
+		return false, topic.ErrMaintenanceDisabled
+	}
+	if err := checkMaintenanceTurn(tx, turn); err != nil {
+		return false, err
+	}
+	var runID string
+	err = tx.Raw(`SELECT run.run_id::text FROM topic_maintenance_runs AS run WHERE run.run_id=?::uuid AND run.window_id=?::uuid AND run.kind IN ('scheduled','run','retry','reassess') AND run.status IN ('pending','running')
+		 AND (run.max_batches=0 OR run.completed_batches+(SELECT count(*) FROM topic_maintenance_batches AS batch WHERE batch.run_id=run.run_id AND batch.status='running')<run.max_batches)
+		 ORDER BY run.created_at,run.run_id LIMIT 1 FOR UPDATE`, turn.RunID, claim.WindowID).Row().Scan(&runID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	claim.RunID = runID
+
+	var communityTopicID string
+	if community != nil {
+		err := tx.Raw(`SELECT topic_id::text FROM topic_maintenance_community_work
+			WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?
+			AND topic_id=?::uuid AND topic_version=? AND work_id=?::uuid
+			AND ready_at<=statement_timestamp() FOR UPDATE`, claim.TeamID, claim.SpaceID, claim.Generation,
+			community.Topic.ID, community.Topic.Version, community.WorkID).Row().Scan(&communityTopicID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, topic.ErrSourceStale
+		}
+		if err != nil {
+			return false, err
+		}
+	}
+	sources, err := json.Marshal(claim.Sources)
+	if err != nil {
+		return false, err
+	}
+	revisions, err := json.Marshal(claim.Revisions)
+	if err != nil {
+		return false, err
+	}
+	kind := claim.Kind
+	if community != nil {
+		kind = "community"
+	} else if kind == "" {
+		kind = "assignment"
+	}
+	claim.Kind = kind
+	if err := tx.Exec(`INSERT INTO topic_maintenance_batches(batch_id,run_id,window_id,team_id,shared_space_id,space_generation,lease_token,lease_until,sources,revisions,created_at,community_topic_id,batch_kind) VALUES(?::uuid,?::uuid,?::uuid,?::uuid,?::uuid,?,?::uuid,?,?::jsonb,?::jsonb,?,NULLIF(?,'')::uuid,?)`, claim.ID, runID, claim.WindowID, claim.TeamID, claim.SpaceID, claim.Generation, claim.LeaseToken, claim.LeaseUntil, string(sources), string(revisions), now, communityTopicID, kind).Error; err != nil {
+		return false, err
+	}
+	if err := tx.Exec(`UPDATE topic_maintenance_runs SET status='running',updated_at=clock_timestamp() WHERE run_id=?::uuid`, runID).Error; err != nil {
+		return false, err
+	}
+	return true, releaseMaintenanceTurnTx(tx, turn)
 }
 
 func maintenanceBusySources(tx *gorm.DB, fence scope) (map[string]bool, error) {
@@ -259,11 +272,11 @@ func collectMaintenanceRevisions(tx *gorm.DB, fence scope, claim *topic.Maintena
 		ids[i], positions[source.ID] = source.ID, i
 	}
 	rows, err := tx.Raw(`SELECT source_id,revision,source_version,
-		COALESCE((SELECT outcome.input_hash FROM topic_assignment_outcomes outcome WHERE
+		CASE WHEN source.force_reassessment THEN '' ELSE COALESCE((SELECT outcome.input_hash FROM topic_assignment_outcomes outcome WHERE
 			(outcome.team_id,outcome.shared_space_id,outcome.space_generation,outcome.evidence_id)=
 			(source.team_id,source.shared_space_id,source.space_generation,source.source_id::uuid)
 			AND outcome.status IN ('assigned','uncategorized','ambiguous')
-			ORDER BY outcome.created_at DESC,outcome.outcome_id LIMIT 1),source.last_assignment_input_hash,'')
+			ORDER BY outcome.created_at DESC,outcome.outcome_id LIMIT 1),source.last_assignment_input_hash,'') END
 		FROM topic_maintenance_sources source WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND source_kind='evidence'
 		AND source_id=ANY(?::text[])`, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(ids)).Rows()
 	if err != nil {
@@ -345,6 +358,25 @@ func completeMaintenanceBatch(tx *gorm.DB, claim topic.MaintenanceClaim, result 
 	*phase = "source_updates"
 	for _, source := range claim.Sources {
 		key := topic.SourceKey(source)
+		if claim.Kind == "equivalence" {
+			outcome, exists := outcomes[key]
+			state := "failed"
+			if exists {
+				state = outcome.Status
+			}
+			if state != "completed" && state != "failed" && state != "pending" {
+				return topic.ErrInvalid
+			}
+			updated := tx.Exec(`UPDATE topic_maintenance_sources SET equivalence_status=?,equivalence_last_run_id=?::uuid,updated_at=clock_timestamp()
+				WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND source_kind=? AND source_id=?
+				AND eligible AND fingerprint=? AND equivalence_fingerprint=? AND equivalence_status IN ('pending','failed')`,
+				state, claim.RunID, claim.TeamID, claim.SpaceID, claim.Generation, source.Kind, source.ID, claim.Fingerprints[key], claim.Fingerprints[key])
+			if updated.Error != nil {
+				return updated.Error
+			}
+			progress = progress || (state == "completed" && updated.RowsAffected > 0)
+			continue
+		}
 		revision, reuse := revisions[key]
 		if !reuse {
 			revision = claim.Revisions[key]
@@ -355,16 +387,28 @@ func completeMaintenanceBatch(tx *gorm.DB, claim topic.MaintenanceClaim, result 
 		}
 		state := topic.MaintenanceOutcomeState(outcome, result, failure)
 		reason := outcome.Reason
-		if failure != "" {
+		if result.IsolatedOutcomes && exists {
+			switch outcome.Status {
+			case "pending", "failed":
+				state = outcome.Status
+			default:
+				// Successful items were finalized in their own transactions.
+				continue
+			}
+		} else if failure != "" {
 			reason = failure
 		}
 		var assessmentID any
 		if result.AssessmentID != "" {
 			assessmentID = result.AssessmentID
 		}
-		updated := tx.Exec(`UPDATE topic_maintenance_sources SET status=?,reason=?,eligible=CASE WHEN ?='unavailable' THEN false ELSE eligible END,assessment_id=?::uuid,last_run_id=?::uuid,updated_at=clock_timestamp()
+		legacyEquivalence := claim.Kind == "assignment" && !result.IsolatedOutcomes && result.Current && failure == "" && result.FailureCode == "" && result.AssessmentID != "" && (state == "organized" || state == "uncategorized")
+		updated := tx.Exec(`UPDATE topic_maintenance_sources SET status=?,reason=?,eligible=CASE WHEN ?='unavailable' THEN false ELSE eligible END,assessment_id=?::uuid,last_run_id=?::uuid,
+		 equivalence_status=CASE WHEN ? THEN 'completed' ELSE equivalence_status END,
+		 equivalence_fingerprint=CASE WHEN ? THEN fingerprint ELSE equivalence_fingerprint END,updated_at=clock_timestamp()
 		 WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND source_kind=? AND source_id=? AND revision=?
-		 AND (NOT ? OR (eligible AND status='pending' AND source_version=? AND fingerprint=?))`, state, reason, state, assessmentID, claim.RunID, claim.TeamID, claim.SpaceID, claim.Generation, source.Kind, source.ID, revision, reuse, source.Version, fingerprints[key])
+		 AND NOT (last_run_id=?::uuid AND status IN ('organized','uncategorized'))
+		 AND (NOT ? OR (eligible AND status='pending' AND source_version=? AND fingerprint=?))`, state, reason, state, assessmentID, claim.RunID, legacyEquivalence, legacyEquivalence, claim.TeamID, claim.SpaceID, claim.Generation, source.Kind, source.ID, revision, claim.RunID, reuse, source.Version, fingerprints[key])
 		if updated.Error != nil {
 			return updated.Error
 		}
@@ -377,6 +421,11 @@ func completeMaintenanceBatch(tx *gorm.DB, claim topic.MaintenanceClaim, result 
 	}
 	if updated.RowsAffected != 1 {
 		return topic.ErrLeaseLost
+	}
+	if claim.Kind == "community" {
+		if err := tx.Exec(`UPDATE topic_maintenance_community_work SET lease_batch_id=NULL,lease_until=NULL WHERE lease_batch_id=?::uuid`, claim.ID).Error; err != nil {
+			return err
+		}
 	}
 	*phase = "run_update"
 	var bounded bool

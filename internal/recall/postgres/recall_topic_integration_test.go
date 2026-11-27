@@ -4,20 +4,136 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	auditapp "github.com/markhuangai/dense-mem/internal/audit"
+	auditpostgres "github.com/markhuangai/dense-mem/internal/audit/postgres"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	recallservice "github.com/markhuangai/dense-mem/internal/recall"
 	recallcontract "github.com/markhuangai/dense-mem/internal/recall/contract"
+	"github.com/markhuangai/dense-mem/internal/settings"
+	settingspostgres "github.com/markhuangai/dense-mem/internal/settings/postgres"
+	organization "github.com/markhuangai/dense-mem/internal/topics"
+	"github.com/markhuangai/dense-mem/internal/topics/assessment"
+	"github.com/markhuangai/dense-mem/internal/topics/assignment"
 	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
+
+type equivalenceRetryDecision struct{}
+
+func (*equivalenceRetryDecision) DecisionRuntimeConfig(context.Context) (domain.DecisionRuntimeConfig, error) {
+	return domain.DecisionRuntimeConfig{Revision: "equivalence-retry", Effective: domain.DecisionTasks{TopicAssignment: true}}, nil
+}
+
+func (d *equivalenceRetryDecision) Decide(_ context.Context, request modelprovider.DecisionRequest) (modelprovider.DecisionResult, error) {
+	answers := make(map[string]modelprovider.DecisionAnswer)
+	for _, group := range request.Groups {
+		for _, question := range group.Questions {
+			probability := 0.99
+			answers[question.Name] = modelprovider.DecisionAnswer{Type: modelprovider.DecisionPredicate, Probability: &probability}
+		}
+	}
+	return modelprovider.DecisionResult{Answers: answers}, nil
+}
+
+func TestRecallEquivalenceMaintenanceFailureRetryAndCoverage(t *testing.T) {
+	f := newRecallOntologyFixture(t)
+	ctx := context.Background()
+	texts := []string{"Atlas stores data in PostgreSQL.", "PostgreSQL is Atlas's data store."}
+	handles := []topic.SourceHandle{f.evidence(t, 0, texts[0], nil), f.evidence(t, 1, texts[1], nil)}
+	config := settings.NewAppConfigService(settingspostgres.NewAppConfigRepository(f.app, f.rls), nil)
+	_, err := config.UpdateTopicMaintenanceSettings(ctx, map[string]string{
+		domain.AppConfigTopicMaintenanceEnabled: "true", domain.AppConfigTopicMaintenanceModel: "fixture-model",
+		domain.AppConfigTopicMaintenanceContextWindow: "300000",
+	}, "control", "", "")
+	require.NoError(t, err)
+	_, err = config.UpdateGeneralSettings(ctx, map[string]string{domain.AppConfigTimezone: "UTC"}, "control", "", "")
+	require.NoError(t, err)
+	policy, err := config.TopicMaintenanceRuntimeConfig(ctx)
+	require.NoError(t, err)
+	window, err := f.topicStore.EnsureMaintenanceWindow(ctx, policy, time.Now().UTC())
+	require.NoError(t, err)
+	turn, err := f.topicStore.ClaimMaintenanceTurn(ctx, window.ID, time.Now().UTC(), time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, turn)
+	_, err = f.topicStore.DiscoverMaintenance(ctx, *turn, topic.MaintenancePageSize)
+	require.NoError(t, err)
+	claim, err := f.topicStore.ClaimMaintenanceBatch(ctx, *turn, window.ID, time.Now().UTC())
+	require.NoError(t, err)
+	require.NotNil(t, claim)
+	require.ElementsMatch(t, handles, claim.Sources)
+	result := topic.OrganizationResult{Current: true, IsolatedOutcomes: true}
+	for _, source := range claim.Sources {
+		snapshots, err := f.topicStore.ReadSources(ctx, f.team, []topic.SourceHandle{source})
+		require.NoError(t, err)
+		fingerprint, err := topic.SourceFingerprint(snapshots[0])
+		require.NoError(t, err)
+		outcome, err := f.topicStore.CommitMaintenanceItemAssignment(topic.WithMaintenanceClaim(ctx, *claim), *claim, assignment.Publication{
+			EvidenceID: source.ID, ExpectedFingerprint: fingerprint,
+			Outcome: assignment.Outcome{Text: topic.SourceDisplayText(snapshots[0]), Method: "decision", InputHash: sha256Hex(source.ID)},
+		})
+		require.NoError(t, err)
+		result.Outcomes = append(result.Outcomes, outcome)
+	}
+	require.NoError(t, f.topicStore.CompleteMaintenanceBatch(ctx, *claim, result, "", time.Now().UTC()))
+	var missingDocument string
+	require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
+		return tx.Raw(`UPDATE search_documents SET embedding=NULL,search_state='pending'
+			WHERE team_id=?::uuid AND source_id=?::uuid RETURNING search_document_id::text`, f.team, handles[0].ID).Row().Scan(&missingDocument)
+	}))
+	decisions := &equivalenceRetryDecision{}
+	service := organization.NewMaintenanceService(organization.MaintenanceDependencies{
+		Repository: f.topicStore, Config: config, DefaultModel: "fixture-model", ProviderTimeout: time.Minute,
+		Equivalence: f.topicStore, Decisions: decisions, DecisionSettings: decisions,
+		Audit: auditapp.New(auditpostgres.NewStore(f.app, f.rls)),
+		Organizer: func(_ string, _ int64, accounting assessment.AttemptAccounting) *organization.Service {
+			organizer, _ := f.organizerWithAccounting(t, nil, false, accounting)
+			return organizer
+		},
+	})
+	failed, err := service.Command(ctx, domain.TopicMaintenanceCommand{Action: "run", OperationKey: uuid.NewString(), MaxBatches: 1}, "", "")
+	require.NoError(t, err)
+	progress, err := service.RunTurn(ctx)
+	require.True(t, progress)
+	require.Error(t, err)
+	status, err := service.Status(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, status.Equivalence.Failed)
+	require.EqualValues(t, 1, status.Equivalence.Completed, "a missing vector cannot fail a healthy sibling")
+	require.False(t, status.CoverageComplete)
+	retryable, err := f.topicStore.MaintenanceRunRetryable(ctx, failed.ID)
+	require.NoError(t, err)
+	require.True(t, retryable)
+	completeSearchDocumentsForTest(t, f.search, f.team, map[string][]float32{missingDocument: {1, 0, 0}})
+	retry, err := service.Command(ctx, domain.TopicMaintenanceCommand{Action: "retry", OperationKey: uuid.NewString(), RetryRunID: failed.ID, MaxBatches: 1}, "", "")
+	require.NoError(t, err)
+	progress, err = service.RunTurn(ctx)
+	require.True(t, progress)
+	require.NoError(t, err)
+	var selected []byte
+	require.NoError(t, f.admin.Raw(`SELECT sources FROM topic_maintenance_batches WHERE run_id=?::uuid AND batch_kind='equivalence'`, retry.ID).Row().Scan(&selected))
+	var retried []topic.SourceHandle
+	require.NoError(t, json.Unmarshal(selected, &retried))
+	require.Equal(t, []topic.SourceHandle{handles[0]}, retried)
+	status, err = service.Status(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, status.Equivalence.Completed)
+	require.True(t, status.CoverageComplete)
+	grouped, err := f.search.RecallEvidence(f.actor(2, "member"), RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, Query: "PostgreSQL", Limit: 3, OrganizationEnabled: true})
+	require.NoError(t, err)
+	require.Len(t, grouped.Results, 1)
+	require.Len(t, grouped.Results[0].EquivalentEvidenceIDs, 1)
+	require.ElementsMatch(t, []string{handles[0].ID, handles[1].ID}, []string{grouped.Results[0].EvidenceID, grouped.Results[0].EquivalentEvidenceIDs[0]})
+}
 
 func TestRecallOntologyGroupingKnownIDsAndStaleSources(t *testing.T) {
 	f := newRecallOntologyFixture(t)
@@ -169,6 +285,9 @@ func TestRecallOntologyPunctuatedKeysAndAliases(t *testing.T) {
 		definition := topic.Record{ID: uuid.NewString(), Kind: topic.Topic, Definition: &topic.Definition{Key: name, Label: name, Aliases: []string{name + " platform"}}}
 		assignment := f.assignment(t, definition.ID, handle)
 		f.publication(t, definition, assignment)
+		accepted, err := f.topicStore.GetRecord(context.Background(), f.team, assignment.ID, 0)
+		require.NoError(t, err)
+		require.True(t, accepted.Current)
 		for _, query := range []string{name, "What is " + name + "?", "Where is (" + name + " platform)?"} {
 			input := RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, Query: query, Limit: 3}
 			ordinary, err := f.search.RecallEvidence(f.actor(2, "member"), input)
@@ -184,8 +303,11 @@ func TestRecallOntologyPunctuatedKeysAndAliases(t *testing.T) {
 		definition.Definition.Key = name + " language"
 		definition.Definition.Label = name + " language"
 		definition.Definition.Aliases = []string{name}
-		assignment.Version = 1
-		f.publication(t, definition, assignment)
+		f.publication(t, definition)
+		retained, err := f.topicStore.GetRecord(context.Background(), f.team, assignment.ID, 0)
+		require.NoError(t, err)
+		require.True(t, retained.Current)
+		require.Equal(t, accepted.Record, retained.Record)
 		alias, err := f.search.RecallEvidence(f.actor(2, "member"), RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, Query: "What is " + name + "?", Limit: 3, OrganizationEnabled: true})
 		require.NoError(t, err)
 		require.Len(t, alias.Results, 1)

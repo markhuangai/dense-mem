@@ -234,6 +234,57 @@ func TestOntologyFingerprintsAreStableAndSelective(t *testing.T) {
 	require.Equal(t, retired, again)
 }
 
+func TestAcceptedAssignmentFingerprintSurvivesTopicRevision(t *testing.T) {
+	source := policySnapshot("assignment-evidence", EvidenceSource, "accepted evidence")
+	parent := topicRecord("assignment-parent")
+	parent.Version = 1
+	var err error
+	parent.Fingerprint, err = RecordFingerprint(parent, nil, nil)
+	require.NoError(t, err)
+	target := topicRecord("assignment-topic")
+	target.Version = 1
+	target.Definition.ParentID = parent.ID
+	target.Fingerprint, err = RecordFingerprint(target, nil, map[string]Record{parent.ID: parent})
+	require.NoError(t, err)
+	record := Record{
+		ID: policyID("accepted-assignment"), Version: 1, Kind: AssignmentKind,
+		Assignment:   &Assignment{Source: source.SourceHandle, DefinitionID: target.ID},
+		Sources:      []SourceDependency{sourceDependency(t, source)},
+		Dependencies: []RevisionRef{{ID: parent.ID, Version: parent.Version}, {ID: target.ID, Version: target.Version}},
+	}
+	catalog := map[string]Record{target.ID: target, parent.ID: parent}
+	original, err := RecordFingerprint(record, map[string]SourceSnapshot{SourceKey(source.SourceHandle): source}, catalog)
+	require.NoError(t, err)
+	record.Fingerprint = original
+	catalog[record.ID] = record
+	target.Version++
+	target.Definition.ParentID = ""
+	parent.Retired = true
+	catalog[parent.ID] = parent
+	catalog[target.ID] = target
+	available := map[SourceHandle]SourceSnapshot{source.SourceHandle: source}
+	fingerprints := NewRecordFingerprints(available, catalog)
+	updated, err := fingerprints.AcceptedAssignmentFingerprint(record)
+	require.NoError(t, err)
+	require.Equal(t, original, updated)
+	require.NoError(t, fingerprints.CheckSourceDependencies(record))
+	dependent := topicRecord("assignment-dependent")
+	dependent.Dependencies = []RevisionRef{{ID: record.ID, Version: record.Version}}
+	require.NoError(t, fingerprints.CheckDependencies([]Record{dependent}))
+	require.NoError(t, CheckDependencies([]Record{dependent}, map[string]SourceSnapshot{SourceKey(source.SourceHandle): source}, catalog))
+
+	target.Retired = true
+	catalog[target.ID] = target
+	_, err = NewRecordFingerprints(available, catalog).AcceptedAssignmentFingerprint(record)
+	require.ErrorIs(t, err, ErrSourceStale)
+	target.Retired = false
+	catalog[target.ID] = target
+	source.State = map[string]string{"content": "changed evidence"}
+	available[source.SourceHandle] = source
+	require.ErrorIs(t, NewRecordFingerprints(available, catalog).CheckSourceDependencies(record), ErrSourceStale)
+	require.ErrorIs(t, NewRecordFingerprints(available, catalog).CheckDependencies([]Record{dependent}), ErrSourceStale)
+}
+
 func TestOntologyBatchFingerprintsPreserveVersionsAndFreshness(t *testing.T) {
 	first := policySnapshot("evidence", EvidenceSource, "version one")
 	second := first

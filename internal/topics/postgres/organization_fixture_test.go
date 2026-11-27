@@ -15,6 +15,8 @@ import (
 	"github.com/markhuangai/dense-mem/internal/config"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/provider/structured"
+	searchmaintenance "github.com/markhuangai/dense-mem/internal/search/maintenance"
+	searchpostgres "github.com/markhuangai/dense-mem/internal/search/postgres"
 	organization "github.com/markhuangai/dense-mem/internal/topics"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
 	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
@@ -58,6 +60,33 @@ func (f *ontologyFixture) organizationEvidence(t *testing.T, owner int, text str
 	result, err := f.knowledge.CreateIngestForTest(context.Background(), knowledge.CreateIngestInput{TeamID: f.team, OwnerProfileID: f.owners[owner], IdempotencyKey: uuid.NewString(), RequestHash: testHash(text + uuid.NewString()), Evidence: []knowledge.EvidenceInput{{FragmentID: uuid.NewString(), Content: text, ForceInsert: true, Metadata: metadata}}})
 	require.NoError(t, err)
 	return topic.SourceHandle{Kind: topic.EvidenceSource, ID: result.Evidence[0].FragmentID, Version: 1}
+}
+
+func seedOrganizationVectors(t *testing.T, f *ontologyFixture, handles []topic.SourceHandle) {
+	t.Helper()
+	ctx := context.Background()
+	_, err := searchpostgres.NewStore(f.admin, f.rls).EnsureActiveSearchContract(ctx, searchmaintenance.EnsureActiveSearchContractInput{Model: "fixture-embedding", Dimensions: 3})
+	require.NoError(t, err)
+	sources, err := f.store.ReadSources(ctx, f.team, handles)
+	require.NoError(t, err)
+	for _, source := range sources {
+		document, err := f.knowledge.UpsertSearchDocument(ctx, knowledge.UpsertSearchDocumentInput{TeamID: f.team,
+			OwnerProfileID: source.OwnerID, SourceKind: "evidence", SourceID: source.ID, SourceVersion: source.Version,
+			DocumentText: topic.SourceDisplayText(source), SpaceID: f.space, SpaceGeneration: f.generation, SpaceKind: "team_shared"})
+		require.NoError(t, err)
+		loaded, err := f.knowledge.LoadSearchDocumentsForEmbedding(ctx, knowledge.LoadSearchDocumentsForEmbeddingInput{TeamID: f.team,
+			OwnerProfileID: source.OwnerID, SearchDocumentIDs: []string{document.SearchDocumentID}})
+		require.NoError(t, err)
+		require.Len(t, loaded, 1)
+		item := loaded[0]
+		err = f.knowledge.CompleteSearchDocumentsWithEmbeddings(ctx, knowledge.CompleteSearchDocumentsWithEmbeddingsInput{TeamID: f.team,
+			OwnerProfileID: source.OwnerID, Documents: []knowledge.SearchDocumentEmbedding{{SearchDocumentID: item.SearchDocumentID,
+				DocumentHash: item.DocumentHash, SourceVersion: item.SourceVersion, DocumentVersion: item.DocumentVersion,
+				ProjectionFormat: item.ProjectionFormat, ProjectionGenerationID: item.ProjectionGenerationID,
+				EmbeddingContractID: item.EmbeddingContractID, EmbeddingDimensions: item.EmbeddingDimensions,
+				Embedding: []float32{1, 0, 0}, SpaceID: item.SpaceID, SpaceGeneration: item.SpaceGeneration}}})
+		require.NoError(t, err)
+	}
 }
 
 func organizationFixtureResponse(request assessment.Request, equivalent func(assessment.Item, assessment.Item) bool) assessment.Response {

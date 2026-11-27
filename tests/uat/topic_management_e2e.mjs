@@ -50,16 +50,26 @@ try {
     const { kind, version } = page.sources[0]; sources.push({ kind, id, version });
   }
   await settle(manager, async () => (await recall()).length === 1);
+  const assignmentCount = () => Number(executeFixtureSQL(`SELECT count(*) FROM topic_assignment_outcomes WHERE team_id='${teamID}'::uuid AND evidence_id=ANY(ARRAY[${ids.map((id) => `'${id}'`).join(",")}]::uuid[])`));
+  const beforeDefine = assignmentCount();
   const unusedKey = `atlas-postgresql-alternative-${randomUUID()}`;
   await saveEdits([{ action: "define", expected_version: 0, kind: "topic", definition: { key: unusedKey, label: "Atlas PostgreSQL alternative vocabulary", description: "PostgreSQL database storage", aliases: [] } }]);
   const topics = (await ui("/records?kind=topic&limit=200")).records;
   const added = topics.find((record) => record.definition?.key === unusedKey);
   assert(added);
-  await settle(manager, async () => {
-    const direct = (await mcp("recall_memory", { topic_ids: [added.id], limit: 20 }, manager)).results;
-    const visible = new Set(direct.flatMap((hit) => [hit.evidence_id, ...hit.equivalent_evidence_ids]));
-    return ids.every((id) => visible.has(id));
-  });
+  const markers = Number(executeFixtureSQL(`SELECT count(*) FROM topic_maintenance_markers WHERE team_id='${teamID}'::uuid AND anchor_kind='topic_record_heads' AND anchor_id='${added.id}'`));
+  assert.equal(markers, 0, "a new Topic must not enqueue definition markers");
+  await settle(manager);
+  assert.equal(assignmentCount(), beforeDefine, "a new Topic must not requeue existing Evidence");
+  assert.deepEqual((await mcp("recall_memory", { topic_ids: [added.id], limit: 20 }, manager)).results, []);
+  const memberTopic = (await ui("/records?kind=topic&limit=200")).records.find((record) => record.definition?.key === "memory-storage");
+  assert(memberTopic);
+  const directMembers = Number(executeFixtureSQL(`SELECT count(*) FROM topic_memberships WHERE team_id='${teamID}'::uuid AND topic_id='${memberTopic.id}'::uuid AND NOT retired AND evidence_id=ANY(ARRAY[${ids.map((id) => `'${id}'`).join(",")}]::uuid[])`));
+  assert(directMembers > 0, "material edit fixture needs a direct member");
+  await saveEdits([{ action: "define", record_id: memberTopic.id, expected_version: memberTopic.edit_version ?? memberTopic.version,
+    kind: "topic", definition: { ...memberTopic.definition, description: `${memberTopic.definition.description} Reviewed for operations.` } }]);
+  await settle(manager);
+  assert(assignmentCount() > beforeDefine, "a material Topic edit must reassess direct members");
   const edit = { action: "define", kind: "topic", expected_version: 0, definition: { key: `manager-${randomUUID()}`, label: "Manager storage vocabulary", description: "Shared database facilities", aliases: [] } };
   const input = { operation_key: randomUUID(), reason: "Review database vocabulary", edits: [edit] };
   for (const retired of [

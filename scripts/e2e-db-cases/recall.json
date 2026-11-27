@@ -3,6 +3,13 @@
   "capability": "recall",
   "cases": [
     {
+      "id": "repository/TestRecallEquivalenceMaintenanceFailureRetryAndCoverage",
+      "package": "./internal/recall/postgres",
+      "run": "^TestRecallEquivalenceMaintenanceFailureRetryAndCoverage$",
+      "phase": "precheck",
+      "source": "internal/recall/postgres/recall_topic_integration_test.go"
+    },
+    {
       "id": "repository/TestRecallAccuracyCohort",
       "package": "./internal/recall/postgres",
       "run": "^TestRecallAccuracyCohort$",

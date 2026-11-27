@@ -63,8 +63,10 @@ type TopicMaintenanceSettings struct {
 }
 
 type TopicMaintenanceCommand struct {
-	OperationKey string `json:"operation_key"`
-	Action       string `json:"action"`
-	MaxBatches   int    `json:"max_batches"`
-	RetryRunID   string `json:"retry_run_id,omitempty"`
+	OperationKey string   `json:"operation_key"`
+	Action       string   `json:"action"`
+	MaxBatches   int      `json:"max_batches"`
+	RetryRunID   string   `json:"retry_run_id,omitempty"`
+	TeamID       string   `json:"team_id,omitempty"`
+	EvidenceIDs  []string `json:"evidence_ids,omitempty"`
 }

@@ -41,6 +41,9 @@ func TestSearchAdapterEnsureActiveContractExistingGeneration(t *testing.T) {
 	expectActiveContract(mock, contract)
 	mock.ExpectQuery(regexp.QuoteMeta("FROM pg_class AS index_class")).WillReturnRows(sqlmock.NewRows([]string{"valid", "definition"}).AddRow(true,
 		"using hnsw (embedding::vector(2) vector_cosine_ops) embedding_contract_id = '"+contractID+"' embedding_dimensions = 2 search_state = 'current' embedding is not null"))
+	mock.ExpectExec("SELECT pg_advisory_lock").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("(?s)SELECT index_meta.indisvalid").WillReturnRows(sqlmock.NewRows([]string{"valid"}).AddRow(true))
+	mock.ExpectExec("SELECT pg_advisory_unlock").WillReturnResult(sqlmock.NewResult(0, 1))
 	result, err := store.EnsureActiveSearchContract(context.Background(), input)
 	require.NoError(t, err)
 	require.NotNil(t, result)

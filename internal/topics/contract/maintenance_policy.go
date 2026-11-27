@@ -68,6 +68,9 @@ func PrepareMaintenanceCommand(input domain.TopicMaintenanceCommand) (domain.Top
 	if !boundedText(input.OperationKey, 128) {
 		return input, fmt.Errorf("%w: operation key required", ErrInvalid)
 	}
+	if input.Action != "reassess" && (input.TeamID != "" || len(input.EvidenceIDs) != 0) {
+		return input, ErrInvalid
+	}
 	switch input.Action {
 	case "run", "retry":
 		if input.MaxBatches == 0 {
@@ -79,6 +82,19 @@ func PrepareMaintenanceCommand(input domain.TopicMaintenanceCommand) (domain.Top
 		if (input.Action == "retry") != (input.RetryRunID != "") || (input.RetryRunID != "" && !validID(input.RetryRunID)) {
 			return input, ErrInvalid
 		}
+	case "reassess":
+		if !validID(input.TeamID) || len(input.EvidenceIDs) < 1 || len(input.EvidenceIDs) > MaxOrganizationSources || input.RetryRunID != "" || input.MaxBatches < 0 || input.MaxBatches > 1 {
+			return input, ErrInvalid
+		}
+		seen := make(map[string]bool, len(input.EvidenceIDs))
+		for _, id := range input.EvidenceIDs {
+			if !validID(id) || seen[id] {
+				return input, ErrInvalid
+			}
+			seen[id] = true
+		}
+		sort.Strings(input.EvidenceIDs)
+		input.MaxBatches = 1
 	case "pause", "resume":
 		if input.MaxBatches != 0 || input.RetryRunID != "" {
 			return input, ErrInvalid

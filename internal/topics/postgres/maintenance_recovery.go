@@ -43,7 +43,7 @@ func (s *Store) recoverMaintenanceBatches(ctx context.Context, now time.Time) er
 		 ON assessment.team_id=batch.team_id AND assessment.shared_space_id=batch.shared_space_id AND assessment.space_generation=batch.space_generation AND assessment.operation_key='maintenance:'||batch.batch_id::text
 		 JOIN memory_spaces AS space ON space.team_id=batch.team_id AND space.id=batch.shared_space_id AND space.generation=batch.space_generation AND space.lifecycle_state='active'
 		 JOIN teams AS team ON team.id=batch.team_id AND team.status='active' AND team.deleted_at IS NULL
-		 WHERE batch.status='running' AND batch.lease_until>? AND batch.lease_until>clock_timestamp()
+		 WHERE batch.batch_kind='assignment' AND batch.status='running' AND batch.lease_until>? AND batch.lease_until>clock_timestamp()
 		 AND ((COALESCE(assessment.body->'result'->>'failure_code','')='' AND assessment.body->'result'->>'current'='true')
 		 OR (COALESCE(assessment.body->'result'->>'failure_code','')<>'' AND assessment.body->'result'->>'current'='false'))
 		 AND NOT EXISTS(SELECT 1 FROM topic_maintenance_attempts AS attempt WHERE attempt.batch_id=batch.batch_id AND attempt.reconciled_at IS NULL)
@@ -51,7 +51,7 @@ func (s *Store) recoverMaintenanceBatches(ctx context.Context, now time.Time) er
 			return err
 		}
 		for _, batch := range batches {
-			claim = topic.MaintenanceClaim{ID: batch.ID, RunID: batch.RunID, WindowID: batch.WindowID, TeamID: batch.TeamID,
+			claim = topic.MaintenanceClaim{ID: batch.ID, Kind: "assignment", RunID: batch.RunID, WindowID: batch.WindowID, TeamID: batch.TeamID,
 				SpaceID: batch.SpaceID, Generation: batch.Generation, LeaseToken: batch.LeaseToken, LeaseUntil: batch.LeaseUntil}
 			phase = "recovery_receipt"
 			if err := json.Unmarshal(batch.Sources, &claim.Sources); err != nil {

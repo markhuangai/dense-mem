@@ -16,6 +16,7 @@ import (
 const topicMaintenanceConfigBodyKey = "topicMaintenanceConfig"
 const topicMaintenanceCommandBodyKey = "topicMaintenanceCommand"
 const topicMaintenancePauseBodyKey = "topicMaintenancePause"
+const topicMaintenanceReassessBodyKey = "topicMaintenanceReassess"
 
 type controlTopicMaintenanceConfigItem struct {
 	Key   string `json:"key" validate:"required,max=64"`
@@ -31,6 +32,10 @@ type controlTopicMaintenanceRunRequest struct {
 type controlTopicMaintenancePauseRequest struct {
 	OperationKey string `json:"operation_key" validate:"required,max=128"`
 }
+type controlTopicMaintenanceReassessRequest struct {
+	OperationKey string   `json:"operation_key" validate:"required,max=128"`
+	EvidenceIDs  []string `json:"evidence_ids" validate:"required,min=1,max=20,dive,uuid"`
+}
 
 func registerTopicMaintenanceRoutes(api *echo.Group, h *controlConfigHandler) {
 	if h.appConfig != nil {
@@ -44,6 +49,7 @@ func registerTopicMaintenanceRoutes(api *echo.Group, h *controlConfigHandler) {
 	api.GET("/topic-maintenance/runs", h.listTopicMaintenanceRuns)
 	api.POST("/topic-maintenance/runs", h.runTopicMaintenance, middleware.BindAndValidateStrict[controlTopicMaintenanceRunRequest](topicMaintenanceCommandBodyKey))
 	api.POST("/topic-maintenance/runs/:runId/retry", h.retryTopicMaintenance, middleware.BindAndValidateStrict[controlTopicMaintenanceRunRequest](topicMaintenanceCommandBodyKey))
+	api.POST("/teams/:teamId/topic-maintenance/reassess", h.reassessTopicMaintenance, middleware.BindAndValidateStrict[controlTopicMaintenanceReassessRequest](topicMaintenanceReassessBodyKey))
 	api.POST("/topic-maintenance/pause", h.pauseTopicMaintenance, middleware.BindAndValidateStrict[controlTopicMaintenancePauseRequest](topicMaintenancePauseBodyKey))
 	api.POST("/topic-maintenance/resume", h.resumeTopicMaintenance, middleware.BindAndValidateStrict[controlTopicMaintenancePauseRequest](topicMaintenancePauseBodyKey))
 }
@@ -110,6 +116,14 @@ func (h *controlConfigHandler) retryTopicMaintenance(c *echo.Context) error {
 		return err
 	}
 	return h.topicMaintenanceRunCommand(c, "retry", id.String())
+}
+func (h *controlConfigHandler) reassessTopicMaintenance(c *echo.Context) error {
+	id, err := parseControlUUID(c.Param("teamId"), "team ID")
+	if err != nil {
+		return err
+	}
+	body := middleware.MustGetValidatedBody[controlTopicMaintenanceReassessRequest](c.Request().Context(), topicMaintenanceReassessBodyKey)
+	return h.topicMaintenanceCommand(c, domain.TopicMaintenanceCommand{OperationKey: body.OperationKey, Action: "reassess", TeamID: id.String(), EvidenceIDs: body.EvidenceIDs})
 }
 func (h *controlConfigHandler) topicMaintenanceRunCommand(c *echo.Context, action, runID string) error {
 	body := middleware.MustGetValidatedBody[controlTopicMaintenanceRunRequest](c.Request().Context(), topicMaintenanceCommandBodyKey)
