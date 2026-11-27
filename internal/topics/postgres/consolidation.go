@@ -74,7 +74,7 @@ func (s *Store) ClaimTopicConsolidation(ctx context.Context, turn topic.Maintena
 		seen := map[string]bool{}
 		for _, seed := range seeds {
 			claim.Revisions[seed.id] = seed.version
-			ids, err := assignmentVectorCandidates(tx, fence, seed.active, seed.vector)
+			ids, err := s.assignmentVectorCandidates(tx, fence, seed.active, seed.vector)
 			if err != nil {
 				return err
 			}
@@ -185,6 +185,9 @@ func (s *Store) CompleteTopicConsolidationPair(ctx context.Context, claim topic.
 			result, err = s.mergeTopicPair(tx, fence, claim, pair)
 			if err != nil {
 				return err
+			}
+			if result.ReassessmentRequired {
+				return nil
 			}
 		} else {
 			var count int
@@ -315,17 +318,17 @@ func (s *Store) mergeTopicPair(tx *gorm.DB, fence scope, claim topic.Maintenance
 		return result, err
 	}
 	var locked []struct {
-		ID                         string
-		DefinitionVersion, Version int64
+		ID                                                    string
+		DefinitionVersion, MaterialDefinitionVersion, Version int64
 	}
-	if err := tx.Raw(`SELECT topic_id::text AS id,definition_version,version FROM topics
+	if err := tx.Raw(`SELECT topic_id::text AS id,definition_version,material_definition_version,version FROM topics
 		WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND topic_id=ANY(?::uuid[]) AND NOT retired
 		ORDER BY topic_id FOR UPDATE`, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(ids)).Scan(&locked).Error; err != nil {
 		return result, err
 	}
-	versions := map[string]struct{ definition, edit int64 }{}
+	versions := map[string]struct{ definition, material, edit int64 }{}
 	for _, row := range locked {
-		versions[row.ID] = struct{ definition, edit int64 }{row.DefinitionVersion, row.Version}
+		versions[row.ID] = struct{ definition, material, edit int64 }{row.DefinitionVersion, row.MaterialDefinitionVersion, row.Version}
 	}
 	if len(versions) != len(ids) || versions[survivorID].definition != choices[0].version || versions[loserID].definition != choices[1].version {
 		return result, topic.ErrSourceStale
@@ -342,19 +345,22 @@ func (s *Store) mergeTopicPair(tx *gorm.DB, fence scope, claim topic.Maintenance
 	if !active {
 		return result, topic.ErrSourceStale
 	}
-	rows, err = tx.Raw(`SELECT evidence_id::text FROM topic_memberships WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?
+	rows, err = tx.Raw(`SELECT evidence_id::text,topic_version FROM topic_memberships WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?
 		AND topic_id=?::uuid AND NOT retired ORDER BY evidence_id LIMIT ?`, fence.TeamID, fence.SpaceID, fence.Generation, loserID, topic.MaxChanges+1).Rows()
 	if err != nil {
 		return result, err
 	}
 	var evidenceIDs []string
+	acceptedVersions := map[string]int64{}
 	for rows.Next() {
 		var id string
-		if err := rows.Scan(&id); err != nil {
+		var version int64
+		if err := rows.Scan(&id, &version); err != nil {
 			rows.Close()
 			return result, err
 		}
 		evidenceIDs = append(evidenceIDs, id)
+		acceptedVersions[id] = version
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return result, err
@@ -395,19 +401,37 @@ func (s *Store) mergeTopicPair(tx *gorm.DB, fence scope, claim topic.Maintenance
 		if !exists || old.Retired {
 			return result, topic.ErrSourceStale
 		}
+		view, err := s.currentView(tx, fence, old)
+		if err != nil {
+			return result, err
+		}
+		handle := topic.SourceHandle{Kind: topic.EvidenceSource, ID: id, Version: 1}
+		snapshot, sourceErr := readSource(tx, fence, handle)
+		if sourceErr != nil && !errors.Is(sourceErr, topic.ErrSourceStale) {
+			return result, sourceErr
+		}
+		if sourceErr == nil && (!view.Current || acceptedVersions[id] < versions[loserID].material) {
+			if err := refreshMaintenanceSource(tx, fence, handle, true); err != nil {
+				return result, err
+			}
+			if err := tx.Exec(`UPDATE topic_maintenance_sources SET force_reassessment=true WHERE team_id=?::uuid AND shared_space_id=?::uuid
+				AND space_generation=? AND source_kind='evidence' AND source_id=? AND eligible`, fence.TeamID, fence.SpaceID, fence.Generation, id).Error; err != nil {
+				return result, err
+			}
+			result.ReassessmentRequired = true
+			continue
+		}
 		old.Retired = true
 		changes = append(changes, topic.Change{Record: old, ExpectedVersion: old.Version})
 		result.RetiredMemberships++
+		if errors.Is(sourceErr, topic.ErrSourceStale) {
+			if err := refreshMaintenanceSource(tx, fence, handle, false); err != nil {
+				return result, err
+			}
+			continue
+		}
 		if existing, found := memberships[survivorID]; found && !existing.Retired {
 			continue
-		}
-		handle := topic.SourceHandle{Kind: topic.EvidenceSource, ID: id, Version: 1}
-		snapshot, err := readSource(tx, fence, handle)
-		if errors.Is(err, topic.ErrSourceStale) {
-			continue
-		}
-		if err != nil {
-			return result, err
 		}
 		fingerprint, err := topic.SourceFingerprint(snapshot)
 		if err != nil {
@@ -431,6 +455,11 @@ func (s *Store) mergeTopicPair(tx *gorm.DB, fence scope, claim topic.Maintenance
 			Dependencies: []topic.RevisionRef{{ID: survivorID, Version: survivor.Version + 1}}}
 		changes = append(changes, topic.Change{Record: membership, ExpectedVersion: expected})
 		result.MovedMemberships++
+	}
+	if result.ReassessmentRequired {
+		result.RetiredID = ""
+		result.MovedMemberships, result.RetiredMemberships = 0, 0
+		return result, nil
 	}
 	placementOnly := 0
 	for _, child := range children {

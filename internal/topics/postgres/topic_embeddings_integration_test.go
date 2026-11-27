@@ -84,6 +84,29 @@ func TestTopicHybridSearchSkipsStaleCandidates(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Topics, 1)
 	require.Equal(t, current.ID, result.Topics[0].ID)
+
+	t.Run("vector shortlist refills after stale results", func(t *testing.T) {
+		f := newOrganizationFixture(t)
+		ctx := context.Background()
+		active, err := searchpostgres.NewStore(f.admin, f.rls).EnsureActiveSearchContract(ctx, searchmaintenance.EnsureActiveSearchContractInput{Model: "fixture-embedding", Dimensions: 3})
+		require.NoError(t, err)
+		current := seedStaleVocabulary(t, f, 20, 1)[0]
+		err = f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error {
+			return tx.Exec(`INSERT INTO topic_embeddings(team_id,shared_space_id,space_generation,topic_id,topic_version,embedding_contract_id,embedding_dimensions,embedding)
+				SELECT team_id,shared_space_id,space_generation,topic_id,definition_version,?::uuid,3,
+				CASE WHEN topic_id=?::uuid THEN '[0.98,0.2,0]'::vector ELSE '[1,0,0]'::vector END
+				FROM topics WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?`,
+				active.Contract.EmbeddingContractID, current.ID, f.team, f.space, f.generation).Error
+		})
+		require.NoError(t, err)
+		scope := assignment.Scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation, OperationID: uuid.NewString()}
+		result, err := f.store.ReadAssignmentCandidates(ctx, scope, assignment.Slice{Text: "A nebula observation.", Embedding: []float32{1, 0, 0},
+			EmbeddingContractID: active.Contract.EmbeddingContractID, SearchIndexGenerationID: active.Contract.SearchIndexGenerationID})
+		require.NoError(t, err)
+		require.Zero(t, result.FullTextCount)
+		require.Len(t, result.Topics, 1)
+		require.Equal(t, current.ID, result.Topics[0].ID)
+	})
 }
 
 func TestTopicHybridSearchIndexTiersAndIsolation(t *testing.T) {

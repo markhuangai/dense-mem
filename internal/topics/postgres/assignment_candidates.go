@@ -66,7 +66,7 @@ func (s *Store) assignmentCandidatesWithVector(tx *gorm.DB, fence scope, input a
 	stats.FullTextCount = len(lexical)
 	var semantic []string
 	if vector != "" {
-		semantic, err = assignmentVectorCandidates(tx, fence, active, vector)
+		semantic, err = s.assignmentVectorCandidates(tx, fence, active, vector)
 		if err != nil {
 			return nil, stats, err
 		}
@@ -258,7 +258,7 @@ func assignmentEvidenceVector(tx *gorm.DB, fence scope, input assignment.Slice, 
 	return vector, err
 }
 
-func assignmentVectorCandidates(tx *gorm.DB, fence scope, active assignmentSearchContract, vector string) ([]string, error) {
+func (s *Store) assignmentVectorCandidates(tx *gorm.DB, fence scope, active assignmentSearchContract, vector string) ([]string, error) {
 	if active.Dimensions < 1 || active.Dimensions > domain.MaxEmbeddingDimensions {
 		return nil, errors.New("topic assignment search dimensions are invalid")
 	}
@@ -298,18 +298,44 @@ func assignmentVectorCandidates(tx *gorm.DB, fence scope, active assignmentSearc
 		AND e.topic_version=current.definition_version AND NOT current.retired
 		ORDER BY ` + distance + `,e.topic_id LIMIT ?
 	) SELECT topic_id::text FROM nearest ORDER BY embedding <=> ?::vector,topic_id LIMIT ?`
-	rows, err := tx.Raw(query, fence.TeamID, fence.SpaceID, fence.Generation, active.ID, active.Dimensions, vector, limit, vector, assignment.MaxTopics).Rows()
+	rows, err := tx.Raw(query, fence.TeamID, fence.SpaceID, fence.Generation, active.ID, active.Dimensions, vector, limit, vector, limit).Rows()
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var result []string
+	var ids []string
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
+			rows.Close()
 			return nil, err
 		}
-		result = append(result, id)
+		ids = append(ids, id)
 	}
-	return result, rows.Err()
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil || len(ids) == 0 {
+		return nil, err
+	}
+	heads, err := loadHeads(tx, fence, ids, nil)
+	if err != nil {
+		return nil, err
+	}
+	records := make([]topic.Record, 0, len(ids))
+	for _, id := range ids {
+		if record, ok := heads[id]; ok && !record.Retired {
+			records = append(records, record)
+		}
+	}
+	views, err := s.organizationViews(tx, fence, records)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]string, 0, assignment.MaxTopics)
+	for _, view := range views {
+		if view.Current {
+			result = append(result, view.ID)
+			if len(result) == assignment.MaxTopics {
+				break
+			}
+		}
+	}
+	return result, nil
 }

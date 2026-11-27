@@ -20,10 +20,17 @@ const communityWorkReady = `work.ready_at<=statement_timestamp() AND (work.lease
 )`
 
 const communityEligible = `(current.manager_authored OR (SELECT count(*) FROM (
-	SELECT 1 FROM topic_memberships AS member WHERE
+	SELECT 1 FROM topic_memberships AS member
+	JOIN evidence_fragments AS fragment ON
+	(fragment.team_id,fragment.space_id,fragment.space_generation,fragment.fragment_id)=
+	(member.team_id,member.shared_space_id,member.space_generation,member.evidence_id)
+	JOIN LATERAL (SELECT ingest.status,ingest.source_summary,ingest.metadata FROM knowledge_ingests AS ingest
+		WHERE ingest.team_id=fragment.team_id AND ingest.ingest_id=fragment.ingest_id LIMIT 1) AS ingest ON TRUE
+	LEFT JOIN evidence_sources AS source ON source.team_id=fragment.team_id AND source.source_id=fragment.source_id
+	WHERE
 	(member.team_id,member.shared_space_id,member.space_generation,member.topic_id)=
 	(current.team_id,current.shared_space_id,current.space_generation,current.topic_id)
-	AND NOT member.retired LIMIT 2) AS active_members)>=2)`
+	AND NOT member.retired AND ` + eligibleEvidenceSQL + ` LIMIT 2) AS active_members)>=2)`
 
 const latestCommunityOutcome = `LEFT JOIN LATERAL (SELECT status FROM community_placement_outcomes AS result
     WHERE (result.team_id,result.shared_space_id,result.space_generation,result.topic_id,result.topic_version)=

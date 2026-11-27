@@ -59,6 +59,15 @@ SELECT matches.marker_index,matches.source_kind,matches.source_id,matches.source
 FROM matches LEFT JOIN page USING(source_kind,source_id,source_version)
 ORDER BY matches.source_kind,matches.source_id,matches.marker_index`
 
+const eligibleEvidenceSQL = `ingest.status='completed'
+      AND (fragment.source_id IS NULL OR source.current_revision_id=fragment.source_revision_id)
+      AND NOT EXISTS (SELECT 1 FROM evidence_quarantines AS quarantine
+           WHERE quarantine.team_id=fragment.team_id AND quarantine.fragment_id=fragment.fragment_id AND quarantine.status='active')
+      AND NOT EXISTS (SELECT 1 FROM evidence_lifecycle_events AS event
+           WHERE event.team_id=fragment.team_id AND event.target_fragment_id=fragment.fragment_id)
+      AND NOT (ingest.source_summary='overdue conflict deletion-only derivation'
+           AND ingest.metadata->>'conflict_resolution_deletion_only'='true')`
+
 const evidenceSourceSQL = `
 WITH candidate AS (
     SELECT fragment.*,source.current_revision_id
@@ -69,14 +78,7 @@ WITH candidate AS (
     ) AS ingest ON TRUE
     LEFT JOIN evidence_sources AS source ON source.team_id=fragment.team_id AND source.source_id=fragment.source_id
     WHERE fragment.team_id=?::uuid AND fragment.space_id=?::uuid AND fragment.space_generation=?
-      AND fragment.fragment_id=ANY(?::uuid[]) AND ingest.status='completed'
-      AND (fragment.source_id IS NULL OR source.current_revision_id=fragment.source_revision_id)
-      AND NOT EXISTS (SELECT 1 FROM evidence_quarantines AS quarantine
-           WHERE quarantine.team_id=fragment.team_id AND quarantine.fragment_id=fragment.fragment_id AND quarantine.status='active')
-      AND NOT EXISTS (SELECT 1 FROM evidence_lifecycle_events AS event
-           WHERE event.team_id=fragment.team_id AND event.target_fragment_id=fragment.fragment_id)
-      AND NOT (ingest.source_summary='overdue conflict deletion-only derivation'
-           AND ingest.metadata->>'conflict_resolution_deletion_only'='true')
+      AND fragment.fragment_id=ANY(?::uuid[]) AND ` + eligibleEvidenceSQL + `
 )
 SELECT fragment_id::text,1::bigint,owner_profile_id::text,
        jsonb_build_object('content',content,'hash',content_hash,'authority',authority,'created_at',created_at::text,

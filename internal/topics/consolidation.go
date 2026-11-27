@@ -29,6 +29,7 @@ func (s *MaintenanceService) executeTopicConsolidation(ctx context.Context, work
 	started := time.Now()
 	decisions, probabilities, itemErrors, err := s.assessTopicPairs(opCtx, claim, work.pairs, work.policy, accounting)
 	var failures []error
+	deferred := false
 	if err != nil {
 		failures = append(failures, err)
 	} else {
@@ -43,6 +44,10 @@ func (s *MaintenanceService) executeTopicConsolidation(ctx context.Context, work
 			}
 			result, pairErr := s.deps.Consolidation.CompleteTopicConsolidationPair(opCtx, claim, pair, decisions[i])
 			reason := ""
+			if pairErr == nil && result.ReassessmentRequired {
+				deferred = true
+				reason = "membership_reassessment_pending"
+			}
 			if decisions[i] && (errors.Is(pairErr, contract.ErrConflict) || errors.Is(pairErr, contract.ErrContextBound)) {
 				reason = "merge_bound_or_hierarchy_conflict"
 				_, pairErr = s.deps.Consolidation.CompleteTopicConsolidationPair(opCtx, claim, pair, false)
@@ -69,7 +74,7 @@ func (s *MaintenanceService) executeTopicConsolidation(ctx context.Context, work
 	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
 	defer finishCancel()
 	combined := errors.Join(failures...)
-	combined = errors.Join(combined, s.deps.Consolidation.FinishTopicConsolidation(finishCtx, claim, combined == nil))
+	combined = errors.Join(combined, s.deps.Consolidation.FinishTopicConsolidation(finishCtx, claim, combined == nil && !deferred))
 	failure := ""
 	if combined != nil {
 		failure = maintenanceDiagnosticError(combined)

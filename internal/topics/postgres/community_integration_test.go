@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/markhuangai/dense-mem/internal/config"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/provider/decision"
@@ -189,6 +190,44 @@ func TestCommunityBatchEligibilityAndPerItemFences(t *testing.T) {
 	}))
 	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM topic_maintenance_community_work WHERE lease_batch_id=?::uuid`, expired.ID).Row().Scan(&leased))
 	require.Zero(t, leased, "expired community leases must be released")
+
+	t.Run("retracted Evidence does not qualify an automatic Topic", testCommunityEligibilityAfterRetraction)
+}
+
+func testCommunityEligibilityAfterRetraction(t *testing.T) {
+	ctx := t.Context()
+	f := newOrganizationFixture(t)
+	window := maintenanceWindow(t, f, maintenanceSettings(t, f))
+	automatic, managerTopic := testTopic("automatic-eligibility"), testTopic("manager-eligibility")
+	created, err := f.store.PublishAutomatic(ctx, f.team, testPublication("automatic-eligibility", 0, contract.Change{Record: automatic}))
+	require.NoError(t, err)
+	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("manager-eligibility", created.Revision, contract.Change{Record: managerTopic}))
+	require.NoError(t, err)
+	first := f.organizationEvidence(t, 0, "First eligible member.", nil)
+	second := f.organizationEvidence(t, 1, "Second eligible member.", nil)
+	input := assignment.Scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation, OperationID: uuid.NewString()}
+	items := []assignment.Publication{
+		{EvidenceID: first.ID, Outcome: assignment.Outcome{Text: "First eligible member.", Method: "decision", InputHash: testHash("first eligible"), Matches: []assignment.Match{{ID: automatic.ID, Version: 1}}}},
+		{EvidenceID: second.ID, Outcome: assignment.Outcome{Text: "Second eligible member.", Method: "decision", InputHash: testHash("second eligible"), Matches: []assignment.Match{{ID: automatic.ID, Version: 1}}}},
+	}
+	require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error { return f.store.PublishAssignmentsTx(ctx, tx, input, items) }))
+	status, err := f.store.MaintenanceStatus(ctx, time.Now())
+	require.NoError(t, err)
+	require.EqualValues(t, 2, status.Communities.Pending)
+	_, err = f.knowledge.RetractEvidence(f.actor(0, "member"), knowledge.RetractEvidenceInput{TeamID: f.team, OwnerProfileID: f.owners[0], EvidenceIDs: []string{first.ID}, Reason: "Withdraw a member", IdempotencyKey: uuid.NewString(), RequestHash: testHash("withdraw member")})
+	require.NoError(t, err)
+	revalidationDiscover(t, f, window)
+	status, err = f.store.MaintenanceStatus(ctx, time.Now())
+	require.NoError(t, err)
+	require.EqualValues(t, 1, status.Communities.Pending)
+	turn, err := f.store.ClaimMaintenanceTurn(ctx, window.ID, time.Now(), 3*time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, turn)
+	inputs, claim, err := f.store.ClaimCommunities(ctx, *turn, window.ID, time.Now())
+	require.NoError(t, err)
+	require.NotNil(t, claim)
+	require.Len(t, inputs, 1)
+	require.Equal(t, managerTopic.ID, inputs[0].Topic.ID)
 }
 
 type communityDecisionSettings struct{}
@@ -635,6 +674,18 @@ func testCommunityParentRevision(t *testing.T) {
 	view, err = f.store.GetRecord(manager, f.team, definitionParent.ID, 0)
 	require.NoError(t, err)
 	require.Equal(t, child.ID, view.Definition.ParentID)
+
+	view, err = f.store.GetRecord(manager, f.team, child.ID, 0)
+	require.NoError(t, err)
+	definition := *view.Definition
+	definition.ParentID = ""
+	_, err = managementService(f).SaveEdits(manager, contract.SaveEditsInput{OperationKey: uuid.NewString(), Reason: "Remove the placed parent",
+		Edits: []contract.ManagementEdit{{Action: "define", Kind: contract.Topic, RecordID: child.ID, ExpectedVersion: view.EditVersion, Definition: &definition}}})
+	require.NoError(t, err)
+	view, err = f.store.GetRecord(manager, f.team, child.ID, 0)
+	require.NoError(t, err)
+	require.Empty(t, view.Definition.ParentID)
+	require.Empty(t, view.CommunityParentID)
 }
 
 func testCommunityAssignmentRefresh(t *testing.T) {

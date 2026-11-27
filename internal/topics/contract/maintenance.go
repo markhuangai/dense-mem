@@ -122,6 +122,7 @@ type TopicConsolidationPair struct {
 type TopicConsolidationResult struct {
 	SurvivorID, RetiredID                                    string
 	MovedMemberships, RetiredMemberships, ReparentedChildren int
+	ReassessmentRequired                                     bool
 }
 
 type TopicConsolidationRepository interface {

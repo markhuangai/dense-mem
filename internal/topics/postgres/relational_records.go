@@ -23,15 +23,16 @@ func writeRelationalRecord(tx *gorm.DB, fence scope, record topic.Record, origin
 				definition_version=excluded.definition_version,version=topics.version+1,retired=excluded.retired,
 				topic_key=excluded.topic_key,label=excluded.label,description=excluded.description,
 				aliases=excluded.aliases,
-				parent_topic_id=CASE WHEN ? THEN topics.parent_topic_id WHEN excluded.parent_topic_id IS NOT NULL THEN excluded.parent_topic_id
+				parent_topic_id=CASE WHEN ? THEN topics.parent_topic_id WHEN ? THEN excluded.parent_topic_id WHEN excluded.parent_topic_id IS NOT NULL THEN excluded.parent_topic_id
 					WHEN topics.placement IN ('placed','standalone') THEN topics.parent_topic_id ELSE NULL END,
-				placement=CASE WHEN ? THEN topics.placement WHEN excluded.parent_topic_id IS NOT NULL THEN 'declared'
+				placement=CASE WHEN ? THEN topics.placement WHEN ? THEN 'declared' WHEN excluded.parent_topic_id IS NOT NULL THEN 'declared'
 					WHEN topics.placement IN ('placed','standalone') THEN topics.placement ELSE 'declared' END,
 				manager_authored=topics.manager_authored OR excluded.manager_authored,
 				material_definition_version=CASE WHEN ? THEN topics.material_definition_version ELSE excluded.definition_version END
 			WHERE topics.definition_version=?`, append(key, record.Version, definition.Key, definition.Label,
 			definition.Description, pq.Array(aliases), definition.ParentID, origin == "manager" || origin == "rollback",
-			record.Version, preserveMaterial, preserveMaterial, preserveMaterial, record.Version-1)...)
+			record.Version, preserveMaterial, origin == "manager" || origin == "rollback",
+			preserveMaterial, origin == "manager" || origin == "rollback", preserveMaterial, record.Version-1)...)
 	case topic.AssignmentKind:
 		var topicVersion int64
 		var fingerprint string

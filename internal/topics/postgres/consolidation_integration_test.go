@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
 	searchmaintenance "github.com/markhuangai/dense-mem/internal/search/maintenance"
 	searchpostgres "github.com/markhuangai/dense-mem/internal/search/postgres"
 	semantic "github.com/markhuangai/dense-mem/internal/semanticwrite/contract"
@@ -90,6 +91,101 @@ func TestTopicConsolidationPreservesMembershipsAndHierarchy(t *testing.T) {
 	var count int
 	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM topic_memberships WHERE team_id=?::uuid AND topic_id=?::uuid AND NOT retired`, f.team, winner.ID).Row().Scan(&count))
 	require.Equal(t, 3, count)
+
+	for _, change := range []string{"material revision", "changed occurrence", "withdrawn source"} {
+		t.Run(change, func(t *testing.T) { testConsolidationStaleMembership(t, change) })
+	}
+}
+
+func testConsolidationStaleMembership(t *testing.T, change string) {
+	f := newOrganizationFixture(t)
+	ctx := context.Background()
+	_, err := searchpostgres.NewStore(f.admin, f.rls).EnsureActiveSearchContract(ctx, searchmaintenance.EnsureActiveSearchContractInput{Model: "fixture-embedding", Dimensions: 3})
+	require.NoError(t, err)
+	winner, loser := testTopic("stale-winner"), testTopic("stale-loser")
+	winner.ID, loser.ID = "10000000-0000-4000-8000-000000000001", "10000000-0000-4000-8000-000000000002"
+	initial, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("stale-winner", 0, topic.Change{Record: winner}))
+	require.NoError(t, err)
+	_, err = f.store.PublishAutomatic(ctx, f.team, testPublication("stale-loser", initial.Revision, topic.Change{Record: loser}))
+	require.NoError(t, err)
+	stale := f.organizationEvidence(t, 0, "Stale loser membership.", nil)
+	overlap := f.organizationEvidence(t, 1, "Independent survivor membership.", nil)
+	input := assignment.Scope{TeamID: f.team, SpaceID: f.space, Generation: f.generation, OperationID: uuid.NewString()}
+	items := []assignment.Publication{
+		{EvidenceID: stale.ID, Outcome: assignment.Outcome{Text: "Stale loser membership.", Method: "decision", InputHash: testHash("stale loser"), Matches: []assignment.Match{{ID: loser.ID, Version: 1}}}},
+		{EvidenceID: overlap.ID, Outcome: assignment.Outcome{Text: "Independent survivor membership.", Method: "decision", InputHash: testHash("overlap"), Matches: []assignment.Match{{ID: winner.ID, Version: 1}, {ID: loser.ID, Version: 1}}}},
+	}
+	require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error { return f.store.PublishAssignmentsTx(ctx, tx, input, items) }))
+	if change == "material revision" {
+		loser.Definition.Description = "A materially different subject."
+		catalog, readErr := f.store.ListRecords(ctx, f.team, "", "", 1)
+		require.NoError(t, readErr)
+		_, err = f.store.PublishAutomatic(ctx, f.team, testPublication("material-loser", catalog.Revision, topic.Change{Record: loser, ExpectedVersion: 1}))
+	} else if change == "changed occurrence" {
+		err = f.rls.WithSystemTx(ctx, f.admin, func(tx *gorm.DB) error { return appendMaintenanceOccurrence(tx, f, stale) })
+	} else {
+		_, err = f.knowledge.RetractEvidence(f.actor(0, "member"), knowledge.RetractEvidenceInput{TeamID: f.team, OwnerProfileID: f.owners[0], EvidenceIDs: []string{stale.ID}, Reason: "Withdraw source", IdempotencyKey: uuid.NewString(), RequestHash: testHash("withdraw stale")})
+	}
+	require.NoError(t, err)
+	pairs, claim := consolidationFixtureClaim(t, f)
+	require.Len(t, pairs, 1)
+	merged, err := f.store.CompleteTopicConsolidationPair(ctx, *claim, pairs[0], true)
+	needsRepair := change != "withdrawn source"
+	require.NoError(t, err)
+	if needsRepair {
+		require.True(t, merged.ReassessmentRequired)
+	}
+	require.Equal(t, 0, merged.MovedMemberships)
+	require.NoError(t, f.store.FinishTopicConsolidation(ctx, *claim, !needsRepair))
+	require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, topic.OrganizationResult{}, "", time.Now()))
+	var staleWinner, survivorVersion int
+	require.NoError(t, f.admin.Raw(`SELECT count(*) FROM topic_memberships WHERE team_id=?::uuid AND topic_id=?::uuid AND evidence_id=?::uuid AND NOT retired`, f.team, winner.ID, stale.ID).Row().Scan(&staleWinner))
+	require.Zero(t, staleWinner)
+	require.NoError(t, f.admin.Raw(`SELECT version FROM topic_memberships WHERE team_id=?::uuid AND topic_id=?::uuid AND evidence_id=?::uuid AND NOT retired`, f.team, winner.ID, overlap.ID).Row().Scan(&survivorVersion))
+	require.Equal(t, 1, survivorVersion)
+	var status string
+	var forced bool
+	require.NoError(t, f.admin.Raw(`SELECT status,force_reassessment FROM topic_maintenance_sources WHERE team_id=?::uuid AND source_id=?`, f.team, stale.ID).Row().Scan(&status, &forced))
+	if needsRepair {
+		require.Equal(t, "pending", status)
+		require.True(t, forced)
+		var recorded bool
+		require.NoError(t, f.admin.Raw(`SELECT EXISTS(SELECT 1 FROM topic_consolidation_assessments WHERE team_id=?::uuid AND left_topic_id=?::uuid AND right_topic_id=?::uuid)`, f.team, pairs[0].Left.ID, pairs[0].Right.ID).Row().Scan(&recorded))
+		require.False(t, recorded, "a deferred pair must be considered again after reassessment")
+		var loserRetired bool
+		require.NoError(t, f.admin.Raw(`SELECT retired FROM topics WHERE team_id=?::uuid AND topic_id=?::uuid`, f.team, loser.ID).Row().Scan(&loserRetired))
+		require.False(t, loserRetired, "the original membership must remain available for forced reassessment")
+		var reassessed []assignment.Publication
+		loserVersion := int64(1)
+		if change == "material revision" {
+			loserVersion = 2
+		}
+		for _, item := range items {
+			handle := topic.SourceHandle{Kind: topic.EvidenceSource, ID: item.EvidenceID, Version: 1}
+			sources, err := f.store.ReadSources(ctx, f.team, []topic.SourceHandle{handle})
+			require.NoError(t, err)
+			fingerprint, err := topic.SourceFingerprint(sources[0])
+			require.NoError(t, err)
+			reassessed = append(reassessed, assignment.Publication{EvidenceID: item.EvidenceID, ExpectedFingerprint: fingerprint,
+				Outcome: assignment.Outcome{Text: item.Outcome.Text, Method: "decision", InputHash: testHash("reassessed:" + item.EvidenceID), Reviewed: []assignment.Topic{{ID: loser.ID, Version: loserVersion}}}})
+		}
+		input.OperationID = uuid.NewString()
+		require.NoError(t, f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error { return f.store.PublishAssignmentsTx(ctx, tx, input, reassessed) }))
+		turn, err := f.store.ClaimMaintenanceTurn(topic.WithConsolidationStage(ctx), claim.WindowID, time.Now(), 3*time.Minute)
+		require.NoError(t, err)
+		require.NotNil(t, turn)
+		pairs, retry, err := f.store.ClaimTopicConsolidation(ctx, *turn, claim.WindowID, time.Now())
+		require.NoError(t, err)
+		require.NotNil(t, retry)
+		require.Len(t, pairs, 1)
+		merged, err = f.store.CompleteTopicConsolidationPair(ctx, *retry, pairs[0], true)
+		require.NoError(t, err)
+		require.Equal(t, loser.ID, merged.RetiredID)
+		require.NoError(t, f.store.FinishTopicConsolidation(ctx, *retry, true))
+		require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *retry, topic.OrganizationResult{}, "", time.Now()))
+	} else {
+		require.Equal(t, "unavailable", status)
+	}
 }
 
 func TestTopicConsolidationConcurrentPublishers(t *testing.T) {
