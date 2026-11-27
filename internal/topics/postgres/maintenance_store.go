@@ -88,6 +88,17 @@ func maintenanceState(tx *gorm.DB) (bool, error) {
 	return paused, err
 }
 
+func maintenanceStateShared(tx *gorm.DB) (bool, error) {
+	var paused bool
+	err := tx.Raw(`SELECT paused FROM topic_maintenance_state WHERE singleton FOR SHARE`).Row().Scan(&paused)
+	return paused, err
+}
+
+func recordTeamMaintenanceProgress(tx *gorm.DB, teamID, spaceID string, generation int64) error {
+	return tx.Exec(`UPDATE topic_maintenance_teams SET last_successful_progress=clock_timestamp()
+		WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?`, teamID, spaceID, generation).Error
+}
+
 func currentMaintenanceWindow(tx *gorm.DB, now time.Time) (*topic.MaintenanceWindow, error) {
 	return scanMaintenanceWindow(tx.Raw(`SELECT `+maintenanceWindowColumns+` FROM topic_maintenance_windows
 	 WHERE starts_at<=? AND ends_at>? AND jsonb_exists(policy,'context_window_tokens') ORDER BY starts_at DESC LIMIT 1`, now, now).Row())
@@ -164,27 +175,67 @@ func seedMaintenanceTeams(tx *gorm.DB) error {
 	 ORDER BY team.id LIMIT ? ON CONFLICT DO NOTHING`, topic.MaintenancePageSize).Error
 }
 
-func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now time.Time, lease time.Duration) (*topic.MaintenanceTurn, error) {
-	if _, err := uuid.Parse(windowID); err != nil || lease <= 0 {
-		return nil, topic.ErrInvalid
-	}
-	if err := s.recoverMaintenanceBatches(ctx, now); err != nil {
-		return nil, err
-	}
-	var result *topic.MaintenanceTurn
-	err := s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
-		paused, err := maintenanceState(tx)
-		if err != nil {
+type maintenanceTurnPreview struct {
+	runID, retryRunID, reassessTeamID string
+	reassessEvidenceIDs               []string
+	runUpdatedAt                      time.Time
+	reopenScheduled                   bool
+	unresolved                        bool
+	active                            int
+	candidates                        []scope
+}
+
+const nextMaintenanceRun = ` FROM topic_maintenance_runs AS run
+	WHERE window_id=?::uuid AND kind IN ('scheduled','run','retry','reassess') AND status IN ('pending','running')
+	AND (max_batches=0 OR completed_batches+(SELECT count(*) FROM topic_maintenance_batches AS batch WHERE batch.run_id=run.run_id AND batch.status='running')<max_batches)
+	ORDER BY (kind='scheduled'),created_at,run_id LIMIT 1`
+
+func (s *Store) seedMissingMaintenanceTeams(ctx context.Context) error {
+	return s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
+		return seedMaintenanceTeams(tx)
+	})
+}
+
+func (s *Store) expireOverdueMaintenanceBatches(ctx context.Context, now time.Time) error {
+	return s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
+		var expiredIDs []string
+		if err := tx.Raw(`WITH expired AS (
+			SELECT batch_id FROM topic_maintenance_batches
+			WHERE status='running' AND lease_until<=?
+			ORDER BY batch_id FOR UPDATE SKIP LOCKED
+		)
+		UPDATE topic_maintenance_batches AS batch SET status='lost',failure_code='lease_lost'
+		FROM expired WHERE batch.batch_id=expired.batch_id RETURNING batch.batch_id::text`, now).Scan(&expiredIDs).Error; err != nil {
+			return err
+		}
+		if len(expiredIDs) == 0 {
+			return nil
+		}
+		if err := tx.Exec(`UPDATE topic_maintenance_community_work SET lease_batch_id=NULL,lease_until=NULL
+			WHERE lease_batch_id=ANY(?::uuid[])`, pq.Array(expiredIDs)).Error; err != nil {
+			return err
+		}
+		return tx.Exec(`UPDATE topic_embeddings SET consolidation_batch_id=NULL,consolidation_lease_until=NULL
+			WHERE consolidation_batch_id=ANY(?::uuid[])`, pq.Array(expiredIDs)).Error
+	})
+}
+
+func (s *Store) previewMaintenanceTurn(ctx context.Context, windowID string, now time.Time) (*maintenanceTurnPreview, error) {
+	var preview *maintenanceTurnPreview
+	err := s.readMaintenanceSystem(ctx, func(tx *gorm.DB) error {
+		var paused bool
+		if err := tx.Raw(`SELECT paused FROM topic_maintenance_state WHERE singleton`).Row().Scan(&paused); err != nil {
 			return err
 		}
 		if paused {
 			return topic.ErrMaintenancePaused
 		}
-		enabled, err := maintenanceEnabled(tx)
-		if err != nil {
+		var enabled string
+		err := tx.Raw(`SELECT value FROM app_config WHERE key=?`, domain.AppConfigTopicMaintenanceEnabled).Row().Scan(&enabled)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		if !enabled {
+		if enabled != "true" {
 			return topic.ErrMaintenanceDisabled
 		}
 		window, err := scanMaintenanceWindow(tx.Raw(`SELECT `+maintenanceWindowColumns+` FROM topic_maintenance_windows WHERE window_id=?::uuid`, windowID).Row())
@@ -194,12 +245,6 @@ func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now t
 		if window == nil || !now.Before(window.EndsAt) {
 			return topic.ErrWindowClosed
 		}
-		if err = seedMaintenanceTeams(tx); err != nil {
-			return err
-		}
-		if _, err = expireMaintenanceBatches(tx, now); err != nil {
-			return err
-		}
 		active, err := activeMaintenanceWork(tx, now)
 		if err != nil {
 			return err
@@ -207,32 +252,31 @@ func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now t
 		if active >= window.Policy.MaxConcurrency {
 			return nil
 		}
-		candidate := &topic.MaintenanceTurn{LeaseToken: uuid.NewString(), LeaseUntil: now.Add(lease)}
+		next := &maintenanceTurnPreview{active: active}
 		var selected []byte
-		err = tx.Raw(`SELECT run_id::text,COALESCE(command->>'retry_run_id',''),COALESCE(command->>'team_id',''),COALESCE(command->'evidence_ids','[]'::jsonb) FROM topic_maintenance_runs AS run
-		 WHERE window_id=?::uuid AND kind IN ('scheduled','run','retry','reassess') AND status IN ('pending','running')
-		 AND (max_batches=0 OR completed_batches+(SELECT count(*) FROM topic_maintenance_batches AS batch WHERE batch.run_id=run.run_id AND batch.status='running')<max_batches)
-		 ORDER BY (kind='scheduled'),created_at,run_id LIMIT 1`, windowID).Row().Scan(&candidate.RunID, &candidate.RetryRunID, &candidate.ReassessTeamID, &selected)
+		err = tx.Raw(`SELECT run_id::text,COALESCE(command->>'retry_run_id',''),COALESCE(command->>'team_id',''),
+			COALESCE(command->'evidence_ids','[]'::jsonb),updated_at`+nextMaintenanceRun, windowID).Row().Scan(
+			&next.runID, &next.retryRunID, &next.reassessTeamID, &selected, &next.runUpdatedAt)
 		if errors.Is(err, sql.ErrNoRows) {
-			if err := tx.Exec(`UPDATE topic_maintenance_runs SET status='pending',updated_at=clock_timestamp() WHERE window_id=?::uuid AND kind='scheduled' AND status IN ('completed','incomplete')`, windowID).Error; err != nil {
-				return err
+			err = tx.Raw(`SELECT run_id::text,'[]'::jsonb,updated_at FROM topic_maintenance_runs
+				WHERE window_id=?::uuid AND kind='scheduled' AND status IN ('completed','incomplete') ORDER BY created_at,run_id LIMIT 1`,
+				windowID).Row().Scan(&next.runID, &selected, &next.runUpdatedAt)
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
 			}
-			err = tx.Raw(`SELECT run_id::text,'','','[]'::jsonb FROM topic_maintenance_runs WHERE window_id=?::uuid AND kind='scheduled' AND status='pending'`, windowID).Row().Scan(&candidate.RunID, &candidate.RetryRunID, &candidate.ReassessTeamID, &selected)
-		}
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil
+			next.reopenScheduled = true
 		}
 		if err != nil {
 			return err
 		}
-		if err := json.Unmarshal(selected, &candidate.ReassessEvidenceIDs); err != nil {
+		if err := json.Unmarshal(selected, &next.reassessEvidenceIDs); err != nil {
 			return err
 		}
 		limits, err := maintenanceTeamLimits(window.Policy)
 		if err != nil {
 			return err
 		}
-		err = tx.Raw(`SELECT state.team_id::text,state.shared_space_id::text,state.space_generation,state.next_stage FROM topic_maintenance_teams AS state
+		rows, err := tx.Raw(`SELECT state.team_id::text,state.shared_space_id::text,state.space_generation FROM topic_maintenance_teams AS state
 		 JOIN teams AS team ON team.id=state.team_id AND team.status='active' AND team.deleted_at IS NULL
 		 JOIN memory_spaces AS space ON space.team_id=state.team_id AND space.id=state.shared_space_id AND space.generation=state.space_generation AND space.lifecycle_state='active'
 		 WHERE (state.lease_until IS NULL OR state.lease_until<=?)
@@ -268,30 +312,180 @@ func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now t
 		 USING(team_id,shared_space_id,space_generation,topic_id)
 		 WHERE work.team_id=state.team_id AND work.shared_space_id=state.shared_space_id AND work.space_generation=state.space_generation
 		 AND NOT current.retired AND `+communityEligible+` AND `+communityWorkReady+`))
-		 ORDER BY state.last_turn,state.team_id LIMIT 1 FOR UPDATE OF state SKIP LOCKED`, now, now, limits, window.Policy.TeamConcurrency(""),
-			candidate.ReassessTeamID, candidate.ReassessTeamID, pq.Array(candidate.ReassessEvidenceIDs),
-			candidate.RetryRunID, candidate.RetryRunID, topic.EquivalenceStageEnabled(ctx), candidate.RetryRunID, candidate.RetryRunID,
+		 ORDER BY state.last_turn,state.team_id LIMIT 16`, now, now, limits, window.Policy.TeamConcurrency(""),
+			next.reassessTeamID, next.reassessTeamID, pq.Array(next.reassessEvidenceIDs),
+			next.retryRunID, next.retryRunID, topic.EquivalenceStageEnabled(ctx), next.retryRunID, next.retryRunID,
 			topic.EquivalenceStageEnabled(ctx),
-			topic.TopicEmbeddingStageEnabled(ctx), topic.ConsolidationStageEnabled(ctx)).Row().Scan(&candidate.TeamID, &candidate.SpaceID, &candidate.Generation, &candidate.Stage)
-		if errors.Is(err, sql.ErrNoRows) {
-			if active > 0 {
-				return nil
-			}
-			return completeMaintenanceRun(tx, candidate.RunID, candidate.RetryRunID, candidate.RetryRunID == "" && candidate.ReassessTeamID == "", "")
-		}
+			topic.TopicEmbeddingStageEnabled(ctx), topic.ConsolidationStageEnabled(ctx)).Rows()
 		if err != nil {
 			return err
 		}
-		if err = tx.Exec(`UPDATE topic_maintenance_state SET turn_sequence=turn_sequence+1 WHERE singleton`).Error; err != nil {
+		for rows.Next() {
+			var item scope
+			if err := rows.Scan(&item.TeamID, &item.SpaceID, &item.Generation); err != nil {
+				rows.Close()
+				return err
+			}
+			next.candidates = append(next.candidates, item)
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 			return err
 		}
-		if err = tx.Exec(`UPDATE topic_maintenance_teams SET last_turn=(SELECT turn_sequence FROM topic_maintenance_state WHERE singleton),next_stage=(next_stage+1)%5,lease_token=?::uuid,lease_until=? WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?`, candidate.LeaseToken, candidate.LeaseUntil, candidate.TeamID, candidate.SpaceID, candidate.Generation).Error; err != nil {
-			return err
+		if len(next.candidates) == 0 && next.active == 0 && !next.reopenScheduled {
+			next.unresolved, err = maintenanceRunHasUnresolvedSources(tx, next.runID, next.retryRunID, next.retryRunID == "" && next.reassessTeamID == "")
+			if err != nil {
+				return err
+			}
 		}
-		result = candidate
+		preview = next
 		return nil
 	})
-	return result, err
+	return preview, err
+}
+
+func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now time.Time, lease time.Duration) (*topic.MaintenanceTurn, error) {
+	if _, err := uuid.Parse(windowID); err != nil || lease <= 0 {
+		return nil, topic.ErrInvalid
+	}
+	if err := s.recoverMaintenanceBatches(ctx, now); err != nil {
+		return nil, err
+	}
+	if err := s.expireOverdueMaintenanceBatches(ctx, now); err != nil {
+		return nil, err
+	}
+	if err := s.seedMissingMaintenanceTeams(ctx); err != nil {
+		return nil, err
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		preview, err := s.previewMaintenanceTurn(ctx, windowID, now)
+		if err != nil || preview == nil {
+			return nil, err
+		}
+		if len(preview.candidates) == 0 && (preview.active > 0 || preview.reopenScheduled) {
+			return nil, nil
+		}
+		var result *topic.MaintenanceTurn
+		retryPreview := false
+		err = s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
+			paused, err := maintenanceState(tx)
+			if err != nil {
+				return err
+			}
+			if paused {
+				return topic.ErrMaintenancePaused
+			}
+			enabled, err := maintenanceEnabled(tx)
+			if err != nil {
+				return err
+			}
+			if !enabled {
+				return topic.ErrMaintenanceDisabled
+			}
+			window, err := scanMaintenanceWindow(tx.Raw(`SELECT `+maintenanceWindowColumns+` FROM topic_maintenance_windows WHERE window_id=?::uuid`, windowID).Row())
+			if err != nil {
+				return err
+			}
+			if window == nil || !now.Before(window.EndsAt) {
+				return topic.ErrWindowClosed
+			}
+			active, err := activeMaintenanceWork(tx, now)
+			if err != nil {
+				return err
+			}
+			if active >= window.Policy.MaxConcurrency {
+				return nil
+			}
+			candidate := &topic.MaintenanceTurn{LeaseToken: uuid.NewString(), LeaseUntil: now.Add(lease),
+				RetryRunID: preview.retryRunID, ReassessTeamID: preview.reassessTeamID, ReassessEvidenceIDs: preview.reassessEvidenceIDs}
+			reopen := false
+			err = tx.Raw(`SELECT run_id::text`+nextMaintenanceRun, windowID).Row().Scan(&candidate.RunID)
+			if errors.Is(err, sql.ErrNoRows) && preview.reopenScheduled {
+				err = tx.Raw(`SELECT run_id::text FROM topic_maintenance_runs WHERE run_id=?::uuid AND status IN ('completed','incomplete')
+					FOR NO KEY UPDATE SKIP LOCKED`, preview.runID).Row().Scan(&candidate.RunID)
+				reopen = err == nil
+			}
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if candidate.RunID != preview.runID {
+				retryPreview = true
+				return nil
+			}
+			if len(preview.candidates) == 0 {
+				if active > 0 {
+					return nil
+				}
+				var live bool
+				err := tx.Raw(`SELECT true FROM topic_maintenance_runs WHERE run_id=?::uuid AND updated_at=?
+					AND status IN ('pending','running') FOR NO KEY UPDATE SKIP LOCKED`, candidate.RunID, preview.runUpdatedAt).Row().Scan(&live)
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+				return writeMaintenanceRunOutcome(tx, candidate.RunID, preview.unresolved, "")
+			}
+			limits, err := maintenanceTeamLimits(window.Policy)
+			if err != nil {
+				return err
+			}
+			teamIDs := make([]string, len(preview.candidates))
+			spaceIDs := make([]string, len(preview.candidates))
+			generations := make([]int64, len(preview.candidates))
+			for i, item := range preview.candidates {
+				teamIDs[i], spaceIDs[i], generations[i] = item.TeamID, item.SpaceID, item.Generation
+			}
+			err = tx.Raw(`WITH preselected AS (
+				SELECT team_id,shared_space_id,space_generation
+				FROM unnest(?::uuid[],?::uuid[],?::bigint[]) AS p(team_id,shared_space_id,space_generation)
+			)
+			SELECT state.team_id::text,state.shared_space_id::text,state.space_generation,state.next_stage
+			FROM topic_maintenance_teams AS state
+			JOIN preselected USING(team_id,shared_space_id,space_generation)
+			JOIN teams AS team ON team.id=state.team_id AND team.status='active' AND team.deleted_at IS NULL
+			JOIN memory_spaces AS space ON space.team_id=state.team_id AND space.id=state.shared_space_id AND space.generation=state.space_generation AND space.lifecycle_state='active'
+			WHERE (state.lease_until IS NULL OR state.lease_until<=?)
+			AND (SELECT count(*) FROM topic_maintenance_batches AS active_batch WHERE active_batch.team_id=state.team_id AND active_batch.shared_space_id=state.shared_space_id AND active_batch.space_generation=state.space_generation AND active_batch.status='running' AND active_batch.lease_until>?) < COALESCE((?::jsonb->>state.team_id::text)::int,?)
+			ORDER BY state.last_turn,state.team_id LIMIT 1 FOR UPDATE OF state SKIP LOCKED`,
+				pq.Array(teamIDs), pq.Array(spaceIDs), pq.Array(generations),
+				now, now, limits, window.Policy.TeamConcurrency("")).Row().Scan(&candidate.TeamID, &candidate.SpaceID, &candidate.Generation, &candidate.Stage)
+			if errors.Is(err, sql.ErrNoRows) {
+				if len(preview.candidates) == 16 && attempt == 0 {
+					retryPreview = true
+					return nil
+				}
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if reopen {
+				if err := tx.Exec(`UPDATE topic_maintenance_runs SET status='pending',updated_at=clock_timestamp() WHERE run_id=?::uuid`, candidate.RunID).Error; err != nil {
+					return err
+				}
+			}
+			if err = tx.Exec(`UPDATE topic_maintenance_state SET turn_sequence=turn_sequence+1 WHERE singleton`).Error; err != nil {
+				return err
+			}
+			if err = tx.Exec(`UPDATE topic_maintenance_teams SET last_turn=(SELECT turn_sequence FROM topic_maintenance_state WHERE singleton),next_stage=(next_stage+1)%5,lease_token=?::uuid,lease_until=? WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?`, candidate.LeaseToken, candidate.LeaseUntil, candidate.TeamID, candidate.SpaceID, candidate.Generation).Error; err != nil {
+				return err
+			}
+			result = candidate
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		if retryPreview {
+			continue
+		}
+		return result, nil
+	}
+	return nil, nil
 }
 
 func activeMaintenanceWork(tx *gorm.DB, now time.Time) (int, error) {
@@ -345,6 +539,16 @@ func maintenancePublicationFence(ctx context.Context, tx *gorm.DB, fence scope) 
 		return topic.ErrLeaseLost
 	}
 	return err
+}
+
+func lockMaintenanceRun(tx *gorm.DB, runID string) error {
+	return tx.Exec(`SELECT 1 FROM topic_maintenance_runs WHERE run_id=?::uuid FOR NO KEY UPDATE`, runID).Error
+}
+
+func lockMaintenanceProgressTeam(tx *gorm.DB, fence scope) error {
+	return tx.Exec(`SELECT 1 FROM topic_maintenance_teams
+		WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? FOR NO KEY UPDATE`,
+		fence.TeamID, fence.SpaceID, fence.Generation).Error
 }
 
 var _ topic.MaintenanceRepository = (*Store)(nil)

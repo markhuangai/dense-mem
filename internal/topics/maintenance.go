@@ -234,21 +234,27 @@ func (s *MaintenanceService) prepareTurn(ctx context.Context) (work *maintenance
 	}
 	defer func() { s.logMaintenancePreparation(ctx, *turn, work, time.Since(started), runErr) }()
 	defer func() {
-		finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 		defer cancel()
-		if claimErr == nil && runErr != nil {
-			code := contract.MaintenanceFailureCode(runErr)
-			var organizationErr *OrganizationError
-			if code == "" && errors.As(runErr, &organizationErr) {
-				code = organizationErr.Code
-			}
-			if code == "" {
-				code = "maintenance_failure"
-			}
-			runErr = errors.Join(runErr, s.deps.Repository.RecordMaintenanceFailure(finishCtx, turn.RunID, code, s.deps.Now()))
-		}
 		if work == nil {
 			runErr = errors.Join(runErr, s.deps.Repository.ReleaseMaintenanceTurn(finishCtx, *turn))
+		}
+		if runErr != nil {
+			batchID := ""
+			if work != nil {
+				batchID = work.claim.ID
+			}
+			code := maintenanceDiagnosticError(runErr)
+			if !errors.Is(runErr, contract.ErrMaintenancePaused) && !errors.Is(runErr, contract.ErrMaintenanceDisabled) &&
+				!errors.Is(runErr, contract.ErrWindowClosed) && !errors.Is(runErr, context.Canceled) {
+				if claimErr == nil {
+					runErr = errors.Join(runErr, s.deps.Repository.RecordMaintenanceFailure(finishCtx, turn.RunID, code, s.deps.Now()))
+				}
+				s.recordFailureDiagnostics(ctx, contract.MaintenanceClaim{
+					ID: batchID, Kind: "preparation", RunID: turn.RunID, TeamID: turn.TeamID, SpaceID: turn.SpaceID, Generation: turn.Generation,
+				}, "preparation", contract.OrganizationResult{FailureCode: code}, code, runErr, nil)
+			}
+			runErr = wrapMaintenanceTurnError(turn.RunID, batchID, turn.TeamID, "preparation", runErr)
 		}
 	}()
 	if claimErr != nil {
@@ -356,11 +362,7 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 	defer cancel()
 	claimCtx := contract.WithMaintenanceClaim(turnCtx, claim)
 	var result contract.OrganizationResult
-	var recorder modelprovider.SnapshotRecorder
-	if s.deps.Diagnostics.NewRecorder != nil {
-		recorder = s.deps.Diagnostics.NewRecorder()
-		claimCtx = modelprovider.WithExchangeRecorder(claimCtx, recorder)
-	}
+	claimCtx, recorder := s.attachDiagnosticRecorder(claimCtx)
 	claimCtx = observability.WithExchangeScope(claimCtx, observability.ExchangeScope{TeamID: claim.TeamID, RunID: claim.RunID, BatchID: claim.ID})
 	defer func() {
 		if runErr != nil && errors.Is(context.Cause(turnCtx), contract.ErrLeaseLost) {
@@ -373,7 +375,7 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 		if runErr != nil && failure == "" {
 			failure = "organization_failed"
 		}
-		finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 		defer finishCancel()
 		finalizationErr := s.deps.Repository.CompleteMaintenanceBatch(finishCtx, claim, result, failure, s.deps.Now())
 		runErr = errors.Join(runErr, finalizationErr)
@@ -425,26 +427,11 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 				"failure_code", failure, "run_retryable", retryable, "retryable_state", retryableState,
 				"elapsed_ms", time.Since(started).Milliseconds(), "finalization_error", finalizationErr)
 		}
-		if (runErr != nil || result.FailureCode != "") && s.deps.Diagnostics.RecordFailure != nil {
-			var exchanges []modelprovider.ProviderExchange
-			if recorder != nil {
-				exchanges = recorder.Snapshot()
-			}
-			diagnosticCtx, diagnosticCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			defer diagnosticCancel()
-			captureStarted := time.Now()
-			if result.FailureCode == "" {
-				result.FailureCode = failure
-			}
-			if err := s.deps.Diagnostics.RecordFailure(diagnosticCtx, claim, result, exchanges); err != nil && s.deps.Logger != nil {
-				reason := "capture_failed"
-				if errors.Is(diagnosticCtx.Err(), context.DeadlineExceeded) {
-					reason = "deadline_exceeded"
-				} else if diagnosticCtx.Err() != nil {
-					reason = "canceled"
-				}
-				s.deps.Logger.LogAttrs(diagnosticCtx, slog.LevelWarn, "topic_failure_diagnostics_unavailable", slog.String("team_id", claim.TeamID), slog.String("run_id", claim.RunID), slog.String("batch_id", claim.ID), slog.String("assessment_id", result.AssessmentID), slog.String("reason", reason), slog.Int64("duration_ms", time.Since(captureStarted).Milliseconds()))
-			}
+		if runErr != nil || result.FailureCode != "" {
+			s.recordFailureDiagnostics(ctx, claim, "assignment", result, failure, runErr, recorder)
+		}
+		if runErr != nil {
+			runErr = wrapMaintenanceTurnError(claim.RunID, claim.ID, claim.TeamID, "assignment", runErr)
 		}
 	}()
 	organizer := s.deps.Organizer(work.policy.Model, work.policy.ContextWindowTokens, accounting)
@@ -483,6 +470,43 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 		}
 	}
 	return runErr
+}
+
+func (s *MaintenanceService) attachDiagnosticRecorder(ctx context.Context) (context.Context, modelprovider.SnapshotRecorder) {
+	if s.deps.Diagnostics.NewRecorder == nil {
+		return ctx, nil
+	}
+	recorder := s.deps.Diagnostics.NewRecorder()
+	return modelprovider.WithExchangeRecorder(ctx, recorder), recorder
+}
+
+func (s *MaintenanceService) recordFailureDiagnostics(ctx context.Context, claim contract.MaintenanceClaim, stage string, result contract.OrganizationResult, failure string, runErr error, recorder modelprovider.SnapshotRecorder) {
+	if s.deps.Diagnostics.RecordFailure == nil {
+		return
+	}
+	var exchanges []modelprovider.ProviderExchange
+	if recorder != nil {
+		exchanges = recorder.Snapshot()
+	}
+	diagnosticCtx, diagnosticCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	defer diagnosticCancel()
+	diagnosticCtx = withFailureDiagnosticDetail(diagnosticCtx, stage, boundedDiagnosticErrorText(runErr))
+	captureStarted := time.Now()
+	if result.FailureCode == "" {
+		result.FailureCode = failure
+	}
+	if err := s.deps.Diagnostics.RecordFailure(diagnosticCtx, claim, result, exchanges); err != nil && s.deps.Logger != nil {
+		reason := "capture_failed"
+		if errors.Is(diagnosticCtx.Err(), context.DeadlineExceeded) {
+			reason = "deadline_exceeded"
+		} else if diagnosticCtx.Err() != nil {
+			reason = "canceled"
+		}
+		s.deps.Logger.LogAttrs(diagnosticCtx, slog.LevelWarn, "topic_failure_diagnostics_unavailable",
+			slog.String("team_id", claim.TeamID), slog.String("run_id", claim.RunID), slog.String("batch_id", claim.ID),
+			slog.String("assessment_id", result.AssessmentID), slog.String("stage", stage), slog.String("reason", reason),
+			slog.Int64("duration_ms", time.Since(captureStarted).Milliseconds()))
+	}
 }
 
 type maintenanceAttemptKey struct {

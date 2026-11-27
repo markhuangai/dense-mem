@@ -2,8 +2,10 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/lib/pq"
@@ -15,6 +17,7 @@ type maintenanceRecoveryBatch struct {
 	ID, RunID, WindowID, TeamID, SpaceID, LeaseToken string
 	Generation                                       int64
 	LeaseUntil                                       time.Time
+	CreatedAt                                        time.Time
 	Sources, Revisions, Body                         []byte
 }
 
@@ -27,18 +30,14 @@ func maintenanceFinalizationError(ctx context.Context, claim topic.MaintenanceCl
 }
 
 func (s *Store) recoverMaintenanceBatches(ctx context.Context, now time.Time) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	started, phase := time.Now(), "recovery_accounting_lock"
+	started, phase := time.Now(), "recovery_candidates"
 	var claim topic.MaintenanceClaim
 	err := s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
-		if _, err := maintenanceState(tx); err != nil {
-			return err
-		}
-		phase = "recovery_candidates"
 		var batches []maintenanceRecoveryBatch
 		if err := tx.Raw(`SELECT batch.batch_id::text AS id,batch.run_id::text,batch.window_id::text,batch.team_id::text,
-		 batch.shared_space_id::text AS space_id,batch.space_generation AS generation,batch.lease_token::text,batch.lease_until,batch.sources,batch.revisions,assessment.body
+		 batch.shared_space_id::text AS space_id,batch.space_generation AS generation,batch.lease_token::text,batch.lease_until,batch.created_at,batch.sources,batch.revisions,assessment.body
 		 FROM topic_maintenance_batches AS batch JOIN historical_organization_assessments AS assessment
 		 ON assessment.team_id=batch.team_id AND assessment.shared_space_id=batch.shared_space_id AND assessment.space_generation=batch.space_generation AND assessment.operation_key='maintenance:'||batch.batch_id::text
 		 JOIN memory_spaces AS space ON space.team_id=batch.team_id AND space.id=batch.shared_space_id AND space.generation=batch.space_generation AND space.lifecycle_state='active'
@@ -47,10 +46,33 @@ func (s *Store) recoverMaintenanceBatches(ctx context.Context, now time.Time) er
 		 AND ((COALESCE(assessment.body->'result'->>'failure_code','')='' AND assessment.body->'result'->>'current'='true')
 		 OR (COALESCE(assessment.body->'result'->>'failure_code','')<>'' AND assessment.body->'result'->>'current'='false'))
 		 AND NOT EXISTS(SELECT 1 FROM topic_maintenance_attempts AS attempt WHERE attempt.batch_id=batch.batch_id AND attempt.reconciled_at IS NULL)
-		 ORDER BY batch.created_at,batch.batch_id LIMIT ? FOR UPDATE OF batch SKIP LOCKED`, now, topic.MaintenancePageSize).Scan(&batches).Error; err != nil {
+		 ORDER BY batch.batch_id LIMIT ? FOR UPDATE OF batch SKIP LOCKED`, now, topic.MaintenancePageSize).Scan(&batches).Error; err != nil {
 			return err
 		}
+		if len(batches) == 0 {
+			return nil
+		}
+		runIDs := make([]string, 0, len(batches))
 		for _, batch := range batches {
+			runIDs = append(runIDs, batch.RunID)
+		}
+		phase = "recovery_run_locks"
+		var lockedRuns []string
+		if err := tx.Raw(`SELECT run_id::text FROM topic_maintenance_runs WHERE run_id=ANY(?::uuid[])
+			ORDER BY run_id FOR NO KEY UPDATE SKIP LOCKED`, pq.Array(runIDs)).Scan(&lockedRuns).Error; err != nil {
+			return err
+		}
+		locked := make(map[string]bool, len(lockedRuns))
+		for _, runID := range lockedRuns {
+			locked[runID] = true
+		}
+		sort.SliceStable(batches, func(left, right int) bool {
+			return batches[left].CreatedAt.Before(batches[right].CreatedAt)
+		})
+		for _, batch := range batches {
+			if !locked[batch.RunID] {
+				continue
+			}
 			claim = topic.MaintenanceClaim{ID: batch.ID, Kind: "assignment", RunID: batch.RunID, WindowID: batch.WindowID, TeamID: batch.TeamID,
 				SpaceID: batch.SpaceID, Generation: batch.Generation, LeaseToken: batch.LeaseToken, LeaseUntil: batch.LeaseUntil}
 			phase = "recovery_receipt"
@@ -126,6 +148,15 @@ func lockMaintenanceRecoveryInputs(tx *gorm.DB, claim topic.MaintenanceClaim) (b
 	locked, err := tryLockOrganizationCatalog(tx, fence)
 	if err != nil || !locked {
 		return locked, err
+	}
+	err = tx.Raw(`SELECT true FROM topic_maintenance_teams
+		WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? FOR NO KEY UPDATE SKIP LOCKED`,
+		fence.TeamID, fence.SpaceID, fence.Generation).Row().Scan(&locked)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
 	}
 	keys := make([]string, 0, len(claim.Sources))
 	for _, source := range claim.Sources {

@@ -198,16 +198,26 @@ const maintenanceActiveSourceJoin = ` FROM topic_maintenance_sources AS source
  JOIN memory_spaces AS space ON space.team_id=source.team_id AND space.id=source.shared_space_id AND space.generation=source.space_generation AND space.lifecycle_state='active'`
 
 func completeMaintenanceRun(tx *gorm.DB, runID, retryRunID string, allSources bool, requiredFailure string) error {
+	unresolved, err := maintenanceRunHasUnresolvedSources(tx, runID, retryRunID, allSources)
+	if err != nil {
+		return err
+	}
+	return writeMaintenanceRunOutcome(tx, runID, unresolved, requiredFailure)
+}
+
+func maintenanceRunHasUnresolvedSources(tx *gorm.DB, runID, retryRunID string, allSources bool) (bool, error) {
 	var unresolved bool
-	if err := tx.Raw(`SELECT EXISTS(SELECT 1`+maintenanceActiveSourceJoin+`
+	err := tx.Raw(`SELECT EXISTS(SELECT 1`+maintenanceActiveSourceJoin+`
 	 WHERE source.eligible AND (
 	 ((source.status IN ('failed','ambiguous') OR (NOT ? AND source.status='pending'))
 	  AND (? OR source.last_run_id IN (?::uuid,NULLIF(?,'')::uuid))) OR
 	 ((source.equivalence_status='failed' OR (NOT ? AND source.equivalence_status='pending'))
 	  AND (? OR source.equivalence_last_run_id IN (?::uuid,NULLIF(?,'')::uuid)))))`,
-		allSources, allSources, runID, retryRunID, allSources, allSources, runID, retryRunID).Row().Scan(&unresolved); err != nil {
-		return err
-	}
+		allSources, allSources, runID, retryRunID, allSources, allSources, runID, retryRunID).Row().Scan(&unresolved)
+	return unresolved, err
+}
+
+func writeMaintenanceRunOutcome(tx *gorm.DB, runID string, unresolved bool, requiredFailure string) error {
 	var previousFailure string
 	if err := tx.Raw(`SELECT failure_code FROM topic_maintenance_runs WHERE run_id=?::uuid`, runID).Row().Scan(&previousFailure); err != nil {
 		return err
@@ -266,7 +276,9 @@ func recordMaintenanceFailureTx(tx *gorm.DB, runID, code string, now time.Time) 
 func (s *Store) MaintenanceStatus(ctx context.Context, now time.Time) (topic.MaintenanceStatus, error) {
 	result := topic.MaintenanceStatus{ObservedAt: now}
 	err := s.readMaintenanceSystem(ctx, func(tx *gorm.DB) error {
-		if err := tx.Raw(`SELECT paused,last_successful_progress FROM topic_maintenance_state WHERE singleton`).Row().Scan(&result.Paused, &result.LastSuccessfulProgress); err != nil {
+		if err := tx.Raw(`SELECT state.paused,
+			GREATEST(state.last_successful_progress,(SELECT max(team_state.last_successful_progress) FROM topic_maintenance_teams AS team_state))
+			FROM topic_maintenance_state AS state WHERE state.singleton`).Row().Scan(&result.Paused, &result.LastSuccessfulProgress); err != nil {
 			return err
 		}
 		var enabled string
@@ -290,15 +302,23 @@ func (s *Store) MaintenanceStatus(ctx context.Context, now time.Time) (topic.Mai
 		 SELECT 1 FROM topic_maintenance_markers AS marker WHERE marker.team_id=team.id AND marker.shared_space_id=space.id AND marker.space_generation=space.generation)))`).Row().Scan(&result.DiscoveryComplete); err != nil {
 			return err
 		}
-		if err := tx.Raw(`SELECT count(*) FILTER (WHERE current.placement='placed'),
-            count(*) FILTER (WHERE current.placement='standalone'),
-			count(*) FILTER (WHERE current.placement='declared' AND latest.status IS DISTINCT FROM 'failed' AND `+communityEligible+`),
-			count(*) FILTER (WHERE latest.status='failed' AND `+communityEligible+`)
-            FROM topics AS current JOIN teams AS team ON team.id=current.team_id AND team.status='active' AND team.deleted_at IS NULL
-            JOIN memory_spaces AS space ON space.team_id=current.team_id AND space.id=current.shared_space_id
-                AND space.generation=current.space_generation AND space.lifecycle_state='active' AND space.kind='team_shared'
-            `+latestCommunityOutcome+`
-            WHERE NOT current.retired`).Row().Scan(&result.Communities.Placed, &result.Communities.Standalone, &result.Communities.Pending, &result.Communities.Failed); err != nil {
+		if err := tx.Raw(`WITH active_topics AS (
+			SELECT current.team_id,current.shared_space_id,current.space_generation,current.topic_id,
+				current.definition_version,current.placement,current.manager_authored
+			FROM topics AS current JOIN teams AS team ON team.id=current.team_id AND team.status='active' AND team.deleted_at IS NULL
+			JOIN memory_spaces AS space ON space.team_id=current.team_id AND space.id=current.shared_space_id
+				AND space.generation=current.space_generation AND space.lifecycle_state='active' AND space.kind='team_shared'
+			WHERE NOT current.retired
+		), evaluated AS (
+			SELECT current.placement,latest.status AS latest_status,
+				CASE WHEN current.placement='declared' OR latest.status='failed' THEN `+communityEligible+` ELSE false END AS eligible
+			FROM active_topics AS current `+latestCommunityOutcome+`
+		)
+		SELECT count(*) FILTER (WHERE placement='placed'),
+			count(*) FILTER (WHERE placement='standalone'),
+			count(*) FILTER (WHERE placement='declared' AND latest_status IS DISTINCT FROM 'failed' AND eligible),
+			count(*) FILTER (WHERE latest_status='failed' AND eligible)
+		FROM evaluated`).Row().Scan(&result.Communities.Placed, &result.Communities.Standalone, &result.Communities.Pending, &result.Communities.Failed); err != nil {
 			return err
 		}
 		result.CoverageComplete = result.DiscoveryComplete && result.Counts.Pending == 0 && result.Counts.Failed == 0 && result.Counts.Ambiguous == 0 && result.Communities.Pending == 0 && result.Communities.Failed == 0 && result.Equivalence.Pending == 0 && result.Equivalence.Failed == 0
@@ -310,19 +330,16 @@ func (s *Store) MaintenanceStatus(ctx context.Context, now time.Time) (topic.Mai
 		if err != nil {
 			return err
 		}
-		result.Usage, err = maintenanceUsage(tx, "", false)
-		if err != nil {
-			return err
+		windowID := ""
+		if result.Window != nil {
+			windowID = result.Window.ID
 		}
-		result.HistoricalUsage, err = maintenanceUsage(tx, "", true)
+		windowUsage, err := maintenanceUsageSummary(tx, windowID, &result.Usage, &result.HistoricalUsage)
 		if err != nil {
 			return err
 		}
 		if result.Window != nil {
-			result.Window.Usage, err = maintenanceUsage(tx, result.Window.ID, false)
-			if err != nil {
-				return err
-			}
+			result.Window.Usage = windowUsage
 		}
 		result.CoverageComplete = result.CoverageComplete && result.ActiveWork == 0 && result.Usage.UnreconciledAttempts == 0
 
@@ -343,15 +360,45 @@ func (s *Store) MaintenanceStatus(ctx context.Context, now time.Time) (topic.Mai
 	return result, err
 }
 
-func maintenanceUsage(tx *gorm.DB, windowID string, historical bool) (topic.MaintenanceUsage, error) {
-	var result topic.MaintenanceUsage
-	err := tx.Raw(`SELECT count(*),count(*) FILTER(WHERE reconciled_at IS NULL),
-	 count(*) FILTER(WHERE reconciled_at IS NOT NULL AND COALESCE(reported_input,0)=0 AND COALESCE(reported_output,0)=0 AND COALESCE(reported_total,0)=0),
-	 count(*) FILTER(WHERE reconciled_at IS NOT NULL AND (COALESCE(reported_input,0)>0 OR COALESCE(reported_output,0)>0 OR COALESCE(reported_total,0)>0) AND (COALESCE(reported_input,0)=0 OR COALESCE(reported_output,0)=0)),
-	 COALESCE(sum(reported_input),0),COALESCE(sum(reported_output),0),COALESCE(sum(reported_total),0)
-	 FROM topic_maintenance_attempts WHERE (?='' OR window_id=NULLIF(?,'')::uuid) AND (NOT ? OR estimated_input_tokens IS NULL)`, windowID, windowID, historical).Row().Scan(
-		&result.Attempts, &result.UnreconciledAttempts, &result.UnavailableUsageAttempts, &result.PartialUsageAttempts, &result.ReportedInputTokens, &result.ReportedOutputTokens, &result.ReportedTotalTokens)
-	return result, err
+func maintenanceUsageSummary(tx *gorm.DB, windowID string, overall, historical *topic.MaintenanceUsage) (topic.MaintenanceUsage, error) {
+	var windowUsage topic.MaintenanceUsage
+	const unavailablePred = `reconciled_at IS NOT NULL AND COALESCE(reported_input,0)=0 AND COALESCE(reported_output,0)=0 AND COALESCE(reported_total,0)=0`
+	const partialPred = `reconciled_at IS NOT NULL AND (COALESCE(reported_input,0)>0 OR COALESCE(reported_output,0)>0 OR COALESCE(reported_total,0)>0) AND (COALESCE(reported_input,0)=0 OR COALESCE(reported_output,0)=0)`
+	const histPred = `estimated_input_tokens IS NULL`
+	const winPred = `(?<>'' AND window_id=NULLIF(?,'')::uuid)`
+	err := tx.Raw(`SELECT
+		count(*),
+		count(*) FILTER(WHERE reconciled_at IS NULL),
+		count(*) FILTER(WHERE `+unavailablePred+`),
+		count(*) FILTER(WHERE `+partialPred+`),
+		COALESCE(sum(reported_input),0),
+		COALESCE(sum(reported_output),0),
+		COALESCE(sum(reported_total),0),
+		count(*) FILTER(WHERE `+histPred+`),
+		count(*) FILTER(WHERE `+histPred+` AND reconciled_at IS NULL),
+		count(*) FILTER(WHERE `+histPred+` AND `+unavailablePred+`),
+		count(*) FILTER(WHERE `+histPred+` AND `+partialPred+`),
+		COALESCE(sum(reported_input) FILTER(WHERE `+histPred+`),0),
+		COALESCE(sum(reported_output) FILTER(WHERE `+histPred+`),0),
+		COALESCE(sum(reported_total) FILTER(WHERE `+histPred+`),0),
+		count(*) FILTER(WHERE `+winPred+`),
+		count(*) FILTER(WHERE `+winPred+` AND reconciled_at IS NULL),
+		count(*) FILTER(WHERE `+winPred+` AND `+unavailablePred+`),
+		count(*) FILTER(WHERE `+winPred+` AND `+partialPred+`),
+		COALESCE(sum(reported_input) FILTER(WHERE `+winPred+`),0),
+		COALESCE(sum(reported_output) FILTER(WHERE `+winPred+`),0),
+		COALESCE(sum(reported_total) FILTER(WHERE `+winPred+`),0)
+		FROM topic_maintenance_attempts`,
+		windowID, windowID, windowID, windowID, windowID, windowID, windowID, windowID,
+		windowID, windowID, windowID, windowID, windowID, windowID).Row().Scan(
+		&overall.Attempts, &overall.UnreconciledAttempts, &overall.UnavailableUsageAttempts, &overall.PartialUsageAttempts,
+		&overall.ReportedInputTokens, &overall.ReportedOutputTokens, &overall.ReportedTotalTokens,
+		&historical.Attempts, &historical.UnreconciledAttempts, &historical.UnavailableUsageAttempts, &historical.PartialUsageAttempts,
+		&historical.ReportedInputTokens, &historical.ReportedOutputTokens, &historical.ReportedTotalTokens,
+		&windowUsage.Attempts, &windowUsage.UnreconciledAttempts, &windowUsage.UnavailableUsageAttempts, &windowUsage.PartialUsageAttempts,
+		&windowUsage.ReportedInputTokens, &windowUsage.ReportedOutputTokens, &windowUsage.ReportedTotalTokens,
+	)
+	return windowUsage, err
 }
 
 func (s *Store) ListMaintenanceRuns(ctx context.Context, cursor string, limit int) (topic.MaintenanceRunPage, error) {

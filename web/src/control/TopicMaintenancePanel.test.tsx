@@ -43,9 +43,44 @@ describe("Topic maintenance controls", () => {
     render(<TopicMaintenancePanel api={api} />);
     const buttons = await screen.findAllByRole("button", { name: "View failure diagnostics" });
     expect(buttons).toHaveLength(1);
+    const retryButton = screen.getByRole("button", { name: "Retry failed work" });
+    expect(retryButton.parentElement).toHaveClass("button-row");
+    expect(buttons[0].parentElement).toBe(retryButton.parentElement);
     fireEvent.click(buttons[0]);
-    expect(await screen.findByText(/No retained failure captures/)).toBeVisible();
+    expect(buttons[0].closest("tr")).toHaveClass("selected-row");
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("region", { name: "Topic maintenance failure diagnostics" })).toBeVisible();
+    expect(await within(dialog).findByText(/No retained failure captures/)).toBeVisible();
     expect(api.listOperationLogs).toHaveBeenCalledWith(expect.objectContaining({ reference_id: "failed-run", event: "topic_failure_capture" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Close failure diagnostics" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(buttons[0]).toHaveFocus());
+  });
+
+  it("keeps Retry failed work enabled during background polling refreshes", async () => {
+    const api = fixture();
+    let resolvePoll!: (value: TopicMaintenanceStatus) => void;
+    let calls = 0;
+    vi.spyOn(api, "getTopicMaintenanceStatus").mockImplementation(() => {
+      calls += 1;
+      if (calls === 1) return Promise.resolve(status);
+      return new Promise<TopicMaintenanceStatus>((resolve) => { resolvePoll = resolve; });
+    });
+    let poll: () => void = () => {};
+    const interval = window.setInterval.bind(window);
+    vi.spyOn(window, "setInterval").mockImplementation((callback, timeout, ...args) => {
+      if (timeout === 10000) poll = callback as () => void;
+      return interval(callback, timeout, ...args);
+    });
+    render(<TopicMaintenancePanel api={api} />);
+    const retry = await screen.findByRole("button", { name: "Retry failed work" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh topic coverage" })).toBeEnabled());
+    act(() => { poll(); });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh topic coverage" })).toBeDisabled());
+    expect(retry).toBeEnabled();
+    await act(async () => { resolvePoll(status); });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh topic coverage" })).toBeEnabled());
+    expect(retry).toBeEnabled();
   });
   it("keeps empty discovery distinct from completed coverage", async () => {
     const api = fixture();

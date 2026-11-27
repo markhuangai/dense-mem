@@ -254,13 +254,14 @@ label[data-slot=label]:has(> [data-slot=input], > [data-slot=textarea], > [data-
 .usage-meter-track { width: 100%; height: 6px; border-radius: 5px; background: var(--border); overflow: hidden; }
 .usage-meter-track > span { display: block; height: 100%; border-radius: inherit; background: var(--primary); }
 .usage-meter .form-meta { margin: 0; font-size: 12px; }
-.topic-maintenance-layout { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.1fr); grid-template-areas: "coverage policy" "window policy" "manual manual" "history history"; gap: 20px; align-items: start; }
+.topic-maintenance-layout { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.1fr); grid-template-areas: "coverage policy" "window policy" "manual manual" "usage usage" "history history"; gap: 20px; align-items: start; }
 .topic-policy { grid-area: policy; min-width: 0; }
 .topic-operations { display: grid; gap: 20px; min-width: 0; }
 .topic-maintenance-layout > .topic-operations { display: contents; }
 .topic-coverage { grid-area: coverage; }
 .topic-window { grid-area: window; }
 .topic-manual { grid-area: manual; }
+.topic-usage { grid-area: usage; }
 .topic-history { grid-area: history; }
 .topic-operations > .surface > .form-meta { margin: 16px 0 0; }
 .topic-coverage .usage-meter-heading { align-items: end; }
@@ -279,13 +280,16 @@ label[data-slot=label]:has(> [data-slot=input], > [data-slot=textarea], > [data-
 .topic-manual .topic-reassess [data-slot="input"] { width: 100%; }
 .topic-reassess button { justify-self: start; }
 .topic-history .data-table td:first-child { font-family: ui-monospace, monospace; font-size: 12px; }
+.topic-history .selected-row td { background: var(--accent); }
+.contextual-sheet.topic-diagnostics-sheet { width: min(760px, calc(100vw - 24px)); }
+.topic-diagnostics-sheet .surface { border: 0; padding: 0; box-shadow: none; background: transparent; }
 .topic-team-coverage { padding: 22px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
 .topic-team-coverage > .section-heading { margin-bottom: 10px; }
 .topic-editor fieldset > p { margin: 14px 0; color: var(--muted); font-size: 13px; }
 .topic-editor fieldset > button { justify-self: end; margin-top: 10px; }
 .topic-tabs .surface > label { max-width: 38rem; }
 .topic-tabs .surface > label:has([data-slot="textarea"]) { max-width: none; }
-@media(max-width:1150px) { .topic-maintenance-layout { grid-template-columns: minmax(0,1fr); grid-template-areas: "coverage" "policy" "window" "manual" "history"; } }
+@media(max-width:1150px) { .topic-maintenance-layout { grid-template-columns: minmax(0,1fr); grid-template-areas: "coverage" "policy" "window" "manual" "usage" "history"; } }
 @media(max-width:767px) {
   .setting-row { grid-template-columns: minmax(0,1fr); gap: 8px; padding: 14px 0; }
   .setting-row:has(> [data-field-size="number"], > .field-control > [data-field-size="number"], > [data-field-size="time"], > .field-control > [data-field-size="time"], > .input-time, > .button-row > .config-toggle, > .toggle-row) { grid-template-columns: minmax(0,1fr) auto; gap: 14px; }

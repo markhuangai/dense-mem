@@ -78,7 +78,7 @@ func organizationAssessmentDiagnostics(logger *slog.Logger, protector observabil
 			return
 		}
 		if diagnostic.Result != nil {
-			attrs = append(attrs, slog.Any("attempts", diagnostic.Result.Attempts), slog.Bool("existing", diagnostic.Result.Existing),
+			attrs = append(attrs, slog.Any("attempts", assessmentAttemptsLogValue(diagnostic.Result.Attempts)), slog.Bool("existing", diagnostic.Result.Existing),
 				slog.Bool("current", diagnostic.Result.Current), slog.String("failure_code", diagnostic.Result.FailureCode))
 		}
 		if diagnostic.Error != nil || diagnostic.Result == nil || diagnostic.Result.FailureCode != "" {

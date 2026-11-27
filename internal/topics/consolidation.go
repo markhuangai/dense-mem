@@ -26,6 +26,7 @@ func (s *MaintenanceService) executeTopicConsolidation(ctx context.Context, work
 	defer cancel()
 	opCtx = contract.WithMaintenanceClaim(opCtx, claim)
 	opCtx = observability.WithExchangeScope(opCtx, observability.ExchangeScope{TeamID: claim.TeamID, RunID: claim.RunID, BatchID: claim.ID, OperationID: claim.ID})
+	opCtx, recorder := s.attachDiagnosticRecorder(opCtx)
 	started := time.Now()
 	decisions, probabilities, itemErrors, err := s.assessTopicPairs(opCtx, claim, work.pairs, work.policy, accounting)
 	var failures []error
@@ -71,7 +72,7 @@ func (s *MaintenanceService) executeTopicConsolidation(ctx context.Context, work
 			}
 		}
 	}
-	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	defer finishCancel()
 	combined := errors.Join(failures...)
 	combined = errors.Join(combined, s.deps.Consolidation.FinishTopicConsolidation(finishCtx, claim, combined == nil && !deferred))
@@ -87,10 +88,19 @@ func (s *MaintenanceService) executeTopicConsolidation(ctx context.Context, work
 		combined = errors.Join(combined, s.deps.Repository.RecordMaintenanceFailure(finishCtx, claim.RunID, failure, s.deps.Now()))
 	}
 	if s.deps.Logger != nil {
-		s.deps.Logger.InfoContext(finishCtx, "topic_dedup.batch_completed", "team_id", claim.TeamID, "run_id", claim.RunID,
-			"batch_id", claim.ID, "pair_count", len(work.pairs), "failure_code", failure, "duration_ms", time.Since(started).Milliseconds())
+		level := slog.LevelInfo
+		if combined != nil {
+			level = slog.LevelError
+		}
+		s.deps.Logger.Log(finishCtx, level, "topic_dedup.batch_completed", "team_id", claim.TeamID, "run_id", claim.RunID,
+			"batch_id", claim.ID, "stage", "topic_consolidation", "pair_count", len(work.pairs), "failure_code", failure,
+			"duration_ms", time.Since(started).Milliseconds(), "error", boundedDiagnosticErrorText(combined))
 	}
-	return combined
+	if combined != nil {
+		s.recordFailureDiagnostics(ctx, claim, "topic_consolidation", contract.OrganizationResult{FailureCode: failure}, failure, combined, recorder)
+		return wrapMaintenanceTurnError(claim.RunID, claim.ID, claim.TeamID, "topic_consolidation", combined)
+	}
+	return nil
 }
 
 func (s *MaintenanceService) assessTopicPairs(ctx context.Context, claim contract.MaintenanceClaim, pairs []contract.TopicConsolidationPair, policy domain.TopicMaintenanceConfig, accounting assessment.AttemptAccounting) ([]bool, []float64, []error, error) {

@@ -248,6 +248,8 @@ retryTest("loaded older retry actions follow successful work and server eligibil
     } finally {
       await page.unroute(diagnosticRoute);
     }
+    await page.getByRole("button", { name: "Close failure diagnostics" }).click();
+    await expect(page.getByRole("dialog")).toBeHidden();
     await control("/topic-maintenance/resume", { operation_key: randomUUID() });
     await page.getByRole("button", { name: "Refresh topic coverage" }).click();
     await expect(row.getByRole("button", { name: "Retry failed work" })).toBeEnabled();

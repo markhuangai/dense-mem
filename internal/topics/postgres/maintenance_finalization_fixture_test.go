@@ -213,7 +213,7 @@ func (x *finalizationFixture) assertCompletionTimestamps(t *testing.T, earliest 
 	require.Zero(t, invalidSources, "source finalization must follow its receipt and precede batch completion")
 	if organized > 0 && x.result.Current && x.result.FailureCode == "" {
 		var progress time.Time
-		require.NoError(t, x.f.admin.Raw(`SELECT last_successful_progress FROM topic_maintenance_state WHERE singleton`).Row().Scan(&progress))
+		require.NoError(t, x.f.admin.Raw(`SELECT GREATEST(state.last_successful_progress,(SELECT max(last_successful_progress) FROM topic_maintenance_teams)) FROM topic_maintenance_state AS state WHERE singleton`).Row().Scan(&progress))
 		require.False(t, progress.Before(completed), "progress metadata cannot precede successful completion")
 	}
 }
@@ -223,7 +223,7 @@ func (x *finalizationFixture) completionState(t *testing.T) string {
 	var state string
 	require.NoError(t, x.f.admin.Raw(`SELECT jsonb_build_object('batch',to_jsonb(batch),'run',to_jsonb(run),
 	 'sources',(SELECT jsonb_agg(to_jsonb(source) ORDER BY source_kind,source_id) FROM topic_maintenance_sources AS source WHERE source.team_id=batch.team_id),
-	 'progress',(SELECT last_successful_progress FROM topic_maintenance_state WHERE singleton))::text
+	 'progress',(SELECT GREATEST(state.last_successful_progress,(SELECT max(last_successful_progress) FROM topic_maintenance_teams)) FROM topic_maintenance_state AS state WHERE singleton))::text
 	 FROM topic_maintenance_batches AS batch JOIN topic_maintenance_runs AS run USING(run_id) WHERE batch.batch_id=?::uuid`, x.claim.ID).Row().Scan(&state))
 	return state
 }

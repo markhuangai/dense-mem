@@ -38,19 +38,15 @@ const latestCommunityOutcome = `LEFT JOIN LATERAL (SELECT status FROM community_
     ORDER BY created_at DESC,outcome_id LIMIT 1) AS latest ON true`
 
 func (s *Store) ClaimCommunities(ctx context.Context, turn topic.MaintenanceTurn, windowID string, now time.Time) ([]topic.CommunityInput, *topic.MaintenanceClaim, error) {
+	if err := requireAutomatic(ctx); err != nil {
+		return nil, nil, err
+	}
 	claim := &topic.MaintenanceClaim{ID: uuid.NewString(), Kind: "community", WindowID: windowID, TeamID: turn.TeamID,
 		SpaceID: turn.SpaceID, Generation: turn.Generation, LeaseToken: turn.LeaseToken, LeaseUntil: turn.LeaseUntil,
 		Sources: []topic.SourceHandle{}, Revisions: map[string]int64{}}
 	var inputs []topic.CommunityInput
-	admitted := false
-	err := s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
-		if _, err := maintenanceState(tx); err != nil {
-			return err
-		}
-		fence, err := sharedScope(ctx, tx, turn.TeamID)
-		if err != nil {
-			return err
-		}
+	var workIDs []string
+	err := s.withScope(ctx, turn.TeamID, true, func(tx *gorm.DB, fence scope) error {
 		if fence.SpaceID != turn.SpaceID || fence.Generation != turn.Generation {
 			return topic.ErrLeaseLost
 		}
@@ -65,7 +61,7 @@ func (s *Store) ClaimCommunities(ctx context.Context, turn topic.MaintenanceTurn
 			(current.team_id,current.shared_space_id,current.space_generation,current.topic_id,current.definition_version)
 			WHERE work.team_id=?::uuid AND work.shared_space_id=?::uuid AND work.space_generation=?
 			AND work.topic_version=current.definition_version AND NOT current.retired AND `+communityEligible+` AND `+communityWorkReady+`
-			ORDER BY work.ready_at,work.topic_id LIMIT 20 FOR UPDATE OF work SKIP LOCKED`, fence.TeamID, fence.SpaceID, fence.Generation).Rows()
+			ORDER BY work.ready_at,work.topic_id LIMIT 20`, fence.TeamID, fence.SpaceID, fence.Generation).Rows()
 		if err != nil {
 			return err
 		}
@@ -89,7 +85,7 @@ func (s *Store) ClaimCommunities(ctx context.Context, turn topic.MaintenanceTurn
 		if len(inputs) == 0 {
 			return nil
 		}
-		workIDs := make([]string, 0, len(inputs))
+		workIDs = make([]string, 0, len(inputs))
 		for index := range inputs {
 			input := &inputs[index]
 			var vector, vectorContract string
@@ -123,13 +119,28 @@ func (s *Store) ClaimCommunities(ctx context.Context, turn topic.MaintenanceTurn
 			claim.Revisions[input.Topic.ID] = input.Topic.Version
 			workIDs = append(workIDs, input.WorkID)
 		}
+		return nil
+	})
+	if err != nil || len(inputs) == 0 {
+		return nil, nil, err
+	}
+	admitted := false
+	err = s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
+		var err error
 		admitted, err = admitMaintenanceBatchTx(tx, turn, claim, nil, now)
 		if err != nil || !admitted {
 			return err
 		}
-		updated := tx.Exec(`UPDATE topic_maintenance_community_work SET lease_batch_id=?::uuid,lease_until=?
-			WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND work_id=ANY(?::uuid[])`,
-			claim.ID, claim.LeaseUntil, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(workIDs))
+		updated := tx.Exec(`WITH available AS MATERIALIZED (
+			SELECT work.work_id FROM topic_maintenance_community_work AS work JOIN topics AS current
+			USING(team_id,shared_space_id,space_generation,topic_id)
+			WHERE work.team_id=?::uuid AND work.shared_space_id=?::uuid AND work.space_generation=? AND work.work_id=ANY(?::uuid[])
+			AND work.topic_version=current.definition_version AND NOT current.retired AND `+communityWorkReady+`
+			ORDER BY work.topic_id FOR NO KEY UPDATE OF work SKIP LOCKED
+		)
+		UPDATE topic_maintenance_community_work AS work SET lease_batch_id=?::uuid,lease_until=?
+		FROM available WHERE work.team_id=?::uuid AND work.shared_space_id=?::uuid AND work.space_generation=? AND work.work_id=available.work_id`,
+			claim.TeamID, claim.SpaceID, claim.Generation, pq.Array(workIDs), claim.ID, claim.LeaseUntil, claim.TeamID, claim.SpaceID, claim.Generation)
 		if updated.Error != nil {
 			return updated.Error
 		}
@@ -235,9 +246,6 @@ func (s *Store) CompleteCommunityItem(ctx context.Context, claim topic.Maintenan
 
 func (s *Store) completeCommunity(ctx context.Context, claim topic.MaintenanceClaim, input topic.CommunityInput, outcome topic.CommunityOutcome, failure string, now time.Time, finalize bool) error {
 	return s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
-		if _, err := maintenanceState(tx); err != nil {
-			return err
-		}
 		fence, err := sharedScope(ctx, tx, claim.TeamID)
 		if err != nil {
 			return err
@@ -251,8 +259,18 @@ func (s *Store) completeCommunity(ctx context.Context, claim topic.MaintenanceCl
 		if err := maintenancePublicationFence(topic.WithMaintenanceClaim(ctx, claim), tx, fence); err != nil {
 			return err
 		}
+		if finalize {
+			if err := lockMaintenanceRun(tx, claim.RunID); err != nil {
+				return err
+			}
+		}
 		if err := lockOrganizationCatalog(tx, fence); err != nil {
 			return err
+		}
+		if failure == "" {
+			if err := lockMaintenanceProgressTeam(tx, fence); err != nil {
+				return err
+			}
 		}
 		ids := []string{input.Topic.ID}
 		versions := map[string]int64{input.Topic.ID: input.Topic.Version}
@@ -326,7 +344,7 @@ func (s *Store) completeCommunity(ctx context.Context, claim topic.MaintenanceCl
 			}
 		}
 		if failure == "" {
-			return tx.Exec(`UPDATE topic_maintenance_state SET last_successful_progress=clock_timestamp() WHERE singleton`).Error
+			return recordTeamMaintenanceProgress(tx, fence.TeamID, fence.SpaceID, fence.Generation)
 		}
 		return nil
 	})

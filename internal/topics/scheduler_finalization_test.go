@@ -60,3 +60,35 @@ func TestMaintenanceFinalizationDiagnosticsBoundCauses(t *testing.T) {
 	}
 	require.Empty(t, output.String())
 }
+
+func TestMaintenanceSchedulerLogsTurnFailureDetails(t *testing.T) {
+	t.Run("accounting timeout with turn context", func(t *testing.T) {
+		var output bytes.Buffer
+		scheduler := NewMaintenanceScheduler(nil, slog.New(slog.NewJSONHandler(&output, nil)))
+		err := wrapMaintenanceTurnError("run-1", "batch-1", "team-1", "equivalence",
+			errors.Join(contract.ErrAccounting, context.DeadlineExceeded))
+		scheduler.logTurnFailure(err)
+		var fields map[string]any
+		require.NoError(t, json.Unmarshal(output.Bytes(), &fields))
+		require.Equal(t, "topic maintenance failed", fields["msg"])
+		require.Equal(t, "accounting_unavailable", fields["error_code"])
+		require.Equal(t, "deadline_exceeded", fields["failure_class"])
+		require.Equal(t, "run-1", fields["run_id"])
+		require.Equal(t, "batch-1", fields["batch_id"])
+		require.Equal(t, "team-1", fields["team_id"])
+		require.Equal(t, "equivalence", fields["stage"])
+		require.Contains(t, fields["error"], "topic maintenance accounting unavailable")
+	})
+
+	t.Run("postgres error preserves sqlstate", func(t *testing.T) {
+		var output bytes.Buffer
+		scheduler := NewMaintenanceScheduler(nil, slog.New(slog.NewJSONHandler(&output, nil)))
+		scheduler.logTurnFailure(&pgconn.PgError{Code: "40P01", Message: "deadlock detected"})
+		var fields map[string]any
+		require.NoError(t, json.Unmarshal(output.Bytes(), &fields))
+		require.Equal(t, "maintenance_turn_failed", fields["error_code"])
+		require.Equal(t, "postgres", fields["failure_class"])
+		require.Equal(t, "40P01", fields["sqlstate"])
+		require.Contains(t, fields["error"], "deadlock detected")
+	})
+}
