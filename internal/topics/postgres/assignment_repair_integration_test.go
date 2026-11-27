@@ -68,7 +68,7 @@ func testMaintenanceAssignmentRepair(t *testing.T) {
 		return nil
 	}))
 
-	t.Run("new matching topic invalidates a dispatched shortlist", func(t *testing.T) {
+	t.Run("new matching topic leaves a dispatched shortlist valid", func(t *testing.T) {
 		f := newOrganizationFixture(t)
 		const text = "PostgreSQL stores records."
 		source := f.organizationEvidence(t, 0, text, nil)
@@ -86,15 +86,16 @@ func testMaintenanceAssignmentRepair(t *testing.T) {
 		revalidationPublish(t, f, topiccontract.Change{Record: topic})
 		revalidationDiscover(t, f, window)
 		queued := revalidationQueue(t, f, source)
-		require.Greater(t, queued.Revision, claim.Revisions[topiccontract.SourceKey(source)])
+		require.Equal(t, queued.Revision, claim.Revisions[topiccontract.SourceKey(source)])
 
 		outcome := assignment.Outcome{Text: text, Method: "generation", InputHash: testHash("old shortlist")}
-		_, err = f.store.CommitMaintenanceAssignments(ctx, *claim, []assignment.Publication{{EvidenceID: source.ID, ExpectedFingerprint: dep.Fingerprint, Outcome: outcome}})
-		require.ErrorIs(t, err, topiccontract.ErrSourceStale)
+		committed, err := f.store.CommitMaintenanceItemAssignment(ctx, *claim, assignment.Publication{EvidenceID: source.ID, ExpectedFingerprint: dep.Fingerprint, Outcome: outcome})
+		require.NoError(t, err)
+		require.Equal(t, "uncategorized", committed.Status)
 		var outcomeCount int64
 		require.NoError(t, f.admin.Raw(`SELECT count(*) FROM topic_assignment_outcomes WHERE team_id=?::uuid AND operation_id=?::uuid`, f.team, claim.ID).Row().Scan(&outcomeCount))
-		require.Zero(t, outcomeCount)
-		require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, topiccontract.OrganizationResult{}, "source_stale", time.Now()))
-		require.Equal(t, queued, revalidationQueue(t, f, source))
+		require.EqualValues(t, 1, outcomeCount)
+		require.NoError(t, f.store.CompleteMaintenanceBatch(ctx, *claim, topiccontract.OrganizationResult{Current: true, IsolatedOutcomes: true, Outcomes: []topiccontract.OrganizationOutcome{committed}}, "", time.Now()))
+		require.Equal(t, "uncategorized", revalidationQueue(t, f, source).Status)
 	})
 }

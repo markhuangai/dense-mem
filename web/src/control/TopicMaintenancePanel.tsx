@@ -2,6 +2,7 @@ import { Button } from "../ui/primitives/button";
 import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from "../ui/primitives/table";
 import { Label } from "../ui/primitives/label";
 import { Input } from "../ui/primitives/input";
+import { Textarea } from "../ui/primitives/textarea";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import type { ControlApi, TopicMaintenanceRunPage, TopicMaintenanceStatus } from "../api";
@@ -19,6 +20,8 @@ export function TopicMaintenancePanel({ api, onStatus }: { api: ControlApi; onSt
   const [message, setMessage] = useState("");
   const [diagnosticRun, setDiagnosticRun] = useState("");
   const [retryKey, setRetryKey] = useState<{ intent: string; key: string } | null>(null);
+  const [reassessTeam, setReassessTeam] = useState("");
+  const [reassessEvidence, setReassessEvidence] = useState("");
 
   const [historyLoading, setHistoryLoading] = useState(false);
   const historyLoad = useRef<Promise<void> | null>(null);
@@ -95,8 +98,35 @@ export function TopicMaintenancePanel({ api, onStatus }: { api: ControlApi; onSt
     await loadHistory(true);
   }
 
+  async function reassess() {
+    if (!validReassessment || busy || !status?.enabled || status.paused || status.configuration_error) return;
+    const evidenceIds = reassessEvidence.split(/[\s,]+/).filter(Boolean);
+    const intent = `reassess:${reassessTeam.trim()}:${evidenceIds.join(",")}`;
+    const key = retryKey?.intent === intent ? retryKey.key
+      : globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    setRetryKey({ intent, key });
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const run = await api.reassessUncategorizedEvidence(reassessTeam.trim(), key, evidenceIds);
+      setMessage(`Reassessment ${run.id.slice(0, 8)} accepted · ${run.status}`);
+      setRetryKey(null);
+      await historyLoad.current;
+      await refresh();
+    } catch (err) {
+      setError(readError(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const windowState = status?.window;
   const oldestAge = status?.oldest_pending_at ? Math.max(0, Math.floor((Date.now() - Date.parse(status.oldest_pending_at)) / 60000)) : null;
+  const evidenceIds = reassessEvidence.split(/[\s,]+/).filter(Boolean);
+  const validUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const validReassessment = validUUID.test(reassessTeam.trim()) && evidenceIds.length > 0 && evidenceIds.length <= 20
+    && evidenceIds.every((id) => validUUID.test(id)) && new Set(evidenceIds.map((id) => id.toLowerCase())).size === evidenceIds.length;
 
   return <div className="topic-operations">
     <section className="surface topic-coverage" aria-label="Topic assignment coverage">
@@ -120,6 +150,10 @@ export function TopicMaintenancePanel({ api, onStatus }: { api: ControlApi; onSt
             <div><dt>Standalone Topics</dt><dd>{status.communities.standalone.toLocaleString()}</dd></div>
             <div><dt>Pending Topic placement</dt><dd>{status.communities.pending.toLocaleString()}</dd></div>
             <div><dt>Failed Topic placement</dt><dd>{status.communities.failed.toLocaleString()}</dd></div>
+          </>}
+          {status.equivalence && <>
+            <div><dt>Pending equivalence</dt><dd>{status.equivalence.pending.toLocaleString()}</dd></div>
+            <div><dt>Failed equivalence</dt><dd>{status.equivalence.failed.toLocaleString()}</dd></div>
           </>}
           <div><dt>Active work</dt><dd>{status.active_work.toLocaleString()}</dd></div>
           <div><dt>Unfinished attempts</dt><dd>{status.usage.unreconciled_attempts.toLocaleString()}</dd></div>
@@ -159,6 +193,15 @@ export function TopicMaintenancePanel({ api, onStatus }: { api: ControlApi; onSt
           <Button variant="default" className="primary-button" type="button" disabled={busy || !status.enabled || status.paused || Boolean(status.configuration_error) || !Number.isInteger(batches) || batches < 1 || batches > 100} onClick={() => void command("run")}>Run bounded maintenance</Button>
           <Button variant="outline" className="secondary-button" type="button" disabled={busy} onClick={() => void command(status.paused ? "resume" : "pause")}>{status.paused ? "Resume maintenance" : "Pause maintenance"}</Button>
         </div>
+        <form className="topic-reassess" onSubmit={(event) => { event.preventDefault(); void reassess(); }}>
+          <h3>Reassess uncategorized Evidence</h3>
+          <Label htmlFor="topic-reassess-team">Team ID</Label>
+          <Input id="topic-reassess-team" value={reassessTeam} onChange={(event) => setReassessTeam(event.target.value)} />
+          <Label htmlFor="topic-reassess-evidence">Evidence IDs</Label>
+          <Textarea id="topic-reassess-evidence" value={reassessEvidence} onChange={(event) => setReassessEvidence(event.target.value)} aria-describedby="topic-reassess-help" />
+          <p className="form-meta" id="topic-reassess-help">Enter up to 20 uncategorized Evidence IDs, separated by commas or new lines.</p>
+          <Button variant="outline" type="submit" disabled={busy || !status.enabled || status.paused || Boolean(status.configuration_error) || !validReassessment}>Reassess selected Evidence</Button>
+        </form>
       </section>
       <section className="surface" aria-label="Topic maintenance usage">
         <SectionHeading title="Recorded model usage" />

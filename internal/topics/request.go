@@ -27,7 +27,12 @@ func (s *Service) request(context contract.OrganizationContext, receipt *contrac
 	for _, view := range context.Candidates {
 		d := view.Definition
 		ref := definitionRefs[view.ID]
-		request.Definitions = append(request.Definitions, assessment.Definition{Ref: ref, Kind: view.Kind, Key: d.Key, Label: d.Label, Description: d.Description, Aliases: append([]string{}, d.Aliases...), ParentRef: definitionRefs[d.ParentID]})
+		definition := assessment.Definition{Ref: ref, Kind: view.Kind, Key: d.Key, Label: d.Label, Description: d.Description, Aliases: append([]string{}, d.Aliases...), ParentRef: definitionRefs[d.ParentID]}
+		if view.Current {
+			request.Definitions = append(request.Definitions, definition)
+		} else {
+			request.LockedDefinitions = append(request.LockedDefinitions, definition)
+		}
 		binding.definitions[ref] = view.Record
 	}
 	for len(request.Definitions) > 0 {

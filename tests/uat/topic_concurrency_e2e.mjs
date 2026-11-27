@@ -49,16 +49,20 @@ try {
   const canonicalBefore = canonical();
   await fixture("hold");
   await control("/topic-maintenance/resume", { operation_key: randomUUID() });
-  const health = await until(async () => {
-    const next = await providerHealth();
-    return next.active_ontology_requests === 3 ? next : null;
-  }, 90000, "three model requests did not overlap under the configured caps");
-  assert.equal(health.max_active_ontology_requests, 3);
+  const { health, running } = await until(async () => {
+    const health = await providerHealth();
+    const running = JSON.parse(query(`SELECT COALESCE(jsonb_agg(jsonb_build_object('team',batch.team_id,'sources',batch.sources,
+      'admitted',EXISTS(SELECT 1 FROM topic_maintenance_attempts AS attempt WHERE attempt.batch_id=batch.batch_id AND attempt.reconciled_at IS NULL))),'[]')
+      FROM topic_maintenance_batches AS batch WHERE batch.status='running' AND batch.lease_until>clock_timestamp()`));
+    const parallel = running.filter((batch) => batch.team === teams[0].id && batch.admitted).length;
+    const serial = running.filter((batch) => batch.team === teams[1].id && batch.admitted).length;
+    return health.active_ontology_requests >= 3 && running.length === 3 && parallel === 2 && serial === 1 ? { health, running } : null;
+  }, 90000, "three admitted batches did not overlap under the configured caps");
+  assert(health.max_active_ontology_requests >= 3);
   const fixtureWindow = (await control("/topic-maintenance/status")).window;
   assert.equal(fixtureWindow.policy.timezone, "UTC");
   assert.equal(fixtureWindow.policy.start_time_local, fixtureStartTime);
   assert(Date.parse(fixtureWindow.ends_at) - Date.now() > 60 * 60 * 1000, "fixture window must outlast the shared browser checks");
-  const running = JSON.parse(query(`SELECT COALESCE(jsonb_agg(jsonb_build_object('team',team_id,'sources',sources)),'[]') FROM topic_maintenance_batches WHERE status='running' AND lease_until>clock_timestamp()`));
   assert.equal(running.filter((batch) => batch.team === teams[0].id).length, 2, "one team must have two simultaneous provider batches");
   assert.equal(running.filter((batch) => batch.team === teams[1].id).length, 1, "the inherited serial cap must retain another team's slot");
   const owned = running.flatMap((batch) => batch.sources.map((source) => `${batch.team}:${source.kind}:${source.id}`));

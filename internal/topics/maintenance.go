@@ -14,6 +14,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/requestctx"
 	access "github.com/markhuangai/dense-mem/internal/service/access"
+	"github.com/markhuangai/dense-mem/internal/service/semanticwrite"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
 	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
 )
@@ -27,19 +28,26 @@ type MaintenanceAuditPreparer interface {
 }
 
 type MaintenanceDependencies struct {
-	Repository      contract.MaintenanceRepository
-	Config          MaintenanceConfigSource
-	Organizer       func(string, int64, assessment.AttemptAccounting) *Service
-	Assign          func(context.Context, contract.MaintenanceClaim, domain.TopicMaintenanceConfig, assessment.AttemptAccounting) (contract.OrganizationResult, error)
-	Communities     contract.CommunityRepository
-	Placement       CommunityAssessor
-	DefaultModel    string
-	ProviderTimeout time.Duration
-	DecisionTimeout time.Duration
-	Audit           MaintenanceAuditPreparer
-	Now             func() time.Time
-	Logger          *slog.Logger
-	Diagnostics     MaintenanceDiagnosticCapture
+	Repository        contract.MaintenanceRepository
+	Config            MaintenanceConfigSource
+	Organizer         func(string, int64, assessment.AttemptAccounting) *Service
+	Assign            func(context.Context, contract.MaintenanceClaim, domain.TopicMaintenanceConfig, assessment.AttemptAccounting) (contract.OrganizationResult, error)
+	Communities       contract.CommunityRepository
+	Placement         CommunityAssessor
+	DefaultModel      string
+	ProviderTimeout   time.Duration
+	DecisionTimeout   time.Duration
+	Audit             MaintenanceAuditPreparer
+	Now               func() time.Time
+	Logger            *slog.Logger
+	Diagnostics       MaintenanceDiagnosticCapture
+	TopicEmbeddings   contract.TopicEmbeddingRepository
+	EmbeddingExecutor *semanticwrite.Executor
+	EmbeddingTimeout  time.Duration
+	Equivalence       contract.EquivalenceMaintenanceRepository
+	Consolidation     contract.TopicConsolidationRepository
+	Decisions         modelprovider.DecisionProvider
+	DecisionSettings  modelprovider.DecisionSettings
 }
 
 type MaintenanceDiagnosticCapture struct {
@@ -129,13 +137,13 @@ func (s *MaintenanceService) Command(ctx context.Context, input domain.TopicMain
 	if s.deps.Audit == nil {
 		return contract.MaintenanceRun{}, &OrganizationError{Code: "audit_unavailable"}
 	}
-	if input.Action == "run" || input.Action == "retry" {
+	if input.Action == "run" || input.Action == "retry" || input.Action == "reassess" {
 		if _, err := s.ensureWindow(ctx, policy, s.deps.Now()); err != nil {
 			return contract.MaintenanceRun{}, err
 		}
 	}
 	result, err := s.deps.Repository.MaintenanceCommand(ctx, input, s.deps.Now(), func(result contract.MaintenanceRun) (audit.Entry, error) {
-		return s.deps.Audit.Prepare(ctx, access.AuditLogEntry{Operation: "TOPIC_MAINTENANCE_COMMAND", EntityType: "topic_maintenance", EntityID: result.ID, ActorRole: "control", ClientIP: clientIP, CorrelationID: correlationID, Metadata: map[string]any{"action": input.Action, "operation_key": input.OperationKey, "window_id": result.WindowID, "max_batches": result.MaxBatches}})
+		return s.deps.Audit.Prepare(ctx, access.AuditLogEntry{Operation: "TOPIC_MAINTENANCE_COMMAND", EntityType: "topic_maintenance", EntityID: result.ID, ActorRole: "control", ClientIP: clientIP, CorrelationID: correlationID, Metadata: map[string]any{"action": input.Action, "operation_key": input.OperationKey, "window_id": result.WindowID, "max_batches": result.MaxBatches, "team_id": input.TeamID, "evidence_ids": input.EvidenceIDs}})
 	})
 	if errors.Is(err, contract.ErrAuditUnavailable) {
 		return result, &OrganizationError{Code: "audit_unavailable", Cause: err}
@@ -170,9 +178,13 @@ func (s *MaintenanceService) ensureWindow(ctx context.Context, policy domain.Top
 }
 
 type maintenanceWork struct {
-	claim     contract.MaintenanceClaim
-	policy    domain.TopicMaintenanceConfig
-	community *contract.CommunityInput
+	claim       contract.MaintenanceClaim
+	policy      domain.TopicMaintenanceConfig
+	community   *contract.CommunityInput
+	communities []contract.CommunityInput
+	turn        *contract.MaintenanceTurn
+	embedding   *contract.TopicEmbeddingBatch
+	pairs       []contract.TopicConsolidationPair
 }
 
 func (s *MaintenanceService) RunTurn(ctx context.Context) (bool, error) {
@@ -203,7 +215,20 @@ func (s *MaintenanceService) prepareTurn(ctx context.Context) (work *maintenance
 		return nil, false, nil
 	}
 	lease := 3*s.deps.ProviderTimeout + 15*time.Second
-	turn, claimErr := s.deps.Repository.ClaimMaintenanceTurn(ctx, window.ID, s.deps.Now(), lease)
+	if s.deps.TopicEmbeddings != nil && s.deps.EmbeddingExecutor != nil {
+		lease = max(lease, s.deps.EmbeddingTimeout+15*time.Second)
+	}
+	claimCtx := ctx
+	if s.deps.TopicEmbeddings != nil && s.deps.EmbeddingExecutor != nil {
+		claimCtx = contract.WithTopicEmbeddingStage(claimCtx)
+	}
+	if s.deps.Equivalence != nil {
+		claimCtx = contract.WithEquivalenceStage(claimCtx)
+	}
+	if s.deps.Consolidation != nil {
+		claimCtx = contract.WithConsolidationStage(claimCtx)
+	}
+	turn, claimErr := s.deps.Repository.ClaimMaintenanceTurn(claimCtx, window.ID, s.deps.Now(), lease)
 	if turn == nil {
 		return nil, false, claimErr
 	}
@@ -236,28 +261,97 @@ func (s *MaintenanceService) prepareTurn(ctx context.Context) (work *maintenance
 	if err != nil {
 		return nil, true, err
 	}
-	claim, err := s.deps.Repository.ClaimMaintenanceBatch(turnCtx, *turn, window.ID, s.deps.Now())
-	if err != nil {
-		return nil, true, err
-	}
-	if claim == nil {
-		if s.deps.Communities == nil || turn.RetryRunID != "" {
-			return nil, true, nil
+	for offset := 0; offset < 5; offset++ {
+		stage := (turn.Stage + offset) % 5
+		if turn.ReassessTeamID != "" && stage != 0 || turn.RetryRunID != "" && stage != 0 && stage != 4 {
+			continue
 		}
-		community, placementClaim, err := s.deps.Communities.ClaimCommunity(turnCtx, *turn, window.ID, s.deps.Now())
-		if err != nil || community == nil {
-			return nil, true, err
+		switch stage {
+		case 0:
+			claim, err := s.deps.Repository.ClaimMaintenanceBatch(turnCtx, *turn, window.ID, s.deps.Now())
+			if err != nil {
+				return nil, true, err
+			}
+			if claim != nil {
+				return &maintenanceWork{claim: *claim, policy: window.Policy}, true, nil
+			}
+		case 1:
+			if s.deps.TopicEmbeddings == nil || s.deps.EmbeddingExecutor == nil {
+				continue
+			}
+			batch, err := s.deps.TopicEmbeddings.ReadTopicEmbeddingBatch(turnCtx, *turn)
+			if err != nil {
+				return nil, true, err
+			}
+			if batch != nil {
+				return &maintenanceWork{turn: turn, embedding: batch, policy: window.Policy}, true, nil
+			}
+		case 2:
+			if s.deps.Consolidation == nil {
+				continue
+			}
+			pairs, claim, err := s.deps.Consolidation.ClaimTopicConsolidation(turnCtx, *turn, window.ID, s.deps.Now())
+			if err != nil {
+				return nil, true, err
+			}
+			if len(pairs) > 0 {
+				return &maintenanceWork{claim: *claim, policy: window.Policy, pairs: pairs}, true, nil
+			}
+		case 3:
+			if s.deps.Communities == nil {
+				continue
+			}
+			if batchRepository, ok := s.deps.Communities.(contract.CommunityBatchRepository); ok {
+				communities, claim, err := batchRepository.ClaimCommunities(turnCtx, *turn, window.ID, s.deps.Now())
+				if err != nil {
+					return nil, true, err
+				}
+				if len(communities) > 0 {
+					return &maintenanceWork{claim: *claim, policy: window.Policy, communities: communities}, true, nil
+				}
+				continue
+			}
+			community, claim, err := s.deps.Communities.ClaimCommunity(turnCtx, *turn, window.ID, s.deps.Now())
+			if err != nil {
+				return nil, true, err
+			}
+			if community != nil {
+				return &maintenanceWork{claim: *claim, policy: window.Policy, community: community}, true, nil
+			}
+		case 4:
+			if s.deps.Equivalence == nil {
+				continue
+			}
+			claim, err := s.deps.Equivalence.ClaimMaintenanceEquivalence(turnCtx, *turn, window.ID, s.deps.Now())
+			if err != nil {
+				return nil, true, err
+			}
+			if claim != nil {
+				return &maintenanceWork{claim: *claim, policy: window.Policy}, true, nil
+			}
 		}
-		return &maintenanceWork{claim: *placementClaim, policy: window.Policy, community: community}, true, nil
 	}
-	return &maintenanceWork{claim: *claim, policy: window.Policy}, true, nil
+	return nil, true, nil
 }
 
 func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceWork) (runErr error) {
+	if work.embedding != nil {
+		return s.backfillTopicEmbeddings(ctx, *work.turn, *work.embedding)
+	}
 	if work.community != nil {
 		return s.placeCommunity(ctx, work)
 	}
+	if len(work.communities) > 0 {
+		return s.placeCommunityBatch(ctx, work)
+	}
+	if work.claim.Kind == "equivalence" {
+		return s.executeEquivalence(ctx, work)
+	}
+	if work.claim.Kind == "consolidation" {
+		return s.executeTopicConsolidation(ctx, work)
+	}
 	claim := work.claim
+	started := time.Now()
 	turnCtx, cancel, accounting := s.maintenanceAdmission(ctx, claim, s.deps.Assign != nil)
 	defer cancel()
 	claimCtx := contract.WithMaintenanceClaim(turnCtx, claim)
@@ -281,12 +375,55 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 		}
 		finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer finishCancel()
-		runErr = errors.Join(runErr, s.deps.Repository.CompleteMaintenanceBatch(finishCtx, claim, result, failure, s.deps.Now()))
+		finalizationErr := s.deps.Repository.CompleteMaintenanceBatch(finishCtx, claim, result, failure, s.deps.Now())
+		runErr = errors.Join(runErr, finalizationErr)
 		if runErr != nil {
 			if failure == "" {
 				failure = "maintenance_failure"
 			}
 			runErr = errors.Join(runErr, s.deps.Repository.RecordMaintenanceFailure(finishCtx, claim.RunID, failure, s.deps.Now()))
+		}
+		if s.deps.Logger != nil && result.IsolatedOutcomes {
+			committed, stale, failed := 0, 0, 0
+			outcomes := make(map[string]contract.OrganizationOutcome, len(result.Outcomes))
+			for _, outcome := range result.Outcomes {
+				outcomes[contract.SourceKey(outcome.Source)] = outcome
+			}
+			for _, source := range claim.Sources {
+				outcome, exists := outcomes[contract.SourceKey(source)]
+				if !exists {
+					outcome.Status = contract.MaintenanceOutcomeState(outcome, result, failure)
+				}
+				switch outcome.Status {
+				case "organized", "uncategorized", "ambiguous":
+					committed++
+				case "pending":
+					if outcome.Reason == "stale_input" {
+						stale++
+					}
+				case "failed":
+					failed++
+				}
+			}
+			var retryable any
+			retryableState := "unavailable"
+			if reader, ok := s.deps.Repository.(interface {
+				MaintenanceRunRetryable(context.Context, string) (bool, error)
+			}); ok && finalizationErr == nil {
+				if value, err := reader.MaintenanceRunRetryable(finishCtx, claim.RunID); err == nil {
+					retryable, retryableState = value, "available"
+				}
+			}
+			level := slog.LevelInfo
+			if runErr != nil {
+				level = slog.LevelWarn
+			}
+			s.deps.Logger.Log(finishCtx, level, "topic_maintenance.batch_finalized", "team_id", claim.TeamID,
+				"space_id", claim.SpaceID, "space_generation", claim.Generation, "run_id", claim.RunID,
+				"batch_id", claim.ID, "stage", "assignment", "claimed_count", len(claim.Sources),
+				"committed_count", committed, "stale_count", stale, "failed_count", failed,
+				"failure_code", failure, "run_retryable", retryable, "retryable_state", retryableState,
+				"elapsed_ms", time.Since(started).Milliseconds(), "finalization_error", finalizationErr)
 		}
 		if (runErr != nil || result.FailureCode != "") && s.deps.Diagnostics.RecordFailure != nil {
 			var exchanges []modelprovider.ProviderExchange
@@ -314,12 +451,8 @@ func (s *MaintenanceService) executeBatch(ctx context.Context, work maintenanceW
 	organizer.policy = &work.policy
 	assessmentCtx := observability.WithAIOperation(claimCtx, observability.AIOperationLegacyOrganization, len(claim.Sources))
 	if s.deps.Assign != nil {
-		equivalenceCtx := observability.WithAIOperation(claimCtx, observability.AIOperationEvidenceEquivalence, len(claim.Sources))
-		result, runErr = organizer.AssessMaintenanceEquivalence(equivalenceCtx, claim)
-		if runErr == nil {
-			assessmentCtx = observability.WithAIOperation(claimCtx, observability.AIOperationTopicAssignment, len(claim.Sources))
-			result, runErr = s.deps.Assign(assessmentCtx, claim, work.policy, accounting)
-		}
+		assessmentCtx = observability.WithAIOperation(claimCtx, observability.AIOperationTopicAssignment, len(claim.Sources))
+		result, runErr = s.deps.Assign(assessmentCtx, claim, work.policy, accounting)
 	} else {
 		result, runErr = organizer.Organize(assessmentCtx, claim.TeamID, contract.OrganizationInput{OperationKey: "maintenance:" + claim.ID, Sources: claim.Sources})
 	}
@@ -389,7 +522,9 @@ func (s *MaintenanceService) maintenanceAdmission(ctx context.Context, claim con
 		}
 	}
 	return turnCtx, func() {
+		accounting.mu.Lock()
 		timer.Stop()
+		accounting.mu.Unlock()
 		cancel(nil)
 	}, accounting
 }

@@ -86,6 +86,24 @@ func (f *RecordFingerprints) Fingerprint(record Record) (string, error) {
 	return recordFingerprint(record, f.catalog, f.sourceFingerprint)
 }
 
+func (f *RecordFingerprints) AcceptedAssignmentFingerprint(record Record) (string, error) {
+	return acceptedAssignmentFingerprint(record, f.catalog, f.sourceFingerprint)
+}
+
+func acceptedAssignmentFingerprint(record Record, catalog map[string]Record, sourceFingerprint func(SourceHandle) (string, error)) (string, error) {
+	if record.Kind != AssignmentKind || record.Assignment == nil {
+		return "", ErrInvalid
+	}
+	target, exists := catalog[record.Assignment.DefinitionID]
+	if !exists || target.Kind != Topic || target.Retired {
+		return "", ErrSourceStale
+	}
+	if err := checkSourceDependencies(record, sourceFingerprint); err != nil {
+		return "", err
+	}
+	return fingerprintRecord(record, catalog, sourceFingerprint, true)
+}
+
 func (f *RecordFingerprints) CheckSourceDependencies(record Record) error {
 	return checkSourceDependencies(record, f.sourceFingerprint)
 }
@@ -108,7 +126,13 @@ func (f *RecordFingerprints) CheckDependencies(records []Record) error {
 		if fingerprint, exists := f.dependencies[record.ID]; exists {
 			return fingerprint, nil
 		}
-		fingerprint, err := f.Fingerprint(record)
+		var fingerprint string
+		var err error
+		if record.Kind == AssignmentKind {
+			fingerprint, err = f.AcceptedAssignmentFingerprint(record)
+		} else {
+			fingerprint, err = f.Fingerprint(record)
+		}
 		if err == nil {
 			f.dependencies[record.ID] = fingerprint
 		}
@@ -124,6 +148,10 @@ func fingerprintSnapshot(handle SourceHandle, snapshot SourceSnapshot, exists bo
 }
 
 func recordFingerprint(record Record, catalog map[string]Record, sourceFingerprint func(SourceHandle) (string, error)) (string, error) {
+	return fingerprintRecord(record, catalog, sourceFingerprint, false)
+}
+
+func fingerprintRecord(record Record, catalog map[string]Record, sourceFingerprint func(SourceHandle) (string, error), acceptedAssignment bool) (string, error) {
 	if record.Retired {
 		record.Fingerprint = ""
 		return hashJSON(struct {
@@ -140,11 +168,17 @@ func recordFingerprint(record Record, catalog map[string]Record, sourceFingerpri
 		sources = append(sources, SourceKey(dependency.SourceHandle)+":"+fingerprint)
 	}
 	sort.Strings(sources)
-	dependencies := dependenciesFor(record, catalog)
-	for _, reference := range record.Dependencies {
-		current, exists := catalog[reference.ID]
-		if !exists || current.Retired {
-			return "", ErrSourceStale
+	var dependencies []RevisionRef
+	if acceptedAssignment {
+		dependencies = append([]RevisionRef{}, record.Dependencies...)
+		sort.Slice(dependencies, func(i, j int) bool { return dependencies[i].ID < dependencies[j].ID })
+	} else {
+		dependencies = dependenciesFor(record, catalog)
+		for _, reference := range record.Dependencies {
+			current, exists := catalog[reference.ID]
+			if !exists || current.Retired {
+				return "", ErrSourceStale
+			}
 		}
 	}
 	definition := record.Definition

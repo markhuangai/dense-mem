@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { captureRememberFailure } from "./synchronous_write/cases/diagnostics.mjs";
 import { rememberWithEmbeddingRetry } from "./synchronous_write/remember_retry.mjs";
-import { assessmentRecords, captureSemanticAssessmentWindow, reconstructDiagnosticBody } from "./topic_assessment_diagnostics.mjs";
+import { assessmentRecords, captureSemanticAssessmentWindow, maintenanceRecords, reconstructDiagnosticBody, structuredLogRecords } from "./topic_assessment_diagnostics.mjs";
 
 const userURL = required("DENSE_MEM_USER_URL").replace(/\/$/, "");
 const controlURL = required("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
@@ -18,6 +18,7 @@ const maintenanceObservationAttempts = 300;
 const original = (await control("/config/topic-maintenance")).data;
 let paused = false;
 let failure;
+let status;
 try {
   const initial = (await control("/topic-maintenance/status")).data;
   await control("/topic-maintenance/pause", { operation_key: randomUUID() });
@@ -65,7 +66,6 @@ try {
   assert.equal(command.id, replay.id);
   assert.equal(command.window_id, replay.window_id);
   await expectStatus("/topic-maintenance/runs", { operation_key: key, max_batches: 2 }, 409);
-  let status;
   for (let index = 0; index < maintenanceObservationAttempts; index++) {
     status = (await control("/topic-maintenance/status")).data;
     if (status.coverage_complete && status.counts.organized > initial.counts.organized) break;
@@ -78,7 +78,7 @@ try {
   assert(status.usage.attempts > 0, "provider dispatches must have durable attempt identities");
   assert.equal(status.usage.unreconciled_attempts, 0);
   assert.equal(status.active_work, 0);
-  assert.equal(status.coverage_complete, true, "Topic assignment and Community placement must both converge");
+  assert.equal(status.coverage_complete, true, `Topic assignment, Community placement, and equivalence must converge: ${JSON.stringify({ counts: status.counts, communities: status.communities, equivalence: status.equivalence })}`);
   const currentReceipts = JSON.parse(postgresQuery(`SELECT COALESCE(jsonb_agg(row_to_json(retained)),'[]') FROM (
     SELECT DISTINCT ON(evidence_id) evidence_id, status, method, input_hash FROM topic_assignment_outcomes
     WHERE team_id=${sqlLiteral(teamID)}::uuid AND evidence_id=ANY(ARRAY[${sourceIDs.map(sqlLiteral).join(",")}]::uuid[])
@@ -209,12 +209,12 @@ try {
   assert(terminal.errors.some((error) => error.code === "provider_response_invalid"));
   assert.equal(canonicalFingerprints(), baseline, "a required foreground assignment failure must roll back canonical intake");
   await fixtureMode("normal");
-  await finalizationRecovery(shared.api_key);
+  const recovery = await finalizationRecovery(shared.api_key);
   const staleAssignment = await staleAssignmentRevision(shared.api_key, topicManager.api_key);
   const topicWindow = captureSemanticAssessmentWindow({ project: required("DENSE_MEM_E2E_COMPOSE_PROJECT"), composeFile: required("DENSE_MEM_E2E_COMPOSE_FILE"), since: diagnosticSince, directory: failureDirectory+"/topic-selection" });
   const topicRecords=topicWindow.split(/\r?\n/).filter(Boolean).map((line)=>JSON.parse(line)).filter((row)=>row.team_id===teamID);
   for (const credential of [controlToken, ...credentialTeams.keys()]) assert(!topicWindow.includes(credential),"topic diagnostic capture exposed credentials");
-  verifyTopicProcessLogs(topicRecords, staleAssignment);
+  verifyTopicProcessLogs(topicRecords, staleAssignment, recovery);
   const topicChunks = new Map();
   for (const row of topicRecords.filter((row) => ["recall_topic_filter_payload", "recall_topic_selection_payload"].includes(row.msg))) {
     assert(row.diagnostic_capture_id, "topic payload must identify its summary");
@@ -249,6 +249,11 @@ try {
     const window = captureSemanticAssessmentWindow({ project: required("DENSE_MEM_E2E_COMPOSE_PROJECT"), composeFile: required("DENSE_MEM_E2E_COMPOSE_FILE"), since: diagnosticSince,
       directory: `${failureDirectory}/ontology-organization` });
     const diagnosticTeams = new Set(credentialTeams.values());
+    for (const credential of [controlToken, ...credentialTeams.keys()]) assert(!window.includes(credential), "topic diagnostic capture exposed credentials");
+    const maintenanceEvents = structuredLogRecords(window)
+      .filter((record) => diagnosticTeams.has(record.team_id) && /^(community_placement\.|topic_equivalence\.|topic_maintenance\.|topic maintenance (discovery|preparation))/.test(record.msg))
+      .slice(-200);
+    for (const record of maintenanceEvents) console.log(`topic_maintenance_diagnostic_record ${JSON.stringify(record)}`);
     for (const record of assessmentRecords(window).filter((record) => diagnosticTeams.has(record.team_id))) console.log(`topic_semantic_diagnostic_record ${JSON.stringify(record)}`);
   } catch (captureError) { failure = new AggregateError([error, captureError], "ontology organization failure capture is incomplete"); }
 } finally {
@@ -264,7 +269,7 @@ try {
   if (failures.length > 1) throw new AggregateError(failures, "ontology UAT and restoration failed", { cause: failure });
 }
 
-function verifyTopicProcessLogs(records, stale) {
+function verifyTopicProcessLogs(records, stale, recovery) {
   const prepared = records.find((row) => row.msg === "topic_assignment.prepared" && row.matched_topics > 0 && row.proposed_topics > 0);
   assert(prepared?.assessment_id && prepared.operation_id && prepared.correlation_id, "mixed Topic assignment needs an assessment and Remember correlation");
   const shortlist = records.find((row) => row.msg === "topic_assignment.candidates" && row.assessment_id === prepared.assessment_id);
@@ -286,9 +291,9 @@ function verifyTopicProcessLogs(records, stale) {
 
   const placement = records.find((row) => row.msg === "community_placement.outcome" && row.status === "placed");
   assert(placement?.job_id && placement.run_id && placement.topic_version > 0 && placement.parent_topic_id);
-  const selected = records.find((row) => row.msg === "community_placement.candidates" && row.job_id === placement.job_id);
+  const selected = records.find((row) => row.msg === "community_placement.candidates" && row.job_id === placement.job_id && row.topic_id === placement.topic_id);
   assert(selected?.candidates.some((ref) => ref.startsWith(placement.parent_topic_id + "@")));
-  const completed = records.find((row) => row.msg === "structured_ai.completed" && row.batch_id === placement.job_id);
+  const completed = records.find((row) => row.msg === "structured_ai.completed" && row.batch_id === placement.job_id && row.assessment_id === placement.assessment_id);
   assert(completed && completed.run_id === placement.run_id);
   const placed = topicProviderExchange(records, completed, "response");
   assert.equal(JSON.parse(placed.choices[0].message.content).parent_id, placement.parent_topic_id);
@@ -302,6 +307,16 @@ function verifyTopicProcessLogs(records, stale) {
   assert(oldShortlist?.operation_id === rejected.invocation_id && staleAssessment?.outcome === "validated" && trace?.level === "TRACE");
   const staleReply = topicProviderExchange(staleLogs, staleAssessment, "response");
   assert(JSON.parse(staleReply.choices[0].message.content).matches.some((match) => match.id === stale.topicID));
+
+  const degraded = records.find((row) => row.msg === "topic_assignment.candidates_retrieved" && row.unembedded_topic_count > 0 && row.fts_count > 0);
+  assert(degraded?.level === "WARN" && degraded.operation_id && degraded.merged_count > 0, "stdout must explain indexed-text fallback for an unembedded Topic");
+  const failedItems = records.filter((row) => row.run_id === recovery.failedRun && row.batch_id === recovery.failedBatch);
+  const commitRejection = failedItems.find((row) => row.msg === "topic_maintenance.item_commit_rejected" && row.evidence_id === recovery.evidenceID);
+  const failedBatch = failedItems.find((row) => row.msg === "topic_maintenance.batch_finalized");
+  assert(commitRejection?.reason && String(commitRejection.error).includes("fixture finalization rejection"), "stdout must identify the rejected Evidence and cause");
+  assert(failedBatch?.committed_count > 0 && failedBatch.failed_count > 0 && failedBatch.run_retryable === true, "stdout must explain partial progress and retryability");
+  const retry = records.find((row) => row.msg === "topic_maintenance.batch_finalized" && row.run_id === recovery.retryRun);
+  assert(retry?.batch_id && retry.committed_count > 0 && retry.failed_count === 0, "stdout must show the successful retry");
 }
 
 function topicProviderExchange(records, stage, direction) {
@@ -450,12 +465,19 @@ async function staleAssignmentRevision(writer, manager) {
 async function finalizationRecovery(key) {
   const configure = (value) => control("/config/topic-maintenance", { items: [{ key: "TOPIC_MAINTENANCE_ENABLED", value }] }, "PATCH");
   await configure("false");
+  await remember(`PostgreSQL successful processing ${randomUUID()}.`, key);
   const id = await remember(`PostgreSQL restore processing ${randomUUID()}.`, key);
   const filter = `team_id=${sqlLiteral(teamID)}::uuid AND evidence_id=${sqlLiteral(id)}::uuid`;
   const assigned = () => Number(postgresQuery(`SELECT count(*) FROM topic_assignment_outcomes WHERE ${filter} AND status='assigned'`));
   const memberships = () => Number(postgresQuery(`SELECT count(*) FROM topic_record_heads WHERE ${filter} AND kind='assignment' AND NOT retired`));
   assert.equal(assigned(), 0);
   await configure("true");
+  const since = new Date().toISOString();
+  const logs = () => {
+    const result = spawnSync("docker", ["compose", "-p", required("DENSE_MEM_E2E_COMPOSE_PROJECT"), "-f", required("DENSE_MEM_E2E_COMPOSE_FILE"), "logs", "--no-color", "--no-log-prefix", "--since", since, "server"], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
+    assert(!result.error && result.status === 0, "recovery stdout must be available");
+    return maintenanceRecords(result.stdout, teamID);
+  };
   try {
     postgresQuery(`CREATE FUNCTION topic_e2e_finalization_failure() RETURNS trigger LANGUAGE plpgsql AS $$
       BEGIN IF NEW.team_id=${sqlLiteral(teamID)}::uuid AND NEW.source_id=${sqlLiteral(id)} AND NEW.status='organized' THEN
@@ -464,21 +486,22 @@ async function finalizationRecovery(key) {
     await control("/topic-maintenance/resume", { operation_key: randomUUID() });
     paused = false;
     await control("/topic-maintenance/runs", { operation_key: randomUUID(), max_batches: 100 });
-    let failedRun;
+    let failedEvent, failedBatch;
     await pollFinalization(() => {
-      failedRun = postgresQuery(`SELECT work.last_run_id::text FROM topic_maintenance_sources AS work
-        JOIN topic_maintenance_runs AS run ON run.run_id=work.last_run_id
-        WHERE work.team_id=${sqlLiteral(teamID)}::uuid AND work.source_kind='evidence' AND work.source_id=${sqlLiteral(id)}
-          AND work.eligible AND work.status='failed' AND run.failure_code<>''`);
-      return Boolean(failedRun);
+      const records = logs();
+      failedEvent = records.find((row) => row.msg === "topic_maintenance.item_commit_rejected" && row.evidence_id === id);
+      failedBatch = records.find((row) => row.msg === "topic_maintenance.batch_finalized" && row.batch_id === failedEvent?.batch_id);
+      return Boolean(failedEvent && failedBatch?.committed_count > 0 && failedBatch.failed_count > 0 && failedBatch.run_retryable === true);
     }, "retryable failed finalization for the imported evidence");
     assert.equal(assigned(), 0, "failed finalization must roll back its assignment outcome");
     assert.equal(memberships(), 0, "failed finalization must roll back direct membership");
     postgresQuery("DROP TRIGGER topic_e2e_finalization_failure ON topic_maintenance_sources");
-    await control(`/topic-maintenance/runs/${failedRun}/retry`, { operation_key: randomUUID(), max_batches: 100 });
+    const retry = (await control(`/topic-maintenance/runs/${failedEvent.run_id}/retry`, { operation_key: randomUUID(), max_batches: 100 })).data;
+    await pollFinalization(() => logs().some((row) => row.msg === "topic_maintenance.batch_finalized" && row.run_id === retry.id && row.committed_count > 0 && row.failed_count === 0), "successful retry diagnostics");
     await pollFinalization(() => assigned() > 0, "retried assignment publication");
     assert.equal(assigned(), 1, "one successful publication must survive retry");
     assert.equal(memberships(), 1);
+    return { failedRun: failedEvent.run_id, failedBatch: failedEvent.batch_id, evidenceID: id, retryRun: retry.id };
   } finally {
     postgresQuery("DROP TRIGGER IF EXISTS topic_e2e_finalization_failure ON topic_maintenance_sources; DROP FUNCTION IF EXISTS topic_e2e_finalization_failure()");
     await control("/topic-maintenance/pause", { operation_key: randomUUID() });

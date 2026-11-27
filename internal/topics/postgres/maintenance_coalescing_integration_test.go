@@ -66,7 +66,7 @@ func TestOntologyMaintenanceCoalescingCursorAndGroupBounds(t *testing.T) {
 	require.Equal(t, 20, second.Counts.CompletedMarkers)
 	require.Equal(t, map[string]string{definitions[20].ID: ""}, coalescingMarkerCursors(t, x))
 	last := coalescingPage(t, x, 100)
-	require.Equal(t, 100, last.Counts.RefreshedSources)
+	require.Zero(t, last.Counts.RefreshedSources)
 	require.Equal(t, 1, last.Counts.CompletedMarkers)
 	require.Empty(t, coalescingMarkerCursors(t, x))
 	require.Equal(t, queue, x.queue(t))

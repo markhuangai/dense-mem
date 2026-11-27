@@ -20,6 +20,7 @@ const assessmentAttempts = new Map();
 const embeddingCallsByFault = new Map();
 let ontologyMode = "normal";
 let ontologyFailuresRemaining = 0;
+let ontologyFailureEvidence = "";
 let activeOntologyRequests = 0;
 let maxActiveOntologyRequests = 0;
 const heldOntologyRequests = new Set();
@@ -91,7 +92,7 @@ const server = createServer(async (request, response) => {
   if (handleDecisionFixture(request, response, payload, fixtureTopicAssignment, fixtureCommunityParent)) return;
 
   if (request.method === "POST" && request.url === "/ontology-fixture") {
-    if (!["normal", "matching", "ambiguous", "fail-three-then-success", "hold"].includes(payload.mode)) {
+    if (!["normal", "matching", "ambiguous", "fail-three-then-success", "community-partial-outage", "hold"].includes(payload.mode)) {
       sendJSON(response, 400, { error: "invalid ontology fixture mode" });
       return;
     }
@@ -99,6 +100,7 @@ const server = createServer(async (request, response) => {
     if (payload.mode !== "hold") for (const release of heldOntologyRequests) release();
     if (payload.mode === "hold") maxActiveOntologyRequests = activeOntologyRequests;
     ontologyFailuresRemaining = payload.mode === "fail-three-then-success" ? 3 : 0;
+    ontologyFailureEvidence = payload.mode === "fail-three-then-success" && typeof payload.evidence === "string" ? payload.evidence : "";
     sendJSON(response, 200, { mode: ontologyMode });
     return;
   }
@@ -197,6 +199,13 @@ const server = createServer(async (request, response) => {
 
   if (request.url?.endsWith("/chat/completions")) {
     assessmentCalls += 1;
+    if (ontologyMode === "community-partial-outage" && payload.response_format?.json_schema?.name === "community_placement_v1") {
+      const input = structuredInput(payload, (value) => value.topic && Array.isArray(value.candidates));
+      if (input.topic.name === "memory-storage") {
+        sendJSON(response, 503, { error: { message: "community placement fixture outage", code: "fixture_community_unavailable" } });
+        return;
+      }
+    }
     const assessmentRequest = assessmentInput(payload);
     const assessmentFault = routeFault;
     const attemptKey = assessmentRequest.request_id || "fixture";
@@ -308,8 +317,13 @@ function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
   }
   if (schemaName === "session_evidence_excerpts_v2") return fixtureSessionExtraction(structuredInput(payload, (input) => input.window));
   if (schemaName === "topic_assignment_v1") {
-    const result = fixtureTopicAssignment(structuredInput(payload, (input) => typeof input.evidence === "string" && Array.isArray(input.topics)));
-    if (ontologyFailuresRemaining > 0) {
+    const input = structuredInput(payload, (value) => typeof value.evidence === "string" && Array.isArray(value.topics));
+    const result = fixtureTopicAssignment(input);
+    if (payload.messages?.some((message) => message.role === "system" && message.content?.startsWith("Propose only distinct generalizable topics"))) {
+      result.matches = [];
+      result.status = result.proposals.length ? "assigned" : "uncategorized";
+    }
+    if (ontologyFailuresRemaining > 0 && (!ontologyFailureEvidence || input.evidence === ontologyFailureEvidence)) {
       ontologyFailuresRemaining--;
       result.request_id = "wrong-request";
     }
@@ -319,6 +333,7 @@ function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
     const input = structuredInput(payload, (request) => request.topic && Array.isArray(request.candidates));
     return { parent_id: fixtureCommunityParent(input) };
   }
+  if (schemaName === "topic_consolidation_v1") return { equivalent: false };
   if (["ontology_evidence_organization_v4", "evidence_equivalence_v1"].includes(schemaName)) return fixtureOntologyOrganization(payload);
   if (schemaName !== "dense_mem_evidence_assessment_response") throw new Error(`unsupported fixture schema ${schemaName}`);
   const assessment = fixtureAssessment(assessmentInput(payload), requestFault);
@@ -374,7 +389,7 @@ function fixtureTopicAssignment(input) {
 
 function fixtureOntologyOrganization(payload) {
   const input = structuredInput(payload, (value) => Array.isArray(value.items) && Array.isArray(value.pairs));
-  if (ontologyFailuresRemaining > 0) {
+  if (ontologyFailuresRemaining > 0 && !ontologyFailureEvidence) {
     ontologyFailuresRemaining -= 1;
     return { request_id: input.request_id, definitions: [], items: [], equivalence: [] };
   }

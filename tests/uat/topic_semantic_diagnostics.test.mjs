@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { semanticPublicationRecords, verifySemanticPublication } from "./topic_semantic_diagnostics.mjs";
-import { verifySemanticAssessment } from "./topic_assessment_diagnostics.mjs";
+import { assessmentRecords, maintenanceRecords, verifySemanticAssessment } from "./topic_assessment_diagnostics.mjs";
 
 const expected = { correlationID: "correlation", operationKey: "operation", teamID: "team", profileID: "profile", reason: "hierarchy_cycle", credentials: ["credential-canary"] };
 function fixture() {
@@ -56,6 +56,15 @@ for (const [name, mutate] of [
   ["misleading completion", (records) => { records.find((record) => record.msg.endsWith("_failed")).msg = "topic_semantic_assessment_completed"; return records; }],
 ]) test(`assessment parser rejects ${name}`, () => assert.throws(() => verifySemanticAssessment(window(mutate(assessmentFixture())), assessmentExpected)));
 const window = (records) => records.map((record) => `server-1 | ${JSON.stringify(record)}`).join("\n");
+
+test("maintenance recovery reads team-scoped rejection and batch events from stdout", () => {
+  const rejection = { msg: "topic_maintenance.item_commit_rejected", team_id: "team", run_id: "run", batch_id: "batch", evidence_id: "evidence" };
+  const batch = { msg: "topic_maintenance.batch_finalized", team_id: "team", run_id: "run", batch_id: "batch", committed_count: 2, failed_count: 1, run_retryable: true };
+  const assessment = { msg: "topic_semantic_assessment_completed", team_id: "team", run_id: "run", batch_id: "batch" };
+  const input = "unrelated startup\n" + window([rejection, { ...batch, team_id: "foreign" }, assessment, batch]);
+  assert.deepEqual(maintenanceRecords(input, "team"), [rejection, batch]);
+  assert.deepEqual(assessmentRecords(input), [assessment]);
+});
 
 test("semantic parser reconstructs complete protected stdout without relying on telemetry", () => {
   const { input, records } = fixture();

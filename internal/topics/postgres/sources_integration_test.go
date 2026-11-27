@@ -70,8 +70,7 @@ func TestOntologySharedSourceIsolationAndFreshness(t *testing.T) {
 	require.NoError(t, err)
 	view, err = f.store.GetRecord(f.actor(1, "member"), f.team, assignment.ID, 0)
 	require.NoError(t, err)
-	require.False(t, view.Current)
-	require.Equal(t, "dependency_changed", view.StaleReason)
+	require.True(t, view.Current, "an accepted Assignment remains valid while its target is active")
 	topic.Definition.Label = "Durable database systems"
 	_, err = f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication("atomic-refresh", 3, topiccontract.Change{ExpectedVersion: 2, Record: topic}, topiccontract.Change{ExpectedVersion: 1, Record: assignment}))
 	require.NoError(t, err)

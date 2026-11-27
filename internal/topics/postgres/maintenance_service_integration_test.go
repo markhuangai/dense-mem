@@ -3,6 +3,7 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -30,6 +31,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
 	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func maintenanceServiceFixture(t *testing.T, f *ontologyFixture, config *settings.AppConfigServiceImpl, edit func(assessment.Request, *assessment.Response), audits ...organization.MaintenanceAuditPreparer) (*organization.MaintenanceService, func() int32) {
@@ -604,20 +606,27 @@ func TestOntologyMaintenanceContextConfigurationAndManualReuse(t *testing.T) {
 	require.EqualValues(t, 1, status.Counts.Organized)
 	require.Positive(t, calls())
 	t.Run("assignment uses the active window", testActiveAssignmentWindowPolicy)
-	t.Run("full sequential assignment renews the batch lease", testSequentialAssignmentLease)
+	t.Run("parallel assignment renews the batch lease", testSequentialAssignmentLease)
 }
 
 type observedAssignmentTransport struct {
 	modelprovider.StructuredTransport
+	mu          sync.Mutex
 	assignments []modelprovider.StructuredRequest
 	delay       time.Duration
+}
+
+type assignmentOnlyStore struct {
+	organization.IncrementalAssignments
 }
 
 func (t *observedAssignmentTransport) Complete(ctx context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
 	if request.SchemaName != "topic_assignment_v1" {
 		return t.StructuredTransport.Complete(ctx, request)
 	}
+	t.mu.Lock()
 	t.assignments = append(t.assignments, request)
+	t.mu.Unlock()
 	result, err := t.StructuredTransport.Complete(ctx, request)
 	if err != nil || t.delay <= 0 {
 		return result, err
@@ -648,7 +657,7 @@ func testActiveAssignmentWindowPolicy(t *testing.T) {
 	transport := &observedAssignmentTransport{StructuredTransport: upstream}
 	assigner := organization.NewAssignmentService(f.store, settings, transport, nil, limits, window.Policy.Model, nil)
 	service, _ := maintenanceServiceFixture(t, f, settings, nil)
-	service.WithTopicProcessing(assigner, f.store, f.store, organization.CommunityAssessor{Transport: transport, Limits: limits}, nil)
+	service.WithTopicProcessing(assigner, assignmentOnlyStore{f.store}, f.store, organization.CommunityAssessor{Transport: transport, Limits: limits}, nil)
 	drainMaintenance(t, service)
 	require.NotEmpty(t, transport.assignments)
 	for _, request := range transport.assignments {
@@ -697,4 +706,147 @@ func testSequentialAssignmentLease(t *testing.T) {
 		FROM topic_maintenance_batches WHERE team_id=?::uuid AND jsonb_array_length(sources)=?`,
 		f.team, topic.MaxOrganizationSources).Row().Scan(&durationSeconds))
 	require.Greater(t, durationSeconds, (3*providerTimeout + 15*time.Second).Seconds())
+}
+
+type partialAssignmentTransport struct {
+	modelprovider.StructuredTransport
+	failedText  string
+	mutate      func(context.Context) error
+	once        sync.Once
+	mutationErr error
+	fail        atomic.Bool
+}
+
+func (p *partialAssignmentTransport) Complete(ctx context.Context, request modelprovider.StructuredRequest) (modelprovider.StructuredResult, error) {
+	var input struct {
+		Evidence string `json:"evidence"`
+	}
+	if request.SchemaName == "topic_assignment_v1" {
+		if err := json.Unmarshal([]byte(request.Messages[1].Content), &input); err != nil {
+			return modelprovider.StructuredResult{}, err
+		}
+	}
+	result, err := p.StructuredTransport.Complete(ctx, request)
+	if err != nil {
+		return result, err
+	}
+	if input.Evidence == p.failedText && p.fail.Load() {
+		p.once.Do(func() { p.mutationErr = p.mutate(ctx) })
+		if p.mutationErr != nil {
+			return result, p.mutationErr
+		}
+		result.Content = `{}`
+	}
+	return result, nil
+}
+
+type partialAssignmentDecisions struct {
+	failedText string
+	fail       *atomic.Bool
+	sizes      []int
+}
+
+func (p *partialAssignmentDecisions) DecisionRuntimeConfig(context.Context) (domain.DecisionRuntimeConfig, error) {
+	return domain.DecisionRuntimeConfig{Revision: "partial-assignment", Effective: domain.DecisionTasks{TopicAssignment: true}}, nil
+}
+
+func (p *partialAssignmentDecisions) Decide(_ context.Context, request modelprovider.DecisionRequest) (modelprovider.DecisionResult, error) {
+	p.sizes = append(p.sizes, len(request.Groups))
+	answers := make(map[string]modelprovider.DecisionAnswer)
+	for _, group := range request.Groups {
+		body, err := json.Marshal(group.Input)
+		if err != nil {
+			return modelprovider.DecisionResult{}, err
+		}
+		var input struct {
+			Evidence string `json:"evidence"`
+		}
+		if err := json.Unmarshal(body, &input); err != nil {
+			return modelprovider.DecisionResult{}, err
+		}
+		for _, question := range group.Questions {
+			probability := 0.9
+			if strings.HasSuffix(question.Name, "uncovered") && (input.Evidence != p.failedText || !p.fail.Load()) {
+				probability = 0.1
+			}
+			answers[question.Name] = modelprovider.DecisionAnswer{Type: modelprovider.DecisionPredicate, Probability: &probability}
+		}
+	}
+	return modelprovider.DecisionResult{Answers: answers}, nil
+}
+
+func TestTopicMaintenancePartialAssignmentCommitAndRetry(t *testing.T) {
+	f := newOrganizationFixture(t)
+	ctx := context.Background()
+	goodText := "Good PostgreSQL storage observation."
+	staleText := "Stale PostgreSQL storage observation."
+	failedText := "Failed PostgreSQL storage observation."
+	good := f.organizationEvidence(t, 0, goodText, nil)
+	stale := f.organizationEvidence(t, 0, staleText, nil)
+	failed := f.organizationEvidence(t, 1, failedText, nil)
+	definition := testTopic("postgresql")
+	revalidationPublish(t, f, topic.Change{Record: definition})
+	settings := maintenanceSettings(t, f)
+	window := maintenanceWindow(t, f, settings)
+	run, err := f.store.MaintenanceCommand(ctx, domain.TopicMaintenanceCommand{Action: "run", OperationKey: uuid.NewString(), MaxBatches: 1}, time.Now(), nil)
+	require.NoError(t, err)
+	upstream, _ := cohortTopicTransport(t, window.Policy.Model)
+	transport := &partialAssignmentTransport{StructuredTransport: upstream, failedText: failedText}
+	transport.fail.Store(true)
+	decisions := &partialAssignmentDecisions{failedText: failedText, fail: &transport.fail}
+	transport.mutate = func(ctx context.Context) error {
+		if err := f.rls.WithSystemTx(ctx, f.app, func(tx *gorm.DB) error { return appendMaintenanceOccurrence(tx, f, stale) }); err != nil {
+			return err
+		}
+		return f.store.withScope(ctx, f.team, false, func(tx *gorm.DB, fence scope) error { return refreshMaintenanceSource(tx, fence, stale, false) })
+	}
+	var logs bytes.Buffer
+	limits := maintenanceFixtureLimits()
+	logger := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	service := organization.NewMaintenanceService(organization.MaintenanceDependencies{
+		Repository: f.store, Config: settings, DefaultModel: window.Policy.Model, Logger: logger,
+		Organizer: func(model string, contextWindow int64, accounting assessment.AttemptAccounting) *organization.Service {
+			organizer, _ := organizationFixtureServiceWithAccounting(t, f, nil, nil, model, limits, accounting, int(contextWindow))
+			return organizer
+		},
+	})
+	assigner := organization.NewAssignmentService(f.store, settings, transport, decisions, limits, window.Policy.Model, logger)
+	service.WithTopicProcessing(assigner, f.store, nil, organization.CommunityAssessor{Transport: transport, Limits: limits}, decisions)
+	progress, err := service.RunTurn(ctx)
+	require.True(t, progress)
+	require.Error(t, err)
+	require.Equal(t, "organized", revalidationQueue(t, f, good).Status)
+	require.Equal(t, "pending", revalidationQueue(t, f, stale).Status)
+	require.Equal(t, "failed", revalidationQueue(t, f, failed).Status)
+	var lastRun string
+	require.NoError(t, f.admin.Raw(`SELECT last_run_id::text FROM topic_maintenance_sources WHERE team_id=?::uuid AND source_id=?`, f.team, failed.ID).Row().Scan(&lastRun))
+	require.Equal(t, run.ID, lastRun)
+	status, err := f.store.MaintenanceStatus(ctx, time.Now())
+	require.NoError(t, err)
+	require.NotNil(t, status.LastSuccessfulProgress)
+	retryable, err := f.store.MaintenanceRunRetryable(ctx, run.ID)
+	require.NoError(t, err)
+	require.True(t, retryable)
+	require.Contains(t, logs.String(), `"msg":"topic_maintenance.item_commit_rejected"`)
+	require.Contains(t, logs.String(), `"msg":"topic_maintenance.batch_finalized"`)
+	require.Contains(t, logs.String(), `"committed_count":1`)
+	require.Contains(t, logs.String(), `"stale_count":1`)
+	require.Contains(t, logs.String(), `"failed_count":1`)
+	require.Contains(t, logs.String(), `"run_retryable":true`)
+	require.Contains(t, logs.String(), `"preserved_decision_match_ids":["`+definition.ID+`"]`)
+	transport.fail.Store(false)
+	retry, err := f.store.MaintenanceCommand(ctx, domain.TopicMaintenanceCommand{Action: "retry", OperationKey: uuid.NewString(), RetryRunID: run.ID, MaxBatches: 1}, time.Now(), nil)
+	require.NoError(t, err)
+	progress, err = service.RunTurn(ctx)
+	require.True(t, progress)
+	require.NoError(t, err)
+	var selected []byte
+	require.NoError(t, f.admin.Raw(`SELECT sources FROM topic_maintenance_batches WHERE run_id=?::uuid AND batch_kind='assignment'`, retry.ID).Row().Scan(&selected))
+	var retried []topic.SourceHandle
+	require.NoError(t, json.Unmarshal(selected, &retried))
+	require.Equal(t, []topic.SourceHandle{failed}, retried)
+	require.Equal(t, []int{3, 1}, decisions.sizes)
+	require.Equal(t, "organized", revalidationQueue(t, f, good).Status)
+	require.Equal(t, "organized", revalidationQueue(t, f, failed).Status)
+	require.Equal(t, "pending", revalidationQueue(t, f, stale).Status)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
 	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
@@ -11,7 +12,7 @@ import (
 	assignment "github.com/markhuangai/dense-mem/internal/topics/assignment"
 )
 
-func (p *rememberSynchronousProcessor) prepareTopics(ctx context.Context, space domain.MemorySpaceKind, commit *knowledge.SynchronousRememberCommitInput, candidates []knowledge.RememberDuplicateCandidateGroup, settings *domain.DecisionRuntimeConfig) error {
+func (p *rememberSynchronousProcessor) prepareTopics(ctx context.Context, space domain.MemorySpaceKind, commit *knowledge.SynchronousRememberCommitInput, candidates []knowledge.RememberDuplicateCandidateGroup, documents []knowledge.SearchDocumentForEmbedding, embeddings []knowledge.InlineEmbeddingResult, active *knowledge.InlineEmbeddingPlan, settings *domain.DecisionRuntimeConfig) error {
 	if space != domain.MemorySpaceTeamShared || p.topicAssignment == nil {
 		return nil
 	}
@@ -23,13 +24,31 @@ func (p *rememberSynchronousProcessor) prepareTopics(ctx context.Context, space 
 	}
 	slices := make([]assignment.Slice, 0, len(commit.Evidence))
 	semanticReuse := map[int]string{}
+	canonicalIDs := map[int]string{}
 	for _, r := range commit.DuplicateResolutions {
+		if r.Disposition == "reuse" {
+			canonicalIDs[r.EvidenceIndex] = r.CandidateFragmentID
+		}
 		if r.Disposition == "reuse" && !r.Exact {
 			text, ok := byCanonical[r.CandidateFragmentID]
 			if !ok {
 				return fmt.Errorf("%w: assignment canonical duplicate absent", ErrRememberStaleInput)
 			}
 			semanticReuse[r.EvidenceIndex] = text
+		}
+	}
+	vectorsByHash := map[string]knowledge.InlineEmbeddingResult{}
+	if active != nil {
+		for _, vector := range embeddings {
+			if vector.EmbeddingContractID == active.EmbeddingContractID && vector.SearchIndexGenerationID == active.SearchIndexGenerationID && vector.IndexGeneration == active.IndexGeneration {
+				vectorsByHash[vector.DocumentHash] = vector
+			}
+		}
+	}
+	vectorsByText := map[string]knowledge.InlineEmbeddingResult{}
+	for _, document := range documents {
+		if vector, exists := vectorsByHash[document.DocumentHash]; exists {
+			vectorsByText[strings.TrimSpace(document.DocumentText)] = vector
 		}
 	}
 	for index, item := range commit.Evidence {
@@ -40,13 +59,21 @@ func (p *rememberSynchronousProcessor) prepareTopics(ctx context.Context, space 
 		if canonical, ok := semanticReuse[index]; ok {
 			text = canonical
 		}
-		slices = append(slices, assignment.Slice{Index: index, Text: text})
+		slice := assignment.Slice{Index: index, Text: text, CanonicalEvidenceID: canonicalIDs[index]}
+		if vector, exists := vectorsByText[strings.TrimSpace(text)]; exists {
+			slice.Embedding = vector.Embedding
+			slice.EmbeddingContractID = vector.EmbeddingContractID
+			slice.SearchIndexGenerationID = vector.SearchIndexGenerationID
+		}
+		slices = append(slices, slice)
 	}
 	ctx, cancel := ContextForPhase(ctx, RememberPhaseAssessment)
 	defer cancel()
 	results, err := p.topicAssignment.Prepare(ctx, assignment.Scope{TeamID: commit.TeamID, SpaceID: commit.SpaceID, Generation: commit.SpaceGeneration, OperationID: commit.IngestID}, slices, settings)
 	var malformed *modelprovider.MalformedResponseError
 	switch {
+	case errors.Is(err, assignment.ErrStale):
+		return newRememberStaleInputError(err)
 	case errors.Is(err, assignment.ErrStorage):
 		return fmt.Errorf("%w: %w", ErrRememberDatabaseFailure, err)
 	case errors.As(err, &malformed) && malformed.FailureClass == "input_budget":

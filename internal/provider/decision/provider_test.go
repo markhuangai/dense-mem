@@ -46,6 +46,99 @@ func (input countedPackingInput) MarshalJSON() ([]byte, error) {
 	return json.Marshal("Database evidence with punctuation, quotes, and unicode 日本語.")
 }
 
+type countedTextPackingInput struct {
+	calls *atomic.Int32
+	text  string
+}
+
+func (input countedTextPackingInput) MarshalJSON() ([]byte, error) {
+	input.calls.Add(1)
+	return json.Marshal(input.text)
+}
+
+func TestPackingRejectsOversizedGroupBeforePreparingLaterGroups(t *testing.T) {
+	for _, vendor := range []string{"openai", "typesafe"} {
+		for _, limit := range []string{"request", "question"} {
+			for _, oversized := range []int{0, 1} {
+				t.Run(fmt.Sprintf("%s/%s/group_%d", vendor, limit, oversized), func(t *testing.T) {
+					var exchanges atomic.Int32
+					server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+						exchanges.Add(1)
+					}))
+					defer server.Close()
+					var logs bytes.Buffer
+					p := fixtureProvider(t, vendor, server.URL, &logs)
+					p.config.MaxInputTokens = 5000
+					p.config.MaxQuestionInputTokens = 200
+					if limit == "request" {
+						p.config.MaxInputTokens = 200
+					}
+					var encodings [3]atomic.Int32
+					groups := make([]modelprovider.DecisionGroup, len(encodings))
+					for i := range groups {
+						content := "A short valid Evidence item."
+						if i == oversized {
+							content = strings.Repeat("A long Evidence item with multiple tokens. ", 500)
+						}
+						groups[i] = modelprovider.DecisionGroup{
+							ID:    fmt.Sprintf("group_%d", i),
+							Input: countedTextPackingInput{calls: &encodings[i], text: content},
+							Questions: []modelprovider.DecisionQuestion{{
+								Name: fmt.Sprintf("question_%d", i), Type: modelprovider.DecisionPredicate,
+								Instructions: "Is the evidence relevant?",
+							}},
+						}
+					}
+					result, err := p.Decide(t.Context(), modelprovider.DecisionRequest{Workload: "packing-test", Groups: groups})
+					if !errors.Is(err, modelprovider.ErrDecisionInputBudgetExceeded) {
+						t.Fatalf("expected an input-budget error, got %v", err)
+					}
+					if exchanges.Load() != 0 || len(result.Receipts) != 0 {
+						t.Fatalf("rejected request dispatched: exchanges=%d receipts=%d", exchanges.Load(), len(result.Receipts))
+					}
+					for i := range groups {
+						want := int32(0)
+						if i <= oversized {
+							want = 1
+						}
+						if got := encodings[i].Load(); got != want {
+							t.Fatalf("group %d encoded %d times, want %d", i, got, want)
+						}
+						if i > oversized && strings.Contains(logs.String(), fmt.Sprintf(`"question_%d"`, i)) {
+							t.Fatalf("later group %d was logged", i)
+						}
+					}
+					if !strings.Contains(logs.String(), "decision.context.rejected") {
+						t.Fatal("missing rejection diagnostic")
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestPackingSingleGroupRetainsExactVendorWire(t *testing.T) {
+	for _, vendor := range []string{"openai", "typesafe"} {
+		t.Run(vendor, func(t *testing.T) {
+			var logs bytes.Buffer
+			provider := fixtureProvider(t, vendor, "http://fixture.invalid", &logs)
+			groups := fixtureRequest().Groups
+			expected, questions, err := encodeRequest(vendor, provider.config.Model, groups)
+			if err != nil {
+				t.Fatal(err)
+			}
+			batches, err := provider.pack(t.Context(), groups, nil)
+			if err != nil || len(batches) != 1 {
+				t.Fatalf("packing one group: batches=%d err=%v", len(batches), err)
+			}
+			count, err := modelprovider.CountTokens(string(expected), provider.tokenizer)
+			if err != nil || !bytes.Equal(expected, batches[0].body) || batches[0].tokens != count || len(batches[0].questions) != len(questions) {
+				t.Fatalf("single-group wire or accounting changed: tokens=%d want=%d err=%v", batches[0].tokens, count, err)
+			}
+		})
+	}
+}
+
 func TestCancellationDuringPackingDoesNotDispatch(t *testing.T) {
 	for _, vendor := range []string{"openai", "typesafe"} {
 		t.Run(vendor, func(t *testing.T) {
@@ -107,7 +200,7 @@ func TestPackingPreservesGroupsAndExactSerializedLimits(t *testing.T) {
 				} else {
 					p.config.MaxQuestionInputTokens = questionLimit
 				}
-				batches, err := p.pack(context.Background(), groups)
+				batches, err := p.pack(context.Background(), groups, nil)
 				if err != nil || len(batches) != 3 {
 					t.Fatalf("expected three full batches: count=%d err=%v", len(batches), err)
 				}
@@ -143,7 +236,7 @@ func TestPackingPreservesGroupsAndExactSerializedLimits(t *testing.T) {
 				} else {
 					p.config.MaxQuestionInputTokens = 1
 				}
-				_, err = p.pack(t.Context(), groups)
+				_, err = p.pack(t.Context(), groups, nil)
 				if !errors.Is(err, modelprovider.ErrDecisionInputBudgetExceeded) {
 					t.Fatalf("single group over %s limit must return an input-budget error: %v", bound, err)
 				}
@@ -173,7 +266,7 @@ func TestPackingFourHundredGroupsMatchesVendorWireAndTokenCounts(t *testing.T) {
 				for i := range groups {
 					groups[i] = modelprovider.DecisionGroup{ID: fmt.Sprintf("group_%03d", i), Input: map[string]string{"text": "Unicode 日本語, quotes \" and <data>"}, Questions: []modelprovider.DecisionQuestion{{Name: fmt.Sprintf("question_%03d", i), Type: modelprovider.DecisionPredicate, Instructions: "Evaluate exact evidence."}}}
 				}
-				batches, err := p.pack(t.Context(), groups)
+				batches, err := p.pack(t.Context(), groups, nil)
 				if err != nil || len(batches) != 1 {
 					t.Fatalf("packing: batches=%d err=%v", len(batches), err)
 				}
@@ -216,7 +309,7 @@ func TestPackingFourHundredGroupsPreencodesOnceAcrossBatches(t *testing.T) {
 			}
 			p.config.MaxInputTokens, p.config.MaxQuestionInputTokens = limit, limit
 			encodings.Store(0)
-			batches, err := p.pack(t.Context(), groups)
+			batches, err := p.pack(t.Context(), groups, nil)
 			if err != nil || len(batches) < 2 || encodings.Load() != 400 {
 				t.Fatalf("packing groups: batches=%d encodings=%d err=%v", len(batches), encodings.Load(), err)
 			}
@@ -244,7 +337,7 @@ func TestTypeSafePackingPreservesChoiceNamedQuestions(t *testing.T) {
 	var logs bytes.Buffer
 	p := fixtureProvider(t, "typesafe", "http://fixture.invalid", &logs)
 	groups := []modelprovider.DecisionGroup{{ID: "group", Input: "evidence", Questions: []modelprovider.DecisionQuestion{{Name: "choice", Type: modelprovider.DecisionChoice, Instructions: "Choose one.", Choices: []modelprovider.DecisionOption{{Value: "a", Description: "First"}, {Value: "questions", Description: "Second"}}}}}}
-	batches, err := p.pack(t.Context(), groups)
+	batches, err := p.pack(t.Context(), groups, nil)
 	if err != nil || len(batches) != 1 {
 		t.Fatalf("packing: %v", err)
 	}

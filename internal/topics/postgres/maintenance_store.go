@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/markhuangai/dense-mem/internal/domain"
 	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"gorm.io/gorm"
@@ -207,15 +208,16 @@ func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now t
 			return nil
 		}
 		candidate := &topic.MaintenanceTurn{LeaseToken: uuid.NewString(), LeaseUntil: now.Add(lease)}
-		err = tx.Raw(`SELECT run_id::text,COALESCE(command->>'retry_run_id','') FROM topic_maintenance_runs AS run
-		 WHERE window_id=?::uuid AND kind IN ('scheduled','run','retry') AND status IN ('pending','running')
+		var selected []byte
+		err = tx.Raw(`SELECT run_id::text,COALESCE(command->>'retry_run_id',''),COALESCE(command->>'team_id',''),COALESCE(command->'evidence_ids','[]'::jsonb) FROM topic_maintenance_runs AS run
+		 WHERE window_id=?::uuid AND kind IN ('scheduled','run','retry','reassess') AND status IN ('pending','running')
 		 AND (max_batches=0 OR completed_batches+(SELECT count(*) FROM topic_maintenance_batches AS batch WHERE batch.run_id=run.run_id AND batch.status='running')<max_batches)
-		 ORDER BY (kind='scheduled'),created_at,run_id LIMIT 1`, windowID).Row().Scan(&candidate.RunID, &candidate.RetryRunID)
+		 ORDER BY (kind='scheduled'),created_at,run_id LIMIT 1`, windowID).Row().Scan(&candidate.RunID, &candidate.RetryRunID, &candidate.ReassessTeamID, &selected)
 		if errors.Is(err, sql.ErrNoRows) {
 			if err := tx.Exec(`UPDATE topic_maintenance_runs SET status='pending',updated_at=clock_timestamp() WHERE window_id=?::uuid AND kind='scheduled' AND status IN ('completed','incomplete')`, windowID).Error; err != nil {
 				return err
 			}
-			err = tx.Raw(`SELECT run_id::text,'' FROM topic_maintenance_runs WHERE window_id=?::uuid AND kind='scheduled' AND status='pending'`, windowID).Row().Scan(&candidate.RunID, &candidate.RetryRunID)
+			err = tx.Raw(`SELECT run_id::text,'','','[]'::jsonb FROM topic_maintenance_runs WHERE window_id=?::uuid AND kind='scheduled' AND status='pending'`, windowID).Row().Scan(&candidate.RunID, &candidate.RetryRunID, &candidate.ReassessTeamID, &selected)
 		}
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
@@ -223,28 +225,59 @@ func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now t
 		if err != nil {
 			return err
 		}
+		if err := json.Unmarshal(selected, &candidate.ReassessEvidenceIDs); err != nil {
+			return err
+		}
 		limits, err := maintenanceTeamLimits(window.Policy)
 		if err != nil {
 			return err
 		}
-		err = tx.Raw(`SELECT state.team_id::text,state.shared_space_id::text,state.space_generation FROM topic_maintenance_teams AS state
+		err = tx.Raw(`SELECT state.team_id::text,state.shared_space_id::text,state.space_generation,state.next_stage FROM topic_maintenance_teams AS state
 		 JOIN teams AS team ON team.id=state.team_id AND team.status='active' AND team.deleted_at IS NULL
 		 JOIN memory_spaces AS space ON space.team_id=state.team_id AND space.id=state.shared_space_id AND space.generation=state.space_generation AND space.lifecycle_state='active'
 		 WHERE (state.lease_until IS NULL OR state.lease_until<=?)
 		 AND (SELECT count(*) FROM topic_maintenance_batches AS active_batch WHERE active_batch.team_id=state.team_id AND active_batch.shared_space_id=state.shared_space_id AND active_batch.space_generation=state.space_generation AND active_batch.status='running' AND active_batch.lease_until>?) < COALESCE((?::jsonb->>state.team_id::text)::int,?)
+		 AND (?='' OR (state.team_id=NULLIF(?,'')::uuid AND EXISTS(SELECT 1 FROM topic_maintenance_sources AS chosen
+		 WHERE chosen.team_id=state.team_id AND chosen.shared_space_id=state.shared_space_id AND chosen.space_generation=state.space_generation
+		 AND chosen.source_kind='evidence' AND chosen.source_id=ANY(?::text[]) AND chosen.eligible AND chosen.status='pending')))
 		 AND (?='' OR EXISTS(SELECT 1 FROM topic_maintenance_sources AS retry_source
-		 WHERE retry_source.team_id=state.team_id AND retry_source.shared_space_id=state.shared_space_id AND retry_source.space_generation=state.space_generation AND retry_source.last_run_id=NULLIF(?,'')::uuid AND retry_source.eligible AND retry_source.status='failed'))
+		 WHERE retry_source.team_id=state.team_id AND retry_source.shared_space_id=state.shared_space_id AND retry_source.space_generation=state.space_generation AND retry_source.eligible AND
+		 ((retry_source.last_run_id=NULLIF(?,'')::uuid AND retry_source.status='failed') OR
+		  (? AND retry_source.equivalence_last_run_id=NULLIF(?,'')::uuid AND retry_source.equivalence_status='failed'))))
 		 AND (?<>'' OR state.discovery_kind<1 OR state.next_discovery_at<=clock_timestamp() OR EXISTS(
 		 SELECT 1 FROM topic_maintenance_markers AS marker WHERE marker.team_id=state.team_id AND marker.shared_space_id=state.shared_space_id AND marker.space_generation=state.space_generation)
 		 OR EXISTS(SELECT 1 FROM topic_maintenance_sources AS source WHERE source.team_id=state.team_id AND source.shared_space_id=state.shared_space_id AND source.space_generation=state.space_generation AND source.eligible AND
-		 source.status='pending')
-		 OR EXISTS(SELECT 1 FROM topic_maintenance_community_work AS work WHERE work.team_id=state.team_id AND work.shared_space_id=state.shared_space_id AND work.space_generation=state.space_generation AND `+communityWorkReady+`))
-		 ORDER BY state.last_turn,state.team_id LIMIT 1 FOR UPDATE OF state SKIP LOCKED`, now, now, limits, window.Policy.TeamConcurrency(""), candidate.RetryRunID, candidate.RetryRunID, candidate.RetryRunID).Row().Scan(&candidate.TeamID, &candidate.SpaceID, &candidate.Generation)
+		 (source.status='pending' OR (? AND source.equivalence_status='pending')))
+		 OR (? AND EXISTS(SELECT 1 FROM topics AS pending_topic JOIN embedding_contracts AS active_contract
+		 ON active_contract.lifecycle_state='active' AND active_contract.distance_metric='cosine'
+		 JOIN search_index_generations AS active_generation ON active_generation.embedding_contract_id=active_contract.embedding_contract_id
+		 AND active_generation.activation_state='active'
+		 WHERE pending_topic.team_id=state.team_id AND pending_topic.shared_space_id=state.shared_space_id
+		 AND pending_topic.space_generation=state.space_generation AND NOT pending_topic.retired AND NOT EXISTS(
+		 SELECT 1 FROM topic_embeddings AS embedding WHERE
+		 (embedding.team_id,embedding.shared_space_id,embedding.space_generation,embedding.topic_id)=
+		 (pending_topic.team_id,pending_topic.shared_space_id,pending_topic.space_generation,pending_topic.topic_id)
+		 AND embedding.embedding_contract_id=active_contract.embedding_contract_id AND embedding.topic_version=pending_topic.definition_version)))
+		 OR (? AND EXISTS(SELECT 1 FROM topic_embeddings AS embedding JOIN topics AS current
+		 USING(team_id,shared_space_id,space_generation,topic_id) JOIN embedding_contracts AS contract
+		 ON contract.embedding_contract_id=embedding.embedding_contract_id AND contract.lifecycle_state='active'
+		 WHERE embedding.team_id=state.team_id AND embedding.shared_space_id=state.shared_space_id AND embedding.space_generation=state.space_generation
+		 AND embedding.consolidation_pending AND (embedding.consolidation_lease_until IS NULL OR embedding.consolidation_lease_until<=clock_timestamp())
+		 AND embedding.topic_version=current.definition_version AND NOT current.retired))
+		 OR EXISTS(SELECT 1 FROM topic_maintenance_community_work AS work JOIN topics AS current
+		 USING(team_id,shared_space_id,space_generation,topic_id)
+		 WHERE work.team_id=state.team_id AND work.shared_space_id=state.shared_space_id AND work.space_generation=state.space_generation
+		 AND NOT current.retired AND `+communityEligible+` AND `+communityWorkReady+`))
+		 ORDER BY state.last_turn,state.team_id LIMIT 1 FOR UPDATE OF state SKIP LOCKED`, now, now, limits, window.Policy.TeamConcurrency(""),
+			candidate.ReassessTeamID, candidate.ReassessTeamID, pq.Array(candidate.ReassessEvidenceIDs),
+			candidate.RetryRunID, candidate.RetryRunID, topic.EquivalenceStageEnabled(ctx), candidate.RetryRunID, candidate.RetryRunID,
+			topic.EquivalenceStageEnabled(ctx),
+			topic.TopicEmbeddingStageEnabled(ctx), topic.ConsolidationStageEnabled(ctx)).Row().Scan(&candidate.TeamID, &candidate.SpaceID, &candidate.Generation, &candidate.Stage)
 		if errors.Is(err, sql.ErrNoRows) {
 			if active > 0 {
 				return nil
 			}
-			return completeMaintenanceRun(tx, candidate.RunID, candidate.RetryRunID, candidate.RetryRunID == "", "")
+			return completeMaintenanceRun(tx, candidate.RunID, candidate.RetryRunID, candidate.RetryRunID == "" && candidate.ReassessTeamID == "", "")
 		}
 		if err != nil {
 			return err
@@ -252,7 +285,7 @@ func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now t
 		if err = tx.Exec(`UPDATE topic_maintenance_state SET turn_sequence=turn_sequence+1 WHERE singleton`).Error; err != nil {
 			return err
 		}
-		if err = tx.Exec(`UPDATE topic_maintenance_teams SET last_turn=(SELECT turn_sequence FROM topic_maintenance_state WHERE singleton),lease_token=?::uuid,lease_until=? WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?`, candidate.LeaseToken, candidate.LeaseUntil, candidate.TeamID, candidate.SpaceID, candidate.Generation).Error; err != nil {
+		if err = tx.Exec(`UPDATE topic_maintenance_teams SET last_turn=(SELECT turn_sequence FROM topic_maintenance_state WHERE singleton),next_stage=(next_stage+1)%5,lease_token=?::uuid,lease_until=? WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?`, candidate.LeaseToken, candidate.LeaseUntil, candidate.TeamID, candidate.SpaceID, candidate.Generation).Error; err != nil {
 			return err
 		}
 		result = candidate
@@ -317,6 +350,21 @@ func maintenancePublicationFence(ctx context.Context, tx *gorm.DB, fence scope) 
 var _ topic.MaintenanceRepository = (*Store)(nil)
 
 func expireMaintenanceBatches(tx *gorm.DB, now time.Time) (int64, error) {
+	count, err := expireMaintenanceBatchRecords(tx, now)
+	if err != nil {
+		return count, err
+	}
+	err = tx.Exec(`UPDATE topic_maintenance_community_work SET lease_batch_id=NULL,lease_until=NULL
+		WHERE lease_until<=?`, now).Error
+	if err != nil {
+		return count, err
+	}
+	err = tx.Exec(`UPDATE topic_embeddings SET consolidation_batch_id=NULL,consolidation_lease_until=NULL
+		WHERE consolidation_lease_until<=?`, now).Error
+	return count, err
+}
+
+func expireMaintenanceBatchRecords(tx *gorm.DB, now time.Time) (int64, error) {
 	result := tx.Exec(`UPDATE topic_maintenance_batches SET status='lost',failure_code='lease_lost' WHERE status='running' AND lease_until<=?`, now)
 	return result.RowsAffected, result.Error
 }

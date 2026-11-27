@@ -287,26 +287,78 @@ async function verifyTopicRouting(base, adminBase, vendor) {
     const backupIDs = await direct(backups.topic_id);
     assert(backupIDs.includes(mixed) && !backupIDs.includes(familiar));
     if (vendor === "openai") {
+      const secondBackup = await store("Saturn keeps PostgreSQL backups.");
+      assert((await direct(backups.topic_id)).includes(secondBackup), "automatic placement requires two active members");
       const record = async (id) => (await getJSON(`${base}/ui/api/topics/records/${id}`, {
         headers: { Authorization: `Bearer ${actor.api_key}` },
       })).data;
       const communityGenerations = async () => (await getJSON(`${fixtureURL}/health`)).chat_requests.filter((call) => call.schema_name === "community_placement_v1").length;
       const beforePlacement = await communityGenerations();
-      const startPlacement = (await fixture()).exchanges.length;
-      await fixture("community-partial-outage");
+      const placementSince = new Date().toISOString();
+      const waitForPlacement = async (label, predicate) => {
+        let last;
+        try {
+          await until(async () => {
+            const [parent, child] = await Promise.all([record(storage.topic_id), record(backups.topic_id)]);
+            last = { parent, child };
+            return predicate(parent, child);
+          }, 150_000, 2000);
+        } catch (error) {
+          const logs = spawnSync("docker", ["compose", "-p", project, "-f", compose, "logs", "--no-color", "--since", placementSince, "server"], { encoding: "utf8", maxBuffer: 32 * 1024 * 1024 });
+          const events = `${logs.stdout || ""}\n${logs.stderr || ""}`.split("\n").flatMap((line) => {
+            const start = line.indexOf("{");
+            if (start < 0) return [];
+            try { return [JSON.parse(line.slice(start))]; } catch { return []; }
+          }).filter((entry) => entry.team_id === team.id && (entry.msg?.startsWith("community_placement.") || entry.msg?.startsWith("topic_maintenance.")))
+            .slice(-80).map(({ time, msg, run_id, batch_id, topic_id, topic_version, parent_topic_id, candidates, choice, winner_probability, threshold, status, reason, reason_code, failure_code, claimed_count, committed_count, error }) => ({ time, msg, run_id, batch_id, topic_id, topic_version, parent_topic_id, candidates, choice, winner_probability, threshold, status, reason, reason_code, failure_code, claimed_count, committed_count, error }));
+          throw new Error(`${label} did not settle: ${JSON.stringify({ last, log_status: logs.status, events })}`, { cause: error });
+        }
+      };
+      const decisionSettings = await control(adminBase);
+      const communitySetting = decisionSettings.items.find((item) => item.key === "DECISION_COMMUNITY_PLACEMENT_ENABLED");
+      assert(communitySetting);
+      const refresh = async (id, reason) => {
+        const current = await record(id);
+        await getJSON(`${base}/ui/api/topics/edits`, { method: "POST", headers: { Authorization: `Bearer ${actor.api_key}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ operation_key: randomUUID(), reason, edits: [{ action: "define", record_id: id, kind: "topic",
+            expected_version: current.edit_version ?? current.version, definition: { ...current.definition, description: `${current.definition.description} ${reason}` } }] }) });
+      };
+      await control(adminBase, [{ key: communitySetting.key, value: "true" }]);
       try {
+        const beforeOutage = (await fixture()).exchanges.length;
+        await fixture("community-partial-outage");
         await admin("/topic-maintenance/resume", { operation_key: randomUUID() });
         await admin("/topic-maintenance/runs", { operation_key: randomUUID(), max_batches: 20 });
-        await until(async () => {
-          const [parent, child] = await Promise.all([record(storage.topic_id), record(backups.topic_id)]);
-          return parent.community_placement === "failed" && child.community_placement === "placed"
-            && child.community_parent_id === storage.topic_id;
-        }, 150_000);
-        assert.equal(await communityGenerations(), beforePlacement, "a clear parent choice and a required provider outage must both skip generation");
-        const placements = (await fixture()).exchanges.slice(startPlacement).filter((item) => item.vendor === vendor && item.names.includes("parent"));
-        assert(placements.length >= 2);
+        await waitForPlacement("Decision outage", (parent, child) => parent.community_placement === "failed" && child.community_placement === "failed");
+        const failedDecisions = (await fixture()).exchanges.slice(beforeOutage).filter((item) => item.vendor === vendor && item.mode === "community-partial-outage" && item.names.some((name) => /^parent_\d+$/.test(name)));
+        assert(failedDecisions.some((item) => item.names.filter((name) => /^parent_\d+$/.test(name)).length >= 2), "the failed Decision must contain both Community topics");
+        assert.equal(await communityGenerations(), beforePlacement, "a failed Community Decision must not fall back to generation");
+        await admin("/topic-maintenance/pause", { operation_key: randomUUID() });
+        await fixture("normal");
+        await refresh(storage.topic_id, "Refresh after Decision outage");
+        await refresh(backups.topic_id, "Refresh after Decision outage");
+        const beforeDecision = (await fixture()).exchanges.length;
+        await admin("/topic-maintenance/resume", { operation_key: randomUUID() });
+        await admin("/topic-maintenance/runs", { operation_key: randomUUID(), max_batches: 40 });
+        await waitForPlacement("Decision recovery", (parent, child) => parent.community_placement === "standalone" && child.community_placement === "placed"
+          && child.community_parent_id === storage.topic_id);
+        const placementDecisions = (await fixture()).exchanges.slice(beforeDecision).filter((item) => item.vendor === vendor && item.names.some((name) => /^parent_\d+$/.test(name)));
+        assert(placementDecisions.some((item) => item.names.filter((name) => /^parent_\d+$/.test(name)).length >= 2), "Community placement must use a batched Decision");
+        assert.equal(await communityGenerations(), beforePlacement, "clear Community Decisions must not invoke generation");
+        await admin("/topic-maintenance/pause", { operation_key: randomUUID() });
+        await refresh(storage.topic_id, "Exercise independent generation");
+        await refresh(backups.topic_id, "Exercise independent generation");
+        await control(adminBase, [{ key: communitySetting.key, value: "false" }]);
+        await getJSON(`${fixtureURL}/ontology-fixture`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "community-partial-outage" }) });
+        await admin("/topic-maintenance/resume", { operation_key: randomUUID() });
+        await admin("/topic-maintenance/runs", { operation_key: randomUUID(), max_batches: 40 });
+        await waitForPlacement("Independent generation", (parent, child) => parent.community_placement === "failed" && child.community_placement === "placed"
+          && child.community_parent_id === storage.topic_id);
+        assert((await communityGenerations()) >= beforePlacement + 2, "independent generation must let the sibling place while one provider call fails");
       } finally {
         await admin("/topic-maintenance/pause", { operation_key: randomUUID() });
+        await control(adminBase, [{ key: communitySetting.key, value: String(decisionSettings.effective.preferences.community_placement) }]);
+        await getJSON(`${fixtureURL}/ontology-fixture`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: "normal" }) });
         await fixture("normal");
       }
     }
@@ -350,6 +402,6 @@ async function control(base, items) {
 }
 async function fixture(value) { return getJSON(`${fixtureURL}/decision-fixture`, value ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: value }) } : undefined); }
 async function getJSON(url, init) { const response = await fetch(url, init); assert(response.ok, `fixture HTTP ${response.status}`); return response.json(); }
-async function until(check, timeoutMS = 30_000) { const deadline = Date.now() + timeoutMS; let cause; while (Date.now() < deadline) { try { if (await check()) return; } catch (error) { cause = error; } await new Promise((resolve) => setTimeout(resolve, 250)); } throw new Error("decision scenario condition did not complete", { cause }); }
+async function until(check, timeoutMS = 30_000, intervalMS = 250) { const deadline = Date.now() + timeoutMS; let cause; while (Date.now() < deadline) { try { if (await check()) return; } catch (error) { cause = error; } await new Promise((resolve) => setTimeout(resolve, intervalMS)); } throw new Error("decision scenario condition did not complete", { cause }); }
 function docker(args) { const result = spawnSync("docker", args, { encoding: "utf8", maxBuffer: 2 * 1024 * 1024 }); assert.equal(result.status, 0, "decision test container operation failed"); return result.stdout; }
 function required(name) { const value = process.env[name]; assert(value, `${name} is required`); return value.replace(/\/$/, ""); }

@@ -57,6 +57,7 @@ type AssessmentAttempt struct {
 }
 
 type OrganizationResult struct {
+	IsolatedOutcomes     bool                  `json:"-"`
 	AssessmentID         string                `json:"assessment_id"`
 	Existing             bool                  `json:"existing"`
 	Current              bool                  `json:"current"`
@@ -85,6 +86,7 @@ type OrganizationReceipt struct {
 type EquivalenceNeighborhood struct {
 	Seed    SourceHandle
 	Sources []SourceHandle
+	Failure error
 }
 
 type OrganizationRepository interface {

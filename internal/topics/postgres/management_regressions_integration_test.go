@@ -216,7 +216,7 @@ func TestOntologyManagementStatusCountsOnlyAuthenticatedTeam(t *testing.T) {
 	foreign, err := manager.Status(other.actor(0, "manager"))
 	require.NoError(t, err)
 	require.EqualValues(t, 5, foreign.Counts.Failed)
-	require.NoError(t, f.admin.Exec(`UPDATE topic_maintenance_sources SET status='organized' WHERE team_id=?::uuid`, f.team).Error)
+	require.NoError(t, f.admin.Exec(`UPDATE topic_maintenance_sources SET status='organized',equivalence_status='completed',equivalence_fingerprint=fingerprint WHERE team_id=?::uuid`, f.team).Error)
 	status, err = manager.Status(f.actor(0, "manager"))
 	require.NoError(t, err)
 	require.Equal(t, topiccontract.MaintenanceCounts{Eligible: 5, Organized: 5}, status.Counts)
@@ -227,7 +227,8 @@ func TestOntologyManagementStatusCountsOnlyAuthenticatedTeam(t *testing.T) {
 	require.NoError(t, err)
 	status, err = manager.Status(f.actor(0, "manager"))
 	require.NoError(t, err)
-	require.Positive(t, status.PendingMarkers)
+	require.Zero(t, status.PendingMarkers, "a new Topic must not requeue existing Evidence")
+	require.EqualValues(t, 1, status.Communities.Pending)
 	require.False(t, status.CoverageComplete)
 	require.Equal(t, topiccontract.MaintenanceCounts{Eligible: 5, Organized: 5}, status.Counts)
 }

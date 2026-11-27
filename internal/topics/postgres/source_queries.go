@@ -9,16 +9,14 @@ const maintenanceDefinitionPageSQL = `WITH RECURSIVE input AS (
 ` + maintenanceDefinitionSourcesSQL
 
 const maintenanceDefinitionSourcesSQL = `), roots AS (
- SELECT head.record_id FROM topic_record_heads AS head JOIN input AS scope
- USING(team_id,shared_space_id,space_generation) WHERE head.record_id=scope.record_id
- UNION
  SELECT dependency.record_id FROM topic_source_dependencies AS dependency
  JOIN topic_record_heads AS head ON head.team_id=dependency.team_id
  AND head.shared_space_id=dependency.shared_space_id AND head.space_generation=dependency.space_generation
  AND head.record_id=dependency.record_id AND head.version=dependency.record_version
  JOIN input AS scope ON scope.team_id=dependency.team_id AND scope.shared_space_id=dependency.shared_space_id
  AND scope.space_generation=dependency.space_generation
- WHERE dependency.source_kind=scope.source_kind AND dependency.source_id=scope.source_id AND NOT head.retired
+ WHERE scope.record_id IS NULL AND dependency.source_kind=scope.source_kind
+ AND dependency.source_id=scope.source_id AND NOT head.retired
 ), affected(record_id) AS (
  SELECT record_id FROM roots
  UNION
@@ -29,20 +27,15 @@ const maintenanceDefinitionSourcesSQL = `), roots AS (
  AND head.record_id=dependency.record_id AND head.version=dependency.record_version
  JOIN input AS scope ON scope.team_id=dependency.team_id AND scope.shared_space_id=dependency.shared_space_id
  AND scope.space_generation=dependency.space_generation
-), words AS (
- SELECT head.names || tsvector_to_array(` + vocabularyVectorSQL + `) AS terms
- FROM topic_record_heads AS head JOIN topic_revision_records AS revision
- USING(team_id,shared_space_id,space_generation,record_id,version)
- JOIN input AS scope USING(team_id,shared_space_id,space_generation)
- WHERE head.record_id=scope.record_id AND head.kind IN ('topic')
 ), keys AS (
+ SELECT 'evidence'::text AS source_kind,membership.evidence_id::text AS source_id
+ FROM topic_memberships AS membership JOIN input AS scope
+ USING(team_id,shared_space_id,space_generation)
+ WHERE membership.topic_id=scope.record_id AND NOT membership.retired
+ UNION
  SELECT dependency.source_kind,dependency.source_id FROM affected
  JOIN topic_source_dependencies AS dependency ON dependency.record_id=affected.record_id
  JOIN input AS scope USING(team_id,shared_space_id,space_generation)
- UNION
- SELECT source.source_kind,source.source_id FROM topic_maintenance_sources AS source
- JOIN input AS scope USING(team_id,shared_space_id,space_generation)
- JOIN words ON source.vocabulary_words && words.terms
 )
 SELECT source.source_kind,source.source_id,source.source_version FROM keys
 JOIN topic_maintenance_sources AS source USING(source_kind,source_id)
@@ -66,6 +59,15 @@ SELECT matches.marker_index,matches.source_kind,matches.source_id,matches.source
 FROM matches LEFT JOIN page USING(source_kind,source_id,source_version)
 ORDER BY matches.source_kind,matches.source_id,matches.marker_index`
 
+const eligibleEvidenceSQL = `ingest.status='completed'
+      AND (fragment.source_id IS NULL OR source.current_revision_id=fragment.source_revision_id)
+      AND NOT EXISTS (SELECT 1 FROM evidence_quarantines AS quarantine
+           WHERE quarantine.team_id=fragment.team_id AND quarantine.fragment_id=fragment.fragment_id AND quarantine.status='active')
+      AND NOT EXISTS (SELECT 1 FROM evidence_lifecycle_events AS event
+           WHERE event.team_id=fragment.team_id AND event.target_fragment_id=fragment.fragment_id)
+      AND NOT (ingest.source_summary='overdue conflict deletion-only derivation'
+           AND ingest.metadata->>'conflict_resolution_deletion_only'='true')`
+
 const evidenceSourceSQL = `
 WITH candidate AS (
     SELECT fragment.*,source.current_revision_id
@@ -76,14 +78,7 @@ WITH candidate AS (
     ) AS ingest ON TRUE
     LEFT JOIN evidence_sources AS source ON source.team_id=fragment.team_id AND source.source_id=fragment.source_id
     WHERE fragment.team_id=?::uuid AND fragment.space_id=?::uuid AND fragment.space_generation=?
-      AND fragment.fragment_id=ANY(?::uuid[]) AND ingest.status='completed'
-      AND (fragment.source_id IS NULL OR source.current_revision_id=fragment.source_revision_id)
-      AND NOT EXISTS (SELECT 1 FROM evidence_quarantines AS quarantine
-           WHERE quarantine.team_id=fragment.team_id AND quarantine.fragment_id=fragment.fragment_id AND quarantine.status='active')
-      AND NOT EXISTS (SELECT 1 FROM evidence_lifecycle_events AS event
-           WHERE event.team_id=fragment.team_id AND event.target_fragment_id=fragment.fragment_id)
-      AND NOT (ingest.source_summary='overdue conflict deletion-only derivation'
-           AND ingest.metadata->>'conflict_resolution_deletion_only'='true')
+      AND fragment.fragment_id=ANY(?::uuid[]) AND ` + eligibleEvidenceSQL + `
 )
 SELECT fragment_id::text,1::bigint,owner_profile_id::text,
        jsonb_build_object('content',content,'hash',content_hash,'authority',authority,'created_at',created_at::text,

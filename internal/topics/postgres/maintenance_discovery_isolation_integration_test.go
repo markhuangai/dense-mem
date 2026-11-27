@@ -35,6 +35,7 @@ func TestOntologyMaintenanceRevalidationDiscoveryIsolation(t *testing.T) {
 	x.marker(t)
 	enqueueCoalescingMarkers(t, x, definitions)
 	marker := discoveryMarkerState(t, x)
+	require.EqualValues(t, 2, marker["markers"], "the two explicit definition markers are coalesced by Topic")
 	for _, owner := range []int{0, 1} {
 		require.NoError(t, f.store.withScope(f.actor(owner, "member"), f.team, true, func(tx *gorm.DB, fence scope) error {
 			handles, err := maintenanceMarkerSources(tx, fence, maintenanceMarker{AnchorKind: "topic_record_heads", AnchorID: x.topic.ID, TargetKind: "definition", TargetID: x.topic.ID}, 100)
@@ -60,8 +61,12 @@ func TestOntologyMaintenanceRevalidationDiscoveryIsolation(t *testing.T) {
 	require.Equal(t, 1, first.Counts.RefreshedSources)
 	require.Zero(t, first.Counts.FreshnessInvocations)
 	afterFirst := discoveryMarkerState(t, x)
-	require.EqualValues(t, 3, afterFirst["markers"])
+	require.EqualValues(t, 2, afterFirst["markers"])
 	require.Equal(t, topiccontract.SourceKey(ordered[0]), afterFirst["cursor"])
+	cursors := coalescingMarkerCursors(t, x)
+	for _, definition := range definitions {
+		require.Equal(t, topiccontract.SourceKey(ordered[0]), cursors[definition.ID])
+	}
 	second, err := store.DiscoverMaintenance(ctx, x.turn, 1)
 	require.NoError(t, err)
 	require.Equal(t, 1, second.Counts.RefreshedSources)

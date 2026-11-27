@@ -59,6 +59,9 @@ func TestOntologyMatchingVocabularyAndInvalidation(t *testing.T) {
 			require.NoError(t, err)
 			require.False(t, slices.ContainsFunc(contextData.Candidates, func(view topic.RecordView) bool { return view.ID == foreignDefinition.ID }))
 			require.Equal(t, testCase.matched, slices.ContainsFunc(contextData.Candidates, func(view topic.RecordView) bool { return view.ID == definition.ID }))
+			membership := topic.Record{ID: uuid.NewString(), Kind: topic.AssignmentKind,
+				Assignment: &topic.Assignment{Source: source, DefinitionID: definition.ID}, Sources: []topic.SourceDependency{f.source(t, source)}}
+			revalidationPublish(t, f, topic.Change{Record: membership})
 			require.NoError(t, f.store.withScope(ctx, f.team, false, func(tx *gorm.DB, fence scope) error {
 				if err := refreshMaintenanceSource(tx, fence, source, true); err != nil {
 					return err
@@ -74,7 +77,7 @@ func TestOntologyMatchingVocabularyAndInvalidation(t *testing.T) {
 				}
 				require.ElementsMatch(t, individual, grouped.Sources)
 				require.NotContains(t, individual, foreignSource)
-				require.Equal(t, testCase.matched, slices.Contains(individual, source), "lookup and lexical invalidation must agree")
+				require.Contains(t, individual, source, "direct membership must be rechecked independently of lexical similarity")
 				t.Logf("matching case=%s candidates=%d invalidated_sources=%d", testCase.key, len(contextData.Candidates), len(individual))
 				return nil
 			}))

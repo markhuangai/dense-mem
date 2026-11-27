@@ -110,9 +110,9 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	require.Equal(t, 2, f.provider.calls, "a completed checkpoint can export without Remember calls")
 	manifest.ResumeScope = nil
 	migrator := storagepostgres.NewMigratorWithDB(f.native.DB)
-	const validationVersion = storagepostgres.RelationalTopicCutoverVersion
+	const validationVersion int64 = 20261126010001
 	require.Equal(t, validationVersion, seed.SchemaVersion)
-	require.ErrorContains(t, migrator.RunDown(ctx), "offline topic upgrade requires forward recovery or backup restoration")
+	require.ErrorContains(t, migrator.RunDown(ctx), "topic hybrid backfill requires forward recovery")
 	var applied bool
 	require.NoError(t, f.native.DB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=$1 AND is_applied)", validationVersion).Scan(&applied))
 	require.True(t, applied)
@@ -199,6 +199,8 @@ func TestRunnerSeedLogicalRestoreMigrationAndCredentialIdentity(t *testing.T) {
 	require.NoError(t, restoredDB.QueryRowContext(ctx, "SELECT current_database()").Scan(&restoredDatabase))
 	require.Equal(t, target, restoredDatabase)
 	require.NoError(t, restoredDB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=$1 AND is_applied)", validationVersion).Scan(&applied))
+	require.True(t, applied, "the restored seed must retain the latest migration receipt")
+	require.NoError(t, restoredDB.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=$1 AND is_applied)", storagepostgres.RelationalTopicCutoverVersion).Scan(&applied))
 	require.True(t, applied, "the restored seed must retain the cutover receipt")
 	require.NoError(t, storagepostgres.NewMigratorWithDB(restoredDB).RunUp(ctx))
 	require.NoError(t, storagepostgres.ValidateStartupMigrationState(ctx, restoredDB, storagepostgres.MigrationsDir()))

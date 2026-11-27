@@ -132,7 +132,7 @@ func (s *Store) PrepareMaintenanceUpgrade(ctx context.Context, prepareAudit topi
 		if state.Disposition() != "ready" {
 			return nil
 		}
-		state.RecoveredBatches, err = expireMaintenanceBatches(tx, now)
+		state.RecoveredBatches, err = expireMaintenanceBatchRecords(tx, now)
 		if err != nil {
 			return err
 		}

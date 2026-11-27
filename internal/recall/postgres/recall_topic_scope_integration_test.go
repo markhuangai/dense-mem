@@ -267,7 +267,14 @@ func TestRecallOntologySourceRevisionCorrectionAndDefinitionStaleness(t *testing
 	f.publication(t, definition)
 	alias, err := f.search.RecallEvidence(f.actor(2, "member"), RecallEvidenceInput{TeamID: f.team, SpaceID: f.space, Query: "database", Limit: 10, OrganizationEnabled: true})
 	require.NoError(t, err)
-	require.Empty(t, alias.Results, "stale assignments cannot discover source IDs")
+	require.Len(t, alias.Results, 1, "the live accepted membership remains visible across the Topic edit")
+	require.Equal(t, other.ID, alias.Results[0].EvidenceID)
+	require.Empty(t, alias.Results[0].EquivalentEvidenceIDs)
+	assignmentID := topic.OrganizationRecordID(f.team, topic.AssignmentKind, topic.SourceKey(other))
+	assignment, err := f.topicStore.GetRecord(context.Background(), f.team, assignmentID, 0)
+	require.NoError(t, err)
+	require.True(t, assignment.Current)
+	require.Equal(t, definition.ID, assignment.Assignment.DefinitionID)
 }
 
 func TestRecallOntologyReaderResetsBetweenTransactions(t *testing.T) {

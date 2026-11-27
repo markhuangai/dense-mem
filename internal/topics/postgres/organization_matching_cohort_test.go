@@ -51,10 +51,7 @@ func seedMatchingCohortVocabulary(t *testing.T, f *ontologyFixture, testCase eva
 		}
 		require.ElementsMatch(t, individual, grouped.Sources)
 		matches = len(individual)
-		require.Equal(t, expected*len(handles), matches)
-		if expected > 0 {
-			require.ElementsMatch(t, handles, individual)
-		}
+		require.Zero(t, matches, "a new Topic has no direct members to invalidate")
 		return nil
 	}))
 	return map[string]any{"lookup_candidates_per_source": expected, "definition_marker_sources": matches}

@@ -112,15 +112,7 @@ func (p *Provider) Decide(ctx context.Context, request modelprovider.DecisionReq
 		p.log(ctx, slog.LevelError, "decision.configuration.invalid", append(attrs, attr("reason_code", reason), attr("error", err.Error()))...)
 		return result, p.failure("invalid effective decision token budgets", "request_invalid", 0, err)
 	}
-	for _, group := range request.Groups {
-		for _, question := range group.Questions {
-			if err = ctx.Err(); err != nil {
-				return result, err
-			}
-			p.log(observability.WithSinkSuppressed(ctx), slog.LevelDebug, "decision.question.prepared", append(append([]observability.LogAttr{}, attrs...), attr("group_id", group.ID), attr("candidate_reference", group.Reference), attr("question", observability.DecisionLogValue(question)))...)
-		}
-	}
-	batches, err := p.pack(ctx, request.Groups)
+	batches, err := p.pack(ctx, request.Groups, attrs)
 	if err != nil {
 		if ctx.Err() != nil {
 			return result, ctx.Err()
@@ -211,7 +203,7 @@ func (p *Provider) Decide(ctx context.Context, request modelprovider.DecisionReq
 	return result, p.failure("decision attempts exhausted", "provider_protocol", 0, nil)
 }
 
-func (p *Provider) pack(ctx context.Context, groups []modelprovider.DecisionGroup) ([]batch, error) {
+func (p *Provider) pack(ctx context.Context, groups []modelprovider.DecisionGroup, attrs []observability.LogAttr) ([]batch, error) {
 	emptyBody, emptyPrefix, _, _, err := encodePreparedBatch(p.config.Provider, p.config.Model, nil)
 	if err != nil {
 		return nil, err
@@ -268,6 +260,17 @@ func (p *Provider) pack(ctx context.Context, groups []modelprovider.DecisionGrou
 			item.questionBytes += len(preparedQuestion.wire)
 			item.maxSuffixTokens = max(item.maxSuffixTokens, preparedQuestion.suffixTokens)
 			item.questions = append(item.questions, preparedQuestion)
+			if attrs != nil {
+				fields := append(append([]observability.LogAttr{}, attrs...), attr("group_id", group.ID), attr("candidate_reference", group.Reference), attr("question", observability.DecisionLogValue(question)))
+				p.log(observability.WithSinkSuppressed(ctx), slog.LevelDebug, "decision.question.prepared", fields...)
+			}
+		}
+		alone, err := p.encodePreparedBatch(ctx, []preparedDecisionGroup{item})
+		if err != nil {
+			return nil, fmt.Errorf("decision group %q: %w", group.ID, err)
+		}
+		if len(groups) == 1 {
+			return []batch{alone}, nil
 		}
 		prepared = append(prepared, item)
 	}

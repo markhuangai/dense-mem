@@ -7,6 +7,7 @@ import (
 
 	audit "github.com/markhuangai/dense-mem/internal/audit/contract"
 	"github.com/markhuangai/dense-mem/internal/domain"
+	semantic "github.com/markhuangai/dense-mem/internal/semanticwrite/contract"
 )
 
 const MaintenancePageSize = 100
@@ -14,13 +15,14 @@ const MaintenanceDefinitionGroupSize = 20
 const MaxManualBatches = 100
 
 var (
-	ErrMaintenancePaused   = errors.New("topic maintenance paused")
-	ErrMaintenanceDisabled = errors.New("topic maintenance disabled")
-	ErrWindowClosed        = errors.New("topic maintenance window closed")
-	ErrConfiguration       = errors.New("topic maintenance configuration invalid")
-	ErrLeaseLost           = errors.New("topic maintenance lease lost")
-	ErrAccounting          = errors.New("topic maintenance accounting unavailable")
-	ErrAuditUnavailable    = errors.New("topic maintenance audit unavailable")
+	ErrMaintenancePaused            = errors.New("topic maintenance paused")
+	ErrMaintenanceDisabled          = errors.New("topic maintenance disabled")
+	ErrWindowClosed                 = errors.New("topic maintenance window closed")
+	ErrConfiguration                = errors.New("topic maintenance configuration invalid")
+	ErrLeaseLost                    = errors.New("topic maintenance lease lost")
+	ErrAccounting                   = errors.New("topic maintenance accounting unavailable")
+	ErrAuditUnavailable             = errors.New("topic maintenance audit unavailable")
+	ErrEvidenceEmbeddingUnavailable = errors.New("current evidence embedding unavailable")
 )
 
 type MaintenanceWindow struct {
@@ -62,6 +64,7 @@ type MaintenanceAudit func(MaintenanceRun) (audit.Entry, error)
 
 type MaintenanceClaim struct {
 	ID                     string
+	Kind                   string
 	RunID                  string
 	WindowID               string
 	TeamID                 string
@@ -73,17 +76,90 @@ type MaintenanceClaim struct {
 	DecisionMaxInputTokens int64
 	Sources                []SourceHandle
 	Revisions              map[string]int64
+	Fingerprints           map[string]string
 	PriorAssignmentHashes  map[string]string
 }
 
 type MaintenanceTurn struct {
-	RunID      string
-	RetryRunID string
-	TeamID     string
-	SpaceID    string
-	Generation int64
-	LeaseToken string
-	LeaseUntil time.Time
+	RunID               string
+	RetryRunID          string
+	ReassessTeamID      string
+	ReassessEvidenceIDs []string
+	Stage               int
+	TeamID              string
+	SpaceID             string
+	Generation          int64
+	LeaseToken          string
+	LeaseUntil          time.Time
+}
+
+type TopicEmbeddingCandidate struct {
+	ID      string
+	Version int64
+	Text    string
+}
+
+type TopicEmbeddingBatch struct {
+	Fence  semantic.Fence
+	Topics []TopicEmbeddingCandidate
+}
+
+type TopicEmbeddingRepository interface {
+	ReadTopicEmbeddingBatch(context.Context, MaintenanceTurn) (*TopicEmbeddingBatch, error)
+	CompleteTopicEmbeddingBatch(context.Context, MaintenanceTurn, TopicEmbeddingBatch, semantic.Result) (int, error)
+}
+
+type EquivalenceMaintenanceRepository interface {
+	ClaimMaintenanceEquivalence(context.Context, MaintenanceTurn, string, time.Time) (*MaintenanceClaim, error)
+}
+
+type TopicConsolidationPair struct {
+	Left, Right         CommunityCandidate
+	EmbeddingContractID string
+	Similarity          float64
+}
+
+type TopicConsolidationResult struct {
+	SurvivorID, RetiredID                                    string
+	MovedMemberships, RetiredMemberships, ReparentedChildren int
+	ReassessmentRequired                                     bool
+}
+
+type TopicConsolidationRepository interface {
+	ClaimTopicConsolidation(context.Context, MaintenanceTurn, string, time.Time) ([]TopicConsolidationPair, *MaintenanceClaim, error)
+	CompleteTopicConsolidationPair(context.Context, MaintenanceClaim, TopicConsolidationPair, bool) (TopicConsolidationResult, error)
+	FinishTopicConsolidation(context.Context, MaintenanceClaim, bool) error
+}
+
+type maintenanceStagesKey struct{}
+type maintenanceEquivalenceStageKey struct{}
+type maintenanceConsolidationStageKey struct{}
+
+func WithTopicEmbeddingStage(ctx context.Context) context.Context {
+	return context.WithValue(ctx, maintenanceStagesKey{}, true)
+}
+
+func TopicEmbeddingStageEnabled(ctx context.Context) bool {
+	enabled, _ := ctx.Value(maintenanceStagesKey{}).(bool)
+	return enabled
+}
+
+func WithEquivalenceStage(ctx context.Context) context.Context {
+	return context.WithValue(ctx, maintenanceEquivalenceStageKey{}, true)
+}
+
+func EquivalenceStageEnabled(ctx context.Context) bool {
+	enabled, _ := ctx.Value(maintenanceEquivalenceStageKey{}).(bool)
+	return enabled
+}
+
+func WithConsolidationStage(ctx context.Context) context.Context {
+	return context.WithValue(ctx, maintenanceConsolidationStageKey{}, true)
+}
+
+func ConsolidationStageEnabled(ctx context.Context) bool {
+	enabled, _ := ctx.Value(maintenanceConsolidationStageKey{}).(bool)
+	return enabled
 }
 
 type MaintenanceCounts struct {
@@ -102,6 +178,12 @@ type CommunityPlacementCounts struct {
 	Failed     int64 `json:"failed"`
 }
 
+type EquivalenceCounts struct {
+	Pending   int64 `json:"pending"`
+	Completed int64 `json:"completed"`
+	Failed    int64 `json:"failed"`
+}
+
 type MaintenanceStatus struct {
 	ObservedAt             time.Time                     `json:"observed_at"`
 	Paused                 bool                          `json:"paused"`
@@ -109,6 +191,7 @@ type MaintenanceStatus struct {
 	DiscoveryComplete      bool                          `json:"discovery_complete"`
 	CoverageComplete       bool                          `json:"coverage_complete"`
 	Communities            CommunityPlacementCounts      `json:"communities"`
+	Equivalence            EquivalenceCounts             `json:"equivalence"`
 	Counts                 MaintenanceCounts             `json:"counts"`
 	OldestPendingAt        *time.Time                    `json:"oldest_pending_at,omitempty"`
 	LastSuccessfulProgress *time.Time                    `json:"last_successful_progress,omitempty"`
@@ -187,6 +270,8 @@ func MaintenanceFailureCode(err error) string {
 		return "accounting_unavailable"
 	case errors.Is(err, ErrAuditUnavailable):
 		return "audit_unavailable"
+	case errors.Is(err, ErrEvidenceEmbeddingUnavailable):
+		return "evidence_embedding_unavailable"
 	}
 	return ""
 }

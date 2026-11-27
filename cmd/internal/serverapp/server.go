@@ -282,6 +282,7 @@ func RunActiveServer(
 	topicMaintenance.WithTopicProcessing(topicAssignment, topicStore, topicStore, topics.CommunityAssessor{
 		Transport: assessorProvider, Decisions: decisions, Settings: appConfigService, Limits: assessmentLimits, Logger: rootLogger,
 	}, appConfigService)
+	topicMaintenance.WithTopicEmbeddings(topicStore, retryEmbedder, time.Duration(cfg.GetAIEmbeddingTimeoutSeconds())*time.Second)
 	applications := buildApplicationBundle(applicationCompositionDependencies{
 		TopicAssignment:      topicAssignment,
 		PublicSeedAdmission:  seedAdmission,

@@ -718,6 +718,12 @@ export class ControlApi {
     return this.requestEnvelope<TopicMaintenanceRun>(path, { method: "POST", body: { operation_key: operationKey, max_batches: maxBatches } });
   }
 
+  reassessUncategorizedEvidence(teamId: string, operationKey: string, evidenceIds: string[]): Promise<TopicMaintenanceRun> {
+    return this.requestEnvelope<TopicMaintenanceRun>(`/teams/${encodeURIComponent(teamId)}/topic-maintenance/reassess`, {
+      method: "POST", body: { operation_key: operationKey, evidence_ids: evidenceIds },
+    });
+  }
+
   pauseTopicMaintenance(operationKey: string, paused: boolean): Promise<TopicMaintenanceRun> { return this.requestEnvelope<TopicMaintenanceRun>(`/topic-maintenance/${paused ? "pause" : "resume"}`, { method: "POST", body: { operation_key: operationKey } }); }
 
 

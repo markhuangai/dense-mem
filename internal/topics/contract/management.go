@@ -97,12 +97,14 @@ type ImpactPreview struct {
 }
 
 type TeamTopicStatus struct {
-	ObservedAt        time.Time         `json:"observed_at"`
-	Revision          int64             `json:"revision"`
-	DiscoveryComplete bool              `json:"discovery_complete"`
-	CoverageComplete  bool              `json:"coverage_complete"`
-	PendingMarkers    int64             `json:"pending_markers"`
-	Counts            MaintenanceCounts `json:"counts"`
+	ObservedAt        time.Time                `json:"observed_at"`
+	Revision          int64                    `json:"revision"`
+	DiscoveryComplete bool                     `json:"discovery_complete"`
+	CoverageComplete  bool                     `json:"coverage_complete"`
+	PendingMarkers    int64                    `json:"pending_markers"`
+	Counts            MaintenanceCounts        `json:"counts"`
+	Equivalence       EquivalenceCounts        `json:"equivalence"`
+	Communities       CommunityPlacementCounts `json:"communities"`
 }
 
 type ManagementPublication struct {

@@ -21,13 +21,19 @@ type CommunityInput struct {
 }
 
 type CommunityOutcome struct {
-	InputHash string
-	Method    string
-	Status    string
-	ParentID  string
+	InputHash    string
+	Method       string
+	Status       string
+	ParentID     string
+	AssessmentID string
 }
 
 type CommunityRepository interface {
 	ClaimCommunity(context.Context, MaintenanceTurn, string, time.Time) (*CommunityInput, *MaintenanceClaim, error)
 	CompleteCommunity(context.Context, MaintenanceClaim, CommunityInput, CommunityOutcome, string, time.Time) error
+}
+
+type CommunityBatchRepository interface {
+	ClaimCommunities(context.Context, MaintenanceTurn, string, time.Time) ([]CommunityInput, *MaintenanceClaim, error)
+	CompleteCommunityItem(context.Context, MaintenanceClaim, CommunityInput, CommunityOutcome, string, time.Time) error
 }

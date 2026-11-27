@@ -134,6 +134,13 @@ func TestFeatureStoragePostgresPreservesOrganizationDraftsAndIsolation(t *testin
 		Edits: []topiccontract.ManagementEdit{{Action: "define", RecordID: topic.ID, ExpectedVersion: current.EditVersion, Kind: topiccontract.Topic, Definition: &renamed}},
 	})
 	require.NoError(t, err)
+	for _, id := range []string{left.ID, right.ID, peer.ID} {
+		view, err := f.store.GetRecord(f.actor(2, "member"), f.team, id, 0)
+		require.NoError(t, err)
+		require.True(t, view.Current, "a migrated Assignment retains its accepted dependencies after a Topic edit")
+	}
+	updatedTopics := readTopics()
+	require.ElementsMatch(t, []string{a.ID, b.ID, otherOwner.ID}, updatedTopics.Topics[0].EvidenceIDs)
 	retainedPin, err := manager.Record(f.actor(0, "manager"), pin.ID, 1)
 	require.NoError(t, err)
 	require.Equal(t, original[pin.ID], retainedPin.Record)

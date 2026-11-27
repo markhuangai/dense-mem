@@ -198,7 +198,7 @@ func (s *Store) SaveManagementEdits(ctx context.Context, teamID string, input to
 		if err != nil {
 			return err
 		}
-		result, err = s.writePublication(tx, fence, publication, "manager", owner, hash, "", false)
+		result, err = s.writePublication(tx, fence, publication, "manager", owner, hash, "", false, nil)
 		if err != nil {
 			return err
 		}

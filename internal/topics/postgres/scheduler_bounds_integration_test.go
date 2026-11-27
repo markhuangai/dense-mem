@@ -30,12 +30,16 @@ func TestOntologyMaintenanceParallelSchedulerAttemptBounds(t *testing.T) {
 	for i := range 50 {
 		f.organizationEvidence(t, i%len(f.owners), fmt.Sprintf("isolatedsource%03d", i), nil)
 	}
-	changes := make([]topic.Change, 25)
+	changes := make([]topic.Change, 401)
 	for i := range changes {
-		changes[i] = topic.Change{Record: testTopic(fmt.Sprintf("bounded-projection-%02d", i))}
+		changes[i] = topic.Change{Record: testTopic(fmt.Sprintf("uniqueprojection%04d", i))}
 	}
-	_, err := f.store.PublishAutomatic(context.Background(), f.team, testPublication(uuid.NewString(), 0, changes...))
-	require.NoError(t, err)
+	var revision int64
+	for offset := 0; offset < len(changes); offset += topic.MaxChanges {
+		result, err := f.store.PublishManager(f.actor(0, "manager"), f.team, testPublication(uuid.NewString(), revision, changes[offset:min(offset+topic.MaxChanges, len(changes))]...))
+		require.NoError(t, err)
+		revision = result.Revision
+	}
 	config := schedulerConfig(t, f, 1, 1)
 	observer := &schedulerTurnObserver{MaintenanceRepository: f.store}
 	service, _ := schedulerFixtureService(t, f, config, nil, observer)
@@ -43,7 +47,7 @@ func TestOntologyMaintenanceParallelSchedulerAttemptBounds(t *testing.T) {
 	defer stop()
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
 		require.GreaterOrEqual(c, observer.calls.Load(), int32(20), "organization attempts")
-	}, 45*time.Second, 10*time.Millisecond)
+	}, 55*time.Second, 10*time.Millisecond)
 	require.Never(t, func() bool { return observer.calls.Load() > 20 }, time.Second, 10*time.Millisecond)
 	stop()
 	require.EqualValues(t, 20, observer.calls.Load())

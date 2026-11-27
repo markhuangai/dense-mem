@@ -181,7 +181,7 @@ test("Client overlays retain ordinary settings and reserve a bounded request bud
     const generator = join(fixture, "overlay.cjs");
     await writeFile(generator, stack.slice(start, end));
     const traceWithoutTelemetry = ["synchronous_write_telemetry_disabled", "oauth_provider_compatibility", "ontology_management", "ontology_upgrade"];
-    for (const name of ["google_adk_memory", "langchain_retriever", "python_client", "session_ingest", "synchronous_write", "enterprise_exports", ...traceWithoutTelemetry]) {
+    for (const name of ["google_adk_memory", "langchain_retriever", "python_client", "session_ingest", "synchronous_write", "enterprise_exports", "ontology_organization", ...traceWithoutTelemetry]) {
       const destination = join(fixture, `${name}.yml`);
       await run(process.execPath, [
         generator, destination, "synchronous_write", "", "", "fixture-model", "1536",
@@ -201,11 +201,15 @@ test("Client overlays retain ordinary settings and reserve a bounded request bud
       if (traceWithoutTelemetry.includes(name)) {
         assert.match(overlay, /LOG_LEVEL: ""/);
         assert.match(overlay, /TELEMETRY_ENABLED: "false"/);
+      } else if (name === "ontology_organization") {
+        assert.match(overlay, /LOG_LEVEL: ""/);
       } else if (["python_client", "session_ingest", "synchronous_write"].includes(name)) {
         assert.match(overlay, /LOG_LEVEL: "debug"/);
       } else {
         assert.doesNotMatch(overlay, /LOG_LEVEL/);
       }
+      if (name === "ontology_organization") assert.match(overlay, /AI_VERIFIER_MAX_CONCURRENCY: "12"/);
+      else assert.doesNotMatch(overlay, /AI_VERIFIER_MAX_CONCURRENCY/);
       if (name === "enterprise_exports") {
         assert.match(overlay, /OTLP_ENABLED: "true"/);
         assert.match(overlay, /OTLP_TRACE_ENDPOINT: "http:\/\/enterprise-collector:4318\/v1\/traces"/);
@@ -335,6 +339,22 @@ precheck 123 1 image /workspace "$1"`;
   for (const selection of ["shard:-1/7", "shard:00/7", "shard:0/8", "shard:7/7", "shard:6/6"]) {
     await assert.rejects(run("bash", ["-c", script, "selector", selection]), /invalid precheck shard/);
   }
+});
+
+test("bounded precheck runs measurement and additional cases in separate stages", async () => {
+  const wrapper = controller.slice(controller.lastIndexOf("\nprecheck() {") + 1, controller.indexOf("\ndoctor() {"));
+  const script = `set -euo pipefail
+${wrapper}
+partition_precheck_capabilities() { printf 'cases:measurement|cases:additional\\n'; for ((i=1; i<$2; i++)); do printf 'capability%s\\n' "$i"; done; }
+precheck_capability() { printf '%s|%s\\n' "$5" "$6"; [[ "$5" != "$FAIL_STAGE" ]]; }
+fail() { printf '%s\\n' "$*" >&2; exit 1; }
+precheck 123 1 image /workspace 'shard:0/7'`;
+  const completed = await run("bash", ["-c", script], { env: { ...process.env, FAIL_STAGE: "" } });
+  assert.equal(completed.stdout, "cases:measurement|1\ncases:additional|1\n");
+  await assert.rejects(run("bash", ["-c", script], { env: { ...process.env, FAIL_STAGE: "cases:measurement" } }), (error) => {
+    assert.equal(error.stdout, "cases:measurement|1\n");
+    return true;
+  });
 });
 
 test("default precheck streams partition progress before completion", async () => {
@@ -1781,9 +1801,13 @@ test(`${shardCount} precheck shards preserve every real runner selection exactly
     "repository/TestOntologyMaintenanceMatchingCohort",
   );
   dedicated.sort();
-  assert.equal(selections[1], `cases:${shardCount === 6 ? coalescing + "," : ""}${measurement}`);
+  assert.equal(selections[1].split("|")[0], `cases:${shardCount === 6 ? coalescing + "," : ""}${measurement}`);
   assert.equal(selections[shardCount === 6 ? 0 : 2], `cases:${dedicated.join(",")}`);
-  if (shardCount === 7) assert.equal(selections[0], `cases:${coalescing}`);
+  if (shardCount === 7) {
+    assert.equal(selections[0].split("|")[0], `cases:${coalescing}`);
+    assert.equal(selections[0].split("|").length, 2);
+    assert.equal(selections[1].split("|").length, 2);
+  }
   assert.ok(selections.slice(shardCount === 6 ? 3 : 4).every((selection) => !selection.split(",").includes("community")));
   const inventory = [];
   const directory = join(root, "scripts/e2e-db-cases");
@@ -1794,26 +1818,30 @@ test(`${shardCount} precheck shards preserve every real runner selection exactly
   const actual = [];
   const counts = [];
   for (const selection of selections) {
-    const args = selection.startsWith("cases:") ? ["--case", selection.slice(6)] : ["--capability", selection];
-    const selected = await run("go", ["-C", join(root, "cmd/e2e"), "run", ".", "--root", root, "--phase", "precheck", ...args, "--list"]);
-    const ids = selected.stdout.trim().split(/\r?\n/);
-    counts.push(ids.length);
-    assert.ok(ids.length > 0);
-    if (selection === selections[shardCount === 6 ? 0 : 2]) assert.deepEqual(ids, dedicated);
-    if (shardCount === 7 && selection === selections[0]) assert.deepEqual(ids, [coalescing]);
-    if (selection === selections[1]) assert.deepEqual(ids, shardCount === 6 ? [coalescing, measurement] : [measurement]);
-    if (selection === selections[shardCount === 6 ? 2 : 3]) {
-      assert.ok([...dedicated, coalescing, measurement].every((id) => !ids.includes(id)));
-      for (const name of ["TestOntologyAtomicPublicationReplayAndRaces", "TestOntologyDefinitionChangesValidateActiveChildren", "TestOntologySemanticPublicationLogOnlyDiagnostics"]) {
-        assert.ok(ids.includes(`repository/${name}`), `organizational case ${name} must execute in shard 2`);
+    let count = 0;
+    for (const stage of selection.split("|")) {
+      const args = stage.startsWith("cases:") ? ["--case", stage.slice(6)] : ["--capability", stage];
+      const selected = await run("go", ["-C", join(root, "cmd/e2e"), "run", ".", "--root", root, "--phase", "precheck", ...args, "--list"]);
+      const ids = selected.stdout.trim().split(/\r?\n/);
+      count += ids.length;
+      assert.ok(ids.length > 0);
+      if (stage === selections[shardCount === 6 ? 0 : 2]) assert.deepEqual(ids, dedicated);
+      if (shardCount === 7 && stage === `cases:${coalescing}`) assert.deepEqual(ids, [coalescing]);
+      if (stage === `cases:${shardCount === 6 ? coalescing + "," : ""}${measurement}`) assert.deepEqual(ids, shardCount === 6 ? [coalescing, measurement] : [measurement]);
+      if (stage === selections[shardCount === 6 ? 2 : 3]) {
+        assert.ok([...dedicated, coalescing, measurement].every((id) => !ids.includes(id)));
+        for (const name of ["TestOntologyAtomicPublicationReplayAndRaces", "TestOntologyDefinitionChangesValidateActiveChildren", "TestOntologySemanticPublicationLogOnlyDiagnostics"]) {
+          assert.ok(ids.includes(`repository/${name}`), `organizational case ${name} must execute in the remaining Topic shard`);
+        }
       }
+      actual.push(...ids);
     }
-    actual.push(...ids);
+    counts.push(count);
   }
   assert.equal(new Set(actual).size, actual.length);
   assert.deepEqual(actual.sort(), inventory.sort());
-  assert.equal(counts[0], shardCount === 6 ? 11 : 1);
-  assert.equal(counts[1], shardCount === 6 ? 2 : 1);
+  assert.equal(counts[0], shardCount === 6 ? 11 : 7);
+  assert.equal(counts[1], shardCount === 6 ? 2 : 9);
   assert.equal((await run("bash", ["-c", command, "six-shards", root])).stdout, stdout);
   await assert.rejects(run("bash", ["-c", `${helper}\npartition_precheck_capabilities "$1" 4`, "bad-shards", root]), /three, six, or seven shards/);
 });

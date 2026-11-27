@@ -18,6 +18,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/service/generation"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
 	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
+	"golang.org/x/sync/errgroup"
 )
 
 const communityPolicy = "community-placement-v2"
@@ -44,11 +45,7 @@ func (s CommunityAssessor) Assess(ctx context.Context, operationID string, input
 			return contract.CommunityOutcome{}, err
 		}
 	}
-	hash, err := modelprovider.DecisionInputHash(struct {
-		Policy, Model, DecisionModel, DecisionVendor string
-		UseDecisions                                 bool
-		Input                                        contract.CommunityInput
-	}{communityPolicy, model, settings.Provider.Model, settings.Provider.Provider, settings.Effective.CommunityPlacement, input})
+	hash, err := communityInputHash(model, settings, input)
 	outcome := contract.CommunityOutcome{InputHash: hash, Method: "deterministic", Status: "standalone"}
 	if err != nil || len(input.Candidates) == 0 {
 		return outcome, err
@@ -81,6 +78,7 @@ func (s CommunityAssessor) Assess(ctx context.Context, operationID string, input
 	}
 	service := generation.Service[string]{Transport: s.Transport, Logger: s.Logger}
 	assessmentID := uuid.NewString()
+	outcome.AssessmentID = assessmentID
 	task := generation.Task[string]{
 		ID: assessmentID, Capability: communityPolicy, Tokenizer: limits.Tokenizer,
 		InitialInputLimit: assessor.SemanticAssessmentConversationInputLimit(limits),
@@ -118,6 +116,109 @@ func (s CommunityAssessor) Assess(ctx context.Context, operationID string, input
 		return outcome, err
 	}
 	return communityParent(outcome, result.Value), nil
+}
+
+func communityInputHash(model string, settings domain.DecisionRuntimeConfig, input contract.CommunityInput) (string, error) {
+	return modelprovider.DecisionInputHash(struct {
+		Policy, Model, DecisionModel, DecisionVendor string
+		UseDecisions                                 bool
+		Input                                        contract.CommunityInput
+	}{communityPolicy, model, settings.Provider.Model, settings.Provider.Provider, settings.Effective.CommunityPlacement, input})
+}
+
+func (s CommunityAssessor) AssessBatch(ctx context.Context, operationID string, inputs []contract.CommunityInput, model string) ([]contract.CommunityOutcome, []error, error) {
+	var settings domain.DecisionRuntimeConfig
+	if s.Decisions != nil {
+		if s.Settings == nil {
+			return nil, nil, contract.ErrConfiguration
+		}
+		var err error
+		settings, err = s.Settings.DecisionRuntimeConfig(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	outcomes := make([]contract.CommunityOutcome, len(inputs))
+	itemErrors := make([]error, len(inputs))
+	for i, input := range inputs {
+		hash, err := communityInputHash(model, settings, input)
+		if err != nil {
+			return nil, nil, err
+		}
+		outcomes[i] = contract.CommunityOutcome{InputHash: hash, Method: "deterministic", Status: "standalone"}
+	}
+	if s.Decisions != nil && settings.Effective.CommunityPlacement {
+		request := modelprovider.DecisionRequest{Workload: communityPolicy, OperationID: operationID, SettingsVersion: settings.Revision}
+		for i, input := range inputs {
+			if len(input.Candidates) == 0 {
+				continue
+			}
+			choices := []modelprovider.DecisionOption{{Value: "standalone", Description: "No supplied candidate clearly describes a broader community."}}
+			for _, candidate := range input.Candidates {
+				choices = append(choices, modelprovider.DecisionOption{Value: candidate.ID, Description: candidate.Name})
+			}
+			request.Groups = append(request.Groups, modelprovider.DecisionGroup{ID: fmt.Sprintf("community_%d", i), Reference: input.Topic.ID, Input: input,
+				Questions: []modelprovider.DecisionQuestion{{Name: fmt.Sprintf("parent_%d", i), Type: modelprovider.DecisionChoice, Choices: choices,
+					Instructions: "Choose a clearly broader relevant topic for browsing. Preserve the current parent if suitable. Return standalone when no candidate clearly fits."}}})
+			outcomes[i].Method = "decision"
+		}
+		if len(request.Groups) == 0 {
+			return outcomes, itemErrors, nil
+		}
+		request.ApplyRuntimeConfig(settings)
+		decisionCtx := assessment.AccountDecisions(ctx, s.accounting, uuid.NewString(), settings.Provider.MaxInputTokens)
+		result, err := s.Decisions.Decide(decisionCtx, request)
+		if err == nil {
+			err = modelprovider.ValidateDecisionResult(request, result)
+		}
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, nil, ctx.Err()
+			}
+			for i := range inputs {
+				if outcomes[i].Method == "decision" {
+					itemErrors[i] = err
+				}
+			}
+			return outcomes, itemErrors, nil
+		}
+		for i, input := range inputs {
+			if outcomes[i].Method != "decision" {
+				continue
+			}
+			answer := result.Answers[fmt.Sprintf("parent_%d", i)]
+			probability := answer.Probabilities[answer.Choice]
+			if answer.Choice != "standalone" && probability >= DerivedCommunityPlaceThreshold {
+				outcomes[i] = communityParent(outcomes[i], answer.Choice)
+			}
+			if s.Logger != nil {
+				s.Logger.InfoContext(ctx, "community_placement.decision_routing", "team_id", observability.ExchangeScopeFromContext(ctx).TeamID,
+					"operation_id", operationID, "topic_id", input.Topic.ID, "settings_version", settings.Revision,
+					"choice", answer.Choice, "winner_probability", probability, "threshold", DerivedCommunityPlaceThreshold)
+			}
+		}
+		return outcomes, itemErrors, nil
+	}
+	var group errgroup.Group
+	group.SetLimit(4)
+	for i, input := range inputs {
+		if len(input.Candidates) == 0 {
+			continue
+		}
+		group.Go(func() error {
+			generator := s
+			generator.Decisions = nil
+			value, err := generator.Assess(ctx, operationID, input, model)
+			value.InputHash = outcomes[i].InputHash
+			outcomes[i], itemErrors[i] = value, err
+			return nil
+		})
+	}
+	_ = group.Wait()
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	return outcomes, itemErrors, nil
 }
 
 func communityParent(outcome contract.CommunityOutcome, id string) contract.CommunityOutcome {
@@ -198,13 +299,16 @@ func (s *MaintenanceService) placeCommunity(ctx context.Context, work maintenanc
 		errors.Is(err, contract.ErrWindowClosed) || errors.Is(err, contract.ErrLeaseLost)
 	if !interrupted {
 		persistErr = s.deps.Communities.CompleteCommunity(finishCtx, claim, input, outcome, failure, s.deps.Now())
-		if errors.Is(persistErr, contract.ErrConflict) {
+		if errors.Is(persistErr, contract.ErrConflict) && !errors.Is(persistErr, contract.ErrSourceStale) {
 			err = persistErr
 			failure = "community_hierarchy_conflict"
 			rejected := outcome
 			rejected.Status, rejected.ParentID = "failed", ""
 			persistErr = s.deps.Communities.CompleteCommunity(finishCtx, claim, input, rejected, failure, s.deps.Now())
 			status = rejected.Status
+		}
+		if errors.Is(persistErr, contract.ErrSourceStale) {
+			failure = "stale_input"
 		}
 		committed = persistErr == nil
 	}
@@ -230,6 +334,7 @@ func (s *MaintenanceService) placeCommunity(ctx context.Context, work maintenanc
 			slog.String("job_id", claim.ID), slog.String("topic_id", input.Topic.ID),
 			slog.Int64("topic_version", input.Topic.Version), slog.String("parent_topic_id", outcome.ParentID),
 			slog.String("method", outcome.Method), slog.String("status", status), slog.String("failure_code", failure),
+			slog.String("assessment_id", outcome.AssessmentID),
 			slog.Any("error", errors.Join(err, persistErr)),
 		}
 		if status != outcome.Status && (outcome.Status == "placed" || outcome.Status == "standalone") {
@@ -238,4 +343,116 @@ func (s *MaintenanceService) placeCommunity(ctx context.Context, work maintenanc
 		s.deps.Logger.LogAttrs(finishCtx, level, "community_placement.outcome", fields...)
 	}
 	return errors.Join(err, persistErr)
+}
+
+func (s *MaintenanceService) placeCommunityBatch(ctx context.Context, work maintenanceWork) error {
+	claim := work.claim
+	repository := s.deps.Communities.(contract.CommunityBatchRepository)
+	opCtx, cancel, accounting := s.maintenanceAdmission(ctx, claim, true)
+	defer cancel()
+	opCtx = observability.WithAIOperation(opCtx, observability.AIOperationCommunityPlacement, len(work.communities))
+	opCtx = observability.WithExchangeScope(opCtx, observability.ExchangeScope{TeamID: claim.TeamID, RunID: claim.RunID, BatchID: claim.ID, OperationID: claim.ID})
+	placement := s.deps.Placement
+	placement.accounting = accounting
+	placement.contextWindow = work.policy.ContextWindowTokens
+	started := time.Now()
+	if s.deps.Logger != nil {
+		for _, input := range work.communities {
+			candidates := make([]string, 0, len(input.Candidates))
+			for _, candidate := range input.Candidates {
+				candidates = append(candidates, fmt.Sprintf("%s@%d", candidate.ID, candidate.Version))
+			}
+			s.deps.Logger.DebugContext(opCtx, "community_placement.candidates", "team_id", claim.TeamID,
+				"space_id", claim.SpaceID, "space_generation", claim.Generation, "run_id", claim.RunID,
+				"job_id", claim.ID, "batch_id", claim.ID, "stage", "community_placement", "topic_id", input.Topic.ID,
+				"topic_version", input.Topic.Version, "model", work.policy.Model, "policy", communityPolicy, "candidates", candidates)
+		}
+	}
+	outcomes, itemErrors, batchErr := placement.AssessBatch(opCtx, claim.ID, work.communities, work.policy.Model)
+	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+	defer finishCancel()
+	var failures []error
+	hasOtherFailure := false
+	committed := 0
+	if batchErr != nil {
+		failures = append(failures, batchErr)
+		hasOtherFailure = true
+	} else {
+		for i, input := range work.communities {
+			if err := opCtx.Err(); err != nil {
+				failures = append(failures, errors.Join(err, context.Cause(opCtx)))
+				hasOtherFailure = true
+				break
+			}
+			outcome, itemErr := outcomes[i], itemErrors[i]
+			failure := ""
+			if itemErr != nil {
+				failure = maintenanceDiagnosticError(itemErr)
+				outcome.Status, outcome.ParentID = "failed", ""
+			}
+			persistErr := repository.CompleteCommunityItem(finishCtx, claim, input, outcome, failure, s.deps.Now())
+			if errors.Is(persistErr, contract.ErrConflict) && !errors.Is(persistErr, contract.ErrSourceStale) {
+				itemErr = errors.Join(itemErr, persistErr)
+				failure = "community_hierarchy_conflict"
+				outcome.Status, outcome.ParentID = "failed", ""
+				persistErr = repository.CompleteCommunityItem(finishCtx, claim, input, outcome, failure, s.deps.Now())
+			}
+			if errors.Is(persistErr, contract.ErrSourceStale) {
+				failure = "stale_input"
+			}
+			if itemErr == nil && persistErr == nil {
+				committed++
+			} else {
+				failures = append(failures, errors.Join(itemErr, persistErr))
+				hasOtherFailure = hasOtherFailure || itemErr != nil || !errors.Is(persistErr, contract.ErrSourceStale)
+				if s.deps.Logger != nil {
+					s.deps.Logger.WarnContext(finishCtx, "community_placement.item_rejected", "team_id", claim.TeamID,
+						"space_id", claim.SpaceID, "space_generation", claim.Generation, "run_id", claim.RunID,
+						"batch_id", claim.ID, "topic_id", input.Topic.ID, "parent_topic_id", outcome.ParentID,
+						"reason", failure, "error", errors.Join(itemErr, persistErr))
+				}
+			}
+			if s.deps.Logger != nil {
+				status := outcome.Status
+				if persistErr != nil {
+					status = "not_committed"
+				}
+				level := slog.LevelInfo
+				if itemErr != nil || persistErr != nil {
+					level = slog.LevelWarn
+				}
+				s.deps.Logger.Log(finishCtx, level, "community_placement.outcome", "team_id", claim.TeamID,
+					"space_id", claim.SpaceID, "space_generation", claim.Generation, "run_id", claim.RunID,
+					"job_id", claim.ID, "batch_id", claim.ID, "stage", "community_placement", "topic_id", input.Topic.ID,
+					"topic_version", input.Topic.Version, "parent_topic_id", outcome.ParentID, "method", outcome.Method,
+					"assessment_id", outcome.AssessmentID, "status", status, "failure_code", failure, "error", errors.Join(itemErr, persistErr))
+			}
+		}
+	}
+	combined := errors.Join(failures...)
+	failure := ""
+	if combined != nil {
+		failure = maintenanceDiagnosticError(combined)
+		if !hasOtherFailure {
+			failure = "stale_input"
+		}
+	}
+	combined = errors.Join(combined, s.deps.Repository.CompleteMaintenanceBatch(finishCtx, claim, contract.OrganizationResult{}, failure, s.deps.Now()))
+	if combined != nil {
+		if failure == "" {
+			failure = "maintenance_failure"
+		}
+		combined = errors.Join(combined, s.deps.Repository.RecordMaintenanceFailure(finishCtx, claim.RunID, failure, s.deps.Now()))
+	}
+	if s.deps.Logger != nil {
+		level := slog.LevelInfo
+		if combined != nil {
+			level = slog.LevelWarn
+		}
+		s.deps.Logger.Log(finishCtx, level, "community_placement.batch_completed", "team_id", claim.TeamID,
+			"space_id", claim.SpaceID, "space_generation", claim.Generation, "run_id", claim.RunID, "batch_id", claim.ID,
+			"stage", "community_placement", "claimed_count", len(work.communities), "committed_count", committed,
+			"failure_code", failure, "duration_ms", time.Since(started).Milliseconds(), "error", combined)
+	}
+	return combined
 }

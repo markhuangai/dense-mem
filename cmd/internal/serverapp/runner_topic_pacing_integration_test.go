@@ -88,7 +88,7 @@ func measureOntologyPacing(t *testing.T, mode string, tick time.Duration) ontolo
 	batchCount := func() int {
 		var count int
 		require.NoError(t, f.native.DB.QueryRowContext(ctx,
-			`SELECT count(*) FROM topic_maintenance_batches WHERE team_id=$1::uuid AND status='completed' AND community_topic_id IS NULL`,
+			`SELECT count(*) FROM topic_maintenance_batches WHERE team_id=$1::uuid AND status='completed' AND batch_kind='assignment'`,
 			f.native.Scope.TeamID).Scan(&count))
 		return count
 	}

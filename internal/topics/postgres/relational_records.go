@@ -6,7 +6,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func writeRelationalRecord(tx *gorm.DB, fence scope, record topic.Record) error {
+func writeRelationalRecord(tx *gorm.DB, fence scope, record topic.Record, origin string, preserveMaterial bool) error {
 	key := []any{fence.TeamID, fence.SpaceID, fence.Generation, record.ID, record.Version, record.Retired}
 	var write *gorm.DB
 	switch record.Kind {
@@ -17,14 +17,22 @@ func writeRelationalRecord(tx *gorm.DB, fence scope, record topic.Record) error 
 			aliases = []string{}
 		}
 		write = tx.Exec(`INSERT INTO topics(team_id,shared_space_id,space_generation,topic_id,definition_version,
-			retired,version,topic_key,label,description,aliases,parent_topic_id,placement)
-			VALUES (?::uuid,?::uuid,?,?::uuid,?,?,?, ?,?,?,?::text[],NULLIF(?,'')::uuid,'declared')
+			retired,version,topic_key,label,description,aliases,parent_topic_id,placement,manager_authored,material_definition_version)
+			VALUES (?::uuid,?::uuid,?,?::uuid,?,?,?, ?,?,?,?::text[],NULLIF(?,'')::uuid,'declared',?,?)
 			ON CONFLICT(team_id,shared_space_id,space_generation,topic_id) DO UPDATE SET
 				definition_version=excluded.definition_version,version=topics.version+1,retired=excluded.retired,
 				topic_key=excluded.topic_key,label=excluded.label,description=excluded.description,
-				aliases=excluded.aliases,parent_topic_id=excluded.parent_topic_id,placement=excluded.placement
+				aliases=excluded.aliases,
+				parent_topic_id=CASE WHEN ? THEN topics.parent_topic_id WHEN ? THEN excluded.parent_topic_id WHEN excluded.parent_topic_id IS NOT NULL THEN excluded.parent_topic_id
+					WHEN topics.placement IN ('placed','standalone') THEN topics.parent_topic_id ELSE NULL END,
+				placement=CASE WHEN ? THEN topics.placement WHEN ? THEN 'declared' WHEN excluded.parent_topic_id IS NOT NULL THEN 'declared'
+					WHEN topics.placement IN ('placed','standalone') THEN topics.placement ELSE 'declared' END,
+				manager_authored=topics.manager_authored OR excluded.manager_authored,
+				material_definition_version=CASE WHEN ? THEN topics.material_definition_version ELSE excluded.definition_version END
 			WHERE topics.definition_version=?`, append(key, record.Version, definition.Key, definition.Label,
-			definition.Description, pq.Array(aliases), definition.ParentID, record.Version-1)...)
+			definition.Description, pq.Array(aliases), definition.ParentID, origin == "manager" || origin == "rollback",
+			record.Version, preserveMaterial, origin == "manager" || origin == "rollback",
+			preserveMaterial, origin == "manager" || origin == "rollback", preserveMaterial, record.Version-1)...)
 	case topic.AssignmentKind:
 		var topicVersion int64
 		var fingerprint string

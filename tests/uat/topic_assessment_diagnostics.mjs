@@ -4,13 +4,21 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-export function assessmentRecords(window) {
+export function structuredLogRecords(window) {
   return window.split(/\r?\n/).flatMap((line) => {
     const offset = line.indexOf("{");
     if (offset < 0) return [];
-    try { const record = JSON.parse(line.slice(offset)); return /^(topic_semantic_assessment|ai_exchange_payload)/.test(record.msg) ? [record] : []; }
+    try { const record = JSON.parse(line.slice(offset)); return record && typeof record === "object" ? [record] : []; }
     catch { return []; }
   });
+}
+
+export function assessmentRecords(window) {
+  return structuredLogRecords(window).filter((record) => /^(topic_semantic_assessment|ai_exchange_payload)/.test(record.msg));
+}
+
+export function maintenanceRecords(window, teamID) {
+  return structuredLogRecords(window).filter((record) => record.team_id === teamID && /^topic_maintenance\./.test(record.msg));
 }
 
 export function reconstructDiagnosticBody(records) {

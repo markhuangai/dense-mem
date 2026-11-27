@@ -121,6 +121,31 @@ test("provider fixture answers unresolved topic and equivalence questions", () =
   assert.deepEqual(response.equivalence, [{ ref: "unconstrained", relation: "distinct" }]);
 });
 
+test("targeted Topic fixture failures leave unrelated assessments intact", async (t) => {
+  providerFixtureServer.listen(0, "127.0.0.1");
+  await once(providerFixtureServer, "listening");
+  t.after(async () => { providerFixtureServer.closeAllConnections(); await new Promise((resolve) => providerFixtureServer.close(resolve)); });
+  const base = `http://127.0.0.1:${providerFixtureServer.address().port}`;
+  const post = async (path, body) => {
+    const response = await fetch(base + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    assert.equal(response.status, 200);
+    return response.json();
+  };
+  const target = "Atlas uses PostgreSQL for a selected retry.";
+  const assignment = (evidence) => structuredRequest("topic_assignment_v1", { request_id: "requested", evidence, topics: [] });
+  const complete = async (request) => JSON.parse((await post("/chat/completions", request)).choices[0].message.content);
+  try {
+    await post("/ontology-fixture", { mode: "fail-three-then-success", evidence: target });
+    assert.equal((await complete(assignment("Another PostgreSQL item."))).request_id, "requested");
+    const equivalence = structuredRequest("evidence_equivalence_v1", { request_id: "equivalence", definitions: [], items: [], pairs: [], equivalence_only: true });
+    assert.equal((await complete(equivalence)).request_id, "equivalence");
+    for (let attempt = 0; attempt < 3; attempt++) assert.equal((await complete(assignment(target))).request_id, "wrong-request");
+    assert.equal((await complete(assignment(target))).request_id, "requested");
+  } finally {
+    await post("/ontology-fixture", { mode: "normal" });
+  }
+});
+
 test("synchronous-write cases are sorted and filterable", async () => {
   const directory = join(tmpdir(), "dense-mem-synchronous-write-" + Date.now() + "-" + process.pid);
   await mkdir(join(directory, "nested"), { recursive: true });

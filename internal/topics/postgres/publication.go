@@ -73,10 +73,10 @@ func (s *Store) commitPublication(tx *gorm.DB, fence scope, input topic.Publicat
 	if err := lockOrganizationCatalog(tx, fence); err != nil {
 		return topic.PublicationResult{}, err
 	}
-	return s.writePublication(tx, fence, input, origin, actor, hash, assessmentID, true)
+	return s.writePublication(tx, fence, input, origin, actor, hash, assessmentID, true, nil)
 }
 
-func (s *Store) writePublication(tx *gorm.DB, fence scope, input topic.Publication, origin, actor, hash, assessmentID string, checkRevision bool) (topic.PublicationResult, error) {
+func (s *Store) writePublication(tx *gorm.DB, fence scope, input topic.Publication, origin, actor, hash, assessmentID string, checkRevision bool, aliasEnrichment map[string]bool) (topic.PublicationResult, error) {
 	var names []string
 	for _, change := range input.Changes {
 		names = append(names, topic.DefinitionNames(change.Record)...)
@@ -179,7 +179,7 @@ func (s *Store) writePublication(tx *gorm.DB, fence scope, input topic.Publicati
 		}
 	}
 	for _, record := range prepared {
-		if err := writeRelationalRecord(tx, fence, record); err != nil {
+		if err := writeRelationalRecord(tx, fence, record, origin, aliasEnrichment[record.ID]); err != nil {
 			return topic.PublicationResult{}, err
 		}
 		names := topic.DefinitionNames(record)

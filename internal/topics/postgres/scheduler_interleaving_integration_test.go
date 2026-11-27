@@ -5,6 +5,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -12,11 +13,126 @@ import (
 	"time"
 
 	"github.com/markhuangai/dense-mem/internal/domain"
+	knowledge "github.com/markhuangai/dense-mem/internal/knowledge/contract"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	searchmaintenance "github.com/markhuangai/dense-mem/internal/search/maintenance"
+	searchpostgres "github.com/markhuangai/dense-mem/internal/search/postgres"
+	organization "github.com/markhuangai/dense-mem/internal/topics"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
 	topic "github.com/markhuangai/dense-mem/internal/topics/contract"
 
 	"github.com/stretchr/testify/require"
 )
+
+type interleavingEmbeddings struct{}
+
+func (interleavingEmbeddings) EmbedBatch(_ context.Context, input []string) ([][]float32, string, error) {
+	vectors := make([][]float32, len(input))
+	for i := range vectors {
+		vectors[i] = []float32{1, 0, 0}
+	}
+	return vectors, "fixture-embedding", nil
+}
+func (interleavingEmbeddings) ModelName() string { return "fixture-embedding" }
+func (interleavingEmbeddings) Dimensions() int   { return 3 }
+func (interleavingEmbeddings) IsAvailable() bool { return true }
+
+type interleavingDecisions struct{}
+
+func (interleavingDecisions) DecisionRuntimeConfig(context.Context) (domain.DecisionRuntimeConfig, error) {
+	return domain.DecisionRuntimeConfig{Revision: "interleaving", Provider: domain.DecisionProviderStatus{MaxInputTokens: 128000, MaxQuestionInputTokens: 128000},
+		Effective: domain.DecisionTasks{TopicAssignment: true, CommunityPlacement: true}}, nil
+}
+
+func (interleavingDecisions) Decide(_ context.Context, request modelprovider.DecisionRequest) (modelprovider.DecisionResult, error) {
+	answers := make(map[string]modelprovider.DecisionAnswer)
+	for _, group := range request.Groups {
+		for _, question := range group.Questions {
+			if question.Type == modelprovider.DecisionChoice {
+				probabilities := make(map[string]float64, len(question.Choices))
+				for _, choice := range question.Choices {
+					probabilities[choice.Value] = 0
+				}
+				probabilities["standalone"] = 1
+				confidence := 1.0
+				answers[question.Name] = modelprovider.DecisionAnswer{Type: modelprovider.DecisionChoice, Choice: "standalone", Confidence: &confidence, Probabilities: probabilities}
+				continue
+			}
+			probability := 0.1
+			if request.Workload == "topic_assignment" && strings.Contains(question.Name, "match_") {
+				probability = 0.9
+			}
+			answers[question.Name] = modelprovider.DecisionAnswer{Type: modelprovider.DecisionPredicate, Probability: &probability}
+		}
+	}
+	return modelprovider.DecisionResult{Answers: answers}, nil
+}
+
+func TestTopicMaintenanceFiveStageInterleaving(t *testing.T) {
+	f := newOrganizationFixture(t)
+	ctx := context.Background()
+	_, err := searchpostgres.NewStore(f.admin, f.rls).EnsureActiveSearchContract(ctx, searchmaintenance.EnsureActiveSearchContractInput{Model: "fixture-embedding", Dimensions: 3})
+	require.NoError(t, err)
+	first, second := testTopic("scheduler-database"), testTopic("scheduler-storage")
+	revalidationPublish(t, f, topic.Change{Record: first}, topic.Change{Record: second})
+	for i := range topic.MaxOrganizationSources + 1 {
+		text := fmt.Sprintf("Scheduler database observation %d.", i)
+		source := f.organizationEvidence(t, 0, text, nil)
+		document, err := f.knowledge.UpsertSearchDocument(ctx, knowledge.UpsertSearchDocumentInput{TeamID: f.team, OwnerProfileID: f.owners[0],
+			SourceKind: "evidence", SourceID: source.ID, SourceVersion: 1, DocumentText: text,
+			SpaceID: f.space, SpaceGeneration: f.generation, SpaceKind: "team_shared"})
+		require.NoError(t, err)
+		loaded, err := f.knowledge.LoadSearchDocumentsForEmbedding(ctx, knowledge.LoadSearchDocumentsForEmbeddingInput{TeamID: f.team,
+			OwnerProfileID: f.owners[0], SearchDocumentIDs: []string{document.SearchDocumentID}})
+		require.NoError(t, err)
+		require.Len(t, loaded, 1)
+		item := loaded[0]
+		err = f.knowledge.CompleteSearchDocumentsWithEmbeddings(ctx, knowledge.CompleteSearchDocumentsWithEmbeddingsInput{TeamID: f.team,
+			OwnerProfileID: f.owners[0], Documents: []knowledge.SearchDocumentEmbedding{{SearchDocumentID: item.SearchDocumentID,
+				DocumentHash: item.DocumentHash, SourceVersion: item.SourceVersion, DocumentVersion: item.DocumentVersion,
+				ProjectionFormat: item.ProjectionFormat, ProjectionGenerationID: item.ProjectionGenerationID,
+				EmbeddingContractID: item.EmbeddingContractID, EmbeddingDimensions: item.EmbeddingDimensions,
+				Embedding: []float32{1, 0, 0}, SpaceID: item.SpaceID, SpaceGeneration: item.SpaceGeneration}}})
+		require.NoError(t, err)
+	}
+	config := maintenanceSettings(t, f)
+	window := maintenanceWindow(t, f, config)
+	limits := maintenanceFixtureLimits()
+	transport, _ := cohortTopicTransport(t, window.Policy.Model)
+	decisions := interleavingDecisions{}
+	service := organization.NewMaintenanceService(organization.MaintenanceDependencies{
+		Repository: f.store, Config: config, DefaultModel: window.Policy.Model, ProviderTimeout: time.Minute,
+		Organizer: func(model string, contextWindow int64, accounting assessment.AttemptAccounting) *organization.Service {
+			organizer, _ := organizationFixtureServiceWithAccounting(t, f, nil, nil, model, limits, accounting, int(contextWindow))
+			return organizer
+		},
+	})
+	assigner := organization.NewAssignmentService(f.store, config, transport, decisions, limits, window.Policy.Model, nil)
+	service.WithTopicProcessing(assigner, f.store, f.store, organization.CommunityAssessor{Transport: transport, Limits: limits, Decisions: decisions, Settings: decisions}, decisions)
+	service.WithTopicEmbeddings(f.store, interleavingEmbeddings{}, time.Minute)
+	for turn := range 5 {
+		progress, err := service.RunTurn(ctx)
+		require.NoError(t, err, "stage turn %d", turn)
+		require.True(t, progress)
+		if turn == 0 {
+			status, err := service.Status(ctx)
+			require.NoError(t, err)
+			require.EqualValues(t, 1, status.Counts.Pending, "assignment work must remain while later stages run")
+		}
+		if turn == 1 {
+			var count int
+			require.NoError(t, f.admin.Raw(`SELECT count(*) FROM topic_embeddings WHERE team_id=?::uuid`, f.team).Row().Scan(&count))
+			require.Equal(t, 2, count)
+		}
+	}
+	var kinds []string
+	require.NoError(t, f.admin.Raw(`SELECT batch_kind FROM topic_maintenance_batches WHERE team_id=?::uuid ORDER BY created_at,batch_id`, f.team).Scan(&kinds).Error)
+	require.Equal(t, []string{"assignment", "consolidation", "community", "equivalence"}, kinds)
+	status, err := service.Status(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, status.Counts.Pending)
+	require.EqualValues(t, 20, status.Equivalence.Completed)
+}
 
 func TestOntologyMaintenanceParallelSchedulerFillsAvailableSlots(t *testing.T) {
 	for _, limits := range [][2]int{{1, 1}, {4, 1}, {4, 4}, {8, 8}} {

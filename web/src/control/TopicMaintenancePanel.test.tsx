@@ -20,6 +20,22 @@ function fixture() {
 }
 
 describe("Topic maintenance controls", () => {
+  it("submits selected uncategorized Evidence for one team", async () => {
+    const api = fixture();
+    const reassess = vi.spyOn(api, "reassessUncategorizedEvidence").mockResolvedValue({ ...run, kind: "reassess", status: "pending" });
+    render(<TopicMaintenancePanel api={api} />);
+    const team = "11111111-1111-4111-8111-111111111111";
+    const first = "22222222-2222-4222-8222-222222222222";
+    const second = "33333333-3333-4333-8333-333333333333";
+    fireEvent.change(await screen.findByLabelText("Team ID"), { target: { value: team } });
+    fireEvent.change(screen.getByLabelText("Evidence IDs"), { target: { value: `${first}\n${second}` } });
+    fireEvent.click(screen.getByRole("button", { name: "Reassess selected Evidence" }));
+    await waitFor(() => expect(reassess).toHaveBeenCalledWith(team, expect.any(String), [first, second]));
+    expect(await screen.findByText(/Reassessment .* accepted/)).toBeVisible();
+    fireEvent.change(screen.getByLabelText("Evidence IDs"), { target: { value: `${first}, ${first}` } });
+    expect(screen.getByRole("button", { name: "Reassess selected Evidence" })).toBeDisabled();
+  });
+
   it("offers captured exchanges only for runs with a failure", async () => {
     const api = fixture();
     vi.mocked(api.listTopicMaintenanceRuns).mockResolvedValue({ runs: [{ ...run, failure_code: "", status: "completed", retryable: false }, { ...run, id: "failed-run" }] });

@@ -82,6 +82,47 @@ func TestOrganizationRequestUsesBoundedContextWithHistoricalOverrides(t *testing
 	require.Equal(t, "oversized", receipt.Result.Outcomes[0].Status)
 }
 
+func TestOrganizationStaleTopicIsAvailableOnlyForItsLockedMembership(t *testing.T) {
+	a, b := unitSource("member", "Atlas uses PostgreSQL."), unitSource("unrelated", "Beacon uses SQLite.")
+	b.TeamID, b.SpaceID = a.TeamID, a.SpaceID
+	topic := contract.Record{ID: uuid.NewString(), Version: 1, Kind: contract.Topic, Definition: &contract.Definition{Key: "stale-support-topic", Label: "Stale support Topic"}}
+	assignment := contract.Record{ID: uuid.NewString(), Kind: contract.AssignmentKind, Assignment: &contract.Assignment{Source: a.SourceHandle, DefinitionID: topic.ID}}
+	ctx := contract.OrganizationContext{Sources: []contract.SourceSnapshot{a, b}, Records: []contract.RecordView{{Record: assignment, Current: true}}, Candidates: []contract.RecordView{{Record: topic, StaleReason: "source_changed"}}}
+	service := NewService(nil, assessment.NewProvider(nil, "model", assessor.DefaultSemanticAssessmentLimits(), 300000))
+	receipt := unitReceipt(t, ctx.Sources)
+	request, _, err := service.request(ctx, &receipt)
+	require.NoError(t, err)
+	require.Len(t, request.LockedDefinitions, 1)
+	require.Empty(t, request.Definitions)
+	require.Equal(t, request.LockedDefinitions[0].Ref, request.Items[0].LockedDefinitionRef)
+	require.Empty(t, request.Items[1].LockedDefinitionRef)
+	wire, err := json.Marshal(request)
+	require.NoError(t, err)
+	require.NotContains(t, string(wire), topic.Definition.Key)
+	response := assessment.Response{RequestID: request.RequestID, Definitions: []assessment.Definition{}, Items: []assessment.Decision{{Ref: request.Items[1].Ref, Status: "classified", DefinitionRef: request.Items[0].LockedDefinitionRef}}, Equivalence: []assessment.Equivalence{}}
+	for _, pair := range request.Pairs {
+		if pair.RequiredRelation == "" {
+			response.Equivalence = append(response.Equivalence, assessment.Equivalence{Ref: pair.Ref, Relation: "distinct"})
+		}
+	}
+	require.ErrorContains(t, assessment.ValidateModelResponse(request, response), "outside allowlist")
+	response.Items[0] = assessment.Decision{Ref: request.Items[1].Ref, Status: "ambiguous", Reason: "no suitable Topic"}
+	require.NoError(t, assessment.ValidateModelResponse(request, response))
+	response.Items = append([]assessment.Decision{{Ref: request.Items[0].Ref, Status: "classified", DefinitionRef: request.Items[0].LockedDefinitionRef}}, response.Items...)
+	response.Equivalence = nil
+	for _, pair := range request.Pairs {
+		relation := pair.RequiredRelation
+		if relation == "" {
+			relation = "distinct"
+		}
+		response.Equivalence = append(response.Equivalence, assessment.Equivalence{Ref: pair.Ref, Relation: relation})
+	}
+	if response.Equivalence == nil {
+		response.Equivalence = []assessment.Equivalence{}
+	}
+	require.NoError(t, assessment.Validate(request, response))
+}
+
 func TestIncompleteGroupUsesMaterializedMembership(t *testing.T) {
 	a, b := unitSource("a", "Atlas uses PostgreSQL."), unitSource("b", "Atlas uses PostgreSQL.")
 	group := contract.Record{ID: uuid.NewString(), Kind: contract.EvidenceGroup, Group: &contract.Group{Members: []contract.SourceHandle{a.SourceHandle, b.SourceHandle}}}
