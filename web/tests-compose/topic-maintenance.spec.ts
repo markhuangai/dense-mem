@@ -140,24 +140,28 @@ test("operators configure context capacity and retired budget controls reject wr
 
 
 retryTest("loaded older retry actions follow successful work and server eligibility", async ({ page, topicRequest: request }) => {
-  test.setTimeout(180000);
+  test.setTimeout(300000);
   async function control(path: string, body?: unknown, method = body ? "POST" : "GET") {
     const response = await request.fetch(`${controlURL}/control/api${path}`, { method, headers: { Authorization: `Bearer ${token}` }, ...(body ? { data: body } : {}) });
     expect(response.ok()).toBeTruthy();
     return (await response.json()).data;
   }
-  async function fixtureMode(mode: string) {
-    const response = await request.post(`${process.env.DENSE_MEM_E2E_PROVIDER_URL}/ontology-fixture`, { data: { mode } });
+  async function fixtureMode(mode: string, evidence = "") {
+    const response = await request.post(`${process.env.DENSE_MEM_E2E_PROVIDER_URL}/ontology-fixture`, { data: { mode, evidence } });
     expect(response.ok()).toBeTruthy();
   }
+  const team = await control("/teams", { name: `Topic browser retry ${randomUUID()}` });
   const failed = await test.step("create retryable topic failure", async () => {
     await control("/topic-maintenance/pause", { operation_key: randomUUID() });
-    await control("/config/topic-maintenance", { items: [{ key: "TOPIC_MAINTENANCE_ENABLED", value: "false" }] }, "PATCH");
-    const credential = await control(`/teams/${process.env.DENSE_MEM_E2E_TEAM_ID}/credentials`, { name: `Topic browser retry ${randomUUID()}`, scopes: ["read", "write"], rate_limit: 300 });
+    await expect.poll(async () => (await control("/topic-maintenance/status")).active_work, { timeout: 30000 }).toBe(0);
+    await control("/config/topic-maintenance", { items: [{ key: "TOPIC_MAINTENANCE_ENABLED", value: "true" }] }, "PATCH");
+    const credential = await control(`/teams/${team.id}/credentials`, { name: "Topic browser retry", scopes: ["read", "write"], rate_limit: 300 });
+    const evidence = `A constellation observation for browser retry ${randomUUID()}.`;
+    await fixtureMode("ambiguous");
     const submitted = await request.post(`${process.env.DENSE_MEM_USER_URL}/mcp`, {
       headers: { Authorization: `Bearer ${credential.api_key}`, Accept: "application/json" },
       data: { jsonrpc: "2.0", id: randomUUID(), method: "tools/call", params: { name: "remember", arguments: {
-        target_space: "team_shared", idempotency_key: randomUUID(), evidence: [{ content: `Atlas uses PostgreSQL for browser retry ${randomUUID()}.`, source_type: "document", source: "topic-browser-followups", source_group: randomUUID() }],
+        target_space: "team_shared", idempotency_key: randomUUID(), evidence: [{ content: evidence, source_type: "document", source: "topic-browser-followups", source_group: randomUUID() }],
       } } },
     });
     expect(submitted.status()).toBe(200);
@@ -166,10 +170,12 @@ retryTest("loaded older retry actions follow successful work and server eligibil
     expect(rpc.result?.isError, JSON.stringify({ processing_state: remembered.processing_state,
       errors: (remembered.errors || []).map(({ code, reason_code, retryable, next_action }: { code: string; reason_code?: string; retryable: boolean; next_action: string }) => ({ code, reason_code, retryable, next_action })) })).not.toBe(true);
     expect(remembered.processing_state).toBe("completed");
-    await fixtureMode("fail-three-then-success");
-    await control("/config/topic-maintenance", { items: [{ key: "TOPIC_MAINTENANCE_ENABLED", value: "true" }] }, "PATCH");
+    const evidenceID = remembered.evidence[0].evidence_id;
+    await fixtureMode("normal");
     await control("/topic-maintenance/resume", { operation_key: randomUUID() });
-    const failedCommand = await control("/topic-maintenance/runs", { operation_key: randomUUID(), max_batches: 1 });
+    await expect.poll(async () => (await control("/topic-maintenance/status")).coverage_complete, { timeout: 120000 }).toBe(true);
+    await fixtureMode("fail-three-then-success", evidence);
+    const failedCommand = await control(`/teams/${team.id}/topic-maintenance/reassess`, { operation_key: randomUUID(), evidence_ids: [evidenceID] });
     await expect.poll(async () => {
       const history = await control("/topic-maintenance/runs?limit=200");
       return history.runs.find((run: { id: string }) => run.id === failedCommand.id)?.status;
@@ -197,7 +203,7 @@ retryTest("loaded older retry actions follow successful work and server eligibil
     }
     await expect(row).toHaveCount(1);
     await expect(row.getByRole("button", { name: "Retry failed work" })).toBeDisabled();
-    await expect.poll(async () => (await control(`/logs?event=topic_failure_capture&reference_type=topic_run&reference_id=${failed.id}&team_id=${process.env.DENSE_MEM_E2E_TEAM_ID}`)).length,
+    await expect.poll(async () => (await control(`/logs?event=topic_failure_capture&reference_type=topic_run&reference_id=${failed.id}&team_id=${team.id}`)).length,
       { timeout: 20000, message: "failed topic work must retain a complete diagnostic manifest" }).toBeGreaterThan(0);
     const payloadOffsets: number[] = [];
     let expiredCapture = false;
@@ -207,7 +213,7 @@ retryTest("loaded older retry actions follow successful work and server eligibil
       if (url.searchParams.get("event") !== "topic_failure_payload") return route.continue();
       expect(url.searchParams.get("reference_type")).toBe("topic_run");
       expect(url.searchParams.get("reference_id")).toBe(failed.id);
-      expect(url.searchParams.get("team_id")).toBe(process.env.DENSE_MEM_E2E_TEAM_ID);
+      expect(url.searchParams.get("team_id")).toBe(team.id);
       expect(url.searchParams.get("attempt_id")).toBeTruthy();
       payloadOffsets.push(Number(url.searchParams.get("offset") || 0));
       url.searchParams.set("limit", "2");

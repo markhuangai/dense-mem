@@ -77,3 +77,31 @@ func TestOntologyDependencyTraversalRejectsCyclesAndMissingSources(t *testing.T)
 	err = CheckDependencies([]Record{first}, map[string]SourceSnapshot{SourceKey(snapshot.SourceHandle): snapshot}, catalog)
 	require.ErrorIs(t, err, ErrSourceStale)
 }
+
+func TestNewAssignmentRequiresCurrentTopicDependencies(t *testing.T) {
+	support := policySnapshot("topic-support", EvidenceSource, "original support")
+	evidence := policySnapshot("new-assignment-evidence", EvidenceSource, "new membership")
+	topic := topicRecord("supported-topic")
+	topic.Version = 1
+	topic.Sources = []SourceDependency{sourceDependency(t, support)}
+	snapshots := map[string]SourceSnapshot{SourceKey(support.SourceHandle): support, SourceKey(evidence.SourceHandle): evidence}
+	var err error
+	topic.Fingerprint, err = RecordFingerprint(topic, snapshots, nil)
+	require.NoError(t, err)
+	catalog := map[string]Record{topic.ID: topic}
+	assignment := Record{ID: uuid.NewString(), Kind: AssignmentKind, Assignment: &Assignment{Source: evidence.SourceHandle, DefinitionID: topic.ID}, Sources: []SourceDependency{sourceDependency(t, evidence)}}
+	prepared, err := PreparePublication(catalog, snapshots, publicationFor(assignment), true)
+	require.NoError(t, err)
+	require.Len(t, prepared, 1)
+
+	support.State = map[string]string{"content": "changed support"}
+	snapshots[SourceKey(support.SourceHandle)] = support
+	_, err = PreparePublication(catalog, snapshots, publicationFor(assignment), true)
+	require.ErrorIs(t, err, ErrSourceStale)
+
+	accepted := prepared[0]
+	catalog[accepted.ID] = accepted
+	dependent := topicRecord("depends-on-accepted-assignment")
+	dependent.Dependencies = []RevisionRef{{ID: accepted.ID, Version: accepted.Version}}
+	require.NoError(t, CheckDependencies([]Record{dependent}, snapshots, catalog))
+}

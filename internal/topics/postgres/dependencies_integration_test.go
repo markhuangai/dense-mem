@@ -32,7 +32,11 @@ func TestOntologyTransitiveSourceFreshness(t *testing.T) {
 	view, err = f.store.GetRecord(context.Background(), f.team, assignment.ID, 0)
 	require.NoError(t, err)
 	require.True(t, view.Current, "an accepted assignment stays current while its Topic is active")
+	newEvidence := f.evidence(t, 1, "Atlas also uses SQLite.")
+	newHandle := topiccontract.SourceHandle{Kind: topiccontract.EvidenceSource, ID: newEvidence.Evidence[0].FragmentID, Version: 1}
 	assignment.ID = uuid.NewString()
+	assignment.Assignment = &topiccontract.Assignment{Source: newHandle, DefinitionID: topic.ID}
+	assignment.Sources = []topiccontract.SourceDependency{f.source(t, newHandle)}
 	_, err = f.store.PublishAutomatic(context.Background(), f.team, testPublication("stale-definition", result.Revision, topiccontract.Change{Record: assignment}))
 	require.ErrorIs(t, err, topiccontract.ErrSourceStale)
 	history, err := f.store.History(context.Background(), f.team, 0, 20)

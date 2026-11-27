@@ -9,6 +9,10 @@ var ErrDependencyStale = fmt.Errorf("%w: topic dependency is unavailable or stal
 
 func DependencyRecords(records []Record, catalog map[string]Record) ([]Record, error) {
 	state := map[string]int{}
+	roots := map[string]bool{}
+	for _, record := range records {
+		roots[record.ID] = true
+	}
 	var result []Record
 	var visit func(Record, int) error
 	visit = func(record Record, depth int) error {
@@ -31,7 +35,8 @@ func DependencyRecords(records []Record, catalog map[string]Record) ([]Record, e
 		}
 		state[record.ID] = 1
 		if !record.Retired {
-			if record.Kind == AssignmentKind && record.Assignment != nil {
+			// New Assignment roots validate their Topic; accepted Assignment dependencies retain their fingerprint.
+			if record.Kind == AssignmentKind && record.Assignment != nil && !roots[record.ID] {
 				target, exists := catalog[record.Assignment.DefinitionID]
 				if !exists || target.Kind != Topic || target.Retired {
 					return ErrDependencyStale

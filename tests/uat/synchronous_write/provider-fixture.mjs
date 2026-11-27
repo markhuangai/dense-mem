@@ -20,6 +20,7 @@ const assessmentAttempts = new Map();
 const embeddingCallsByFault = new Map();
 let ontologyMode = "normal";
 let ontologyFailuresRemaining = 0;
+let ontologyFailureEvidence = "";
 let activeOntologyRequests = 0;
 let maxActiveOntologyRequests = 0;
 const heldOntologyRequests = new Set();
@@ -99,6 +100,7 @@ const server = createServer(async (request, response) => {
     if (payload.mode !== "hold") for (const release of heldOntologyRequests) release();
     if (payload.mode === "hold") maxActiveOntologyRequests = activeOntologyRequests;
     ontologyFailuresRemaining = payload.mode === "fail-three-then-success" ? 3 : 0;
+    ontologyFailureEvidence = payload.mode === "fail-three-then-success" && typeof payload.evidence === "string" ? payload.evidence : "";
     sendJSON(response, 200, { mode: ontologyMode });
     return;
   }
@@ -315,12 +317,13 @@ function fixtureChatResponse(payload, requestFault = "none", attempt = 1) {
   }
   if (schemaName === "session_evidence_excerpts_v2") return fixtureSessionExtraction(structuredInput(payload, (input) => input.window));
   if (schemaName === "topic_assignment_v1") {
-    const result = fixtureTopicAssignment(structuredInput(payload, (input) => typeof input.evidence === "string" && Array.isArray(input.topics)));
+    const input = structuredInput(payload, (value) => typeof value.evidence === "string" && Array.isArray(value.topics));
+    const result = fixtureTopicAssignment(input);
     if (payload.messages?.some((message) => message.role === "system" && message.content?.startsWith("Propose only distinct generalizable topics"))) {
       result.matches = [];
       result.status = result.proposals.length ? "assigned" : "uncategorized";
     }
-    if (ontologyFailuresRemaining > 0) {
+    if (ontologyFailuresRemaining > 0 && (!ontologyFailureEvidence || input.evidence === ontologyFailureEvidence)) {
       ontologyFailuresRemaining--;
       result.request_id = "wrong-request";
     }
@@ -386,7 +389,7 @@ function fixtureTopicAssignment(input) {
 
 function fixtureOntologyOrganization(payload) {
   const input = structuredInput(payload, (value) => Array.isArray(value.items) && Array.isArray(value.pairs));
-  if (ontologyFailuresRemaining > 0) {
+  if (ontologyFailuresRemaining > 0 && !ontologyFailureEvidence) {
     ontologyFailuresRemaining -= 1;
     return { request_id: input.request_id, definitions: [], items: [], equivalence: [] };
   }

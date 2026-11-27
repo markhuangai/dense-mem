@@ -593,6 +593,27 @@ if (shardCount >= 6) {
   ].sort();
   const measurement = "repository/TestOntologyMaintenanceRevalidationDiscoveryMeasurement";
   const coalescing = "repository/TestOntologyMaintenanceCoalescingMeasurement";
+  // Run these cases after isolated measurements to balance the seven-shard deadline.
+  const overflow = [
+    [
+      "repository/TestOntologyEnrichmentBoundRejectsAtomically",
+      "repository/TestOntologyMaintenanceCoalescingCursorAndGroupBounds",
+      "repository/TestOntologyMaintenanceFinalizationRacesAndFences",
+      "repository/TestOntologyMaintenanceInvalidationFamilies",
+      "repository/TestOntologyMaintenanceRevalidationDiscoveryConcurrency",
+      "repository/TestOntologyMaintenanceRevalidationRecovery",
+    ],
+    [
+      "repository/TestCommunityPlacementChecksRevisionsAndAccountsForProviderWork",
+      "repository/TestOntologyMaintenanceParallelSchedulerAttemptBounds",
+      "repository/TestOntologyMaintenanceAttemptDiagnosticsPersistenceAndFailureBoundaries",
+      "repository/TestOntologyFollowupCohort",
+      "repository/TestOntologyMaintenanceRevalidationChurn",
+      "repository/TestOntologyOrganizationBatchedPublicationFences",
+      "repository/TestOntologyMaintenanceFinalizationCancellationAndDiscovery",
+      "repository/TestOntologyOrganizationFreshnessStopsAfterStaleBatch",
+    ],
+  ].map((ids) => ids.filter((id) => topics?.caseIds.includes(id)).sort());
   if (shardCount === 7) {
     dedicated.push(
       "repository/TestOntologyOrganizationCompletedReceiptInvalidation",
@@ -604,13 +625,19 @@ if (shardCount >= 6) {
     if (!topics?.caseIds.includes(coalescing)) throw new Error("seven precheck shards require both complete measurement cohorts");
   }
   const measurements = [...(topics?.caseIds.includes(coalescing) ? [coalescing] : []), measurement];
-  const isolated = [...dedicated, ...measurements];
+  const isolated = [...dedicated, ...measurements, ...(shardCount === 7 ? overflow.flat() : [])];
   if (!topics || isolated.some((id) => !topics.caseIds.includes(id)) || topics.caseIds.length <= isolated.length || records.length < 5) {
     throw new Error("six precheck shards require dedicated Topic cases, discovery measurement, remaining Topic cases, and four populated capability groups; seven also isolates coalescing");
   }
   const remaining = topics.caseIds.filter((id) => !isolated.includes(id)).sort().join(",");
-  if (shardCount === 7) caseSelections.push(coalescing, measurement, dedicated.sort().join(","), remaining);
-  else caseSelections.push(dedicated.join(","), measurements.join(","), remaining);
+  if (shardCount === 7) {
+    for (const [index, id] of [coalescing, measurement].entries()) {
+      caseSelections.push([id, overflow[index].join(",")].filter(Boolean).map((ids) => `cases:${ids}`).join("|"));
+    }
+    caseSelections.push(`cases:${dedicated.sort().join(",")}`, `cases:${remaining}`);
+  } else {
+    caseSelections.push(`cases:${dedicated.join(",")}`, `cases:${measurements.join(",")}`, `cases:${remaining}`);
+  }
   groups.splice(0, caseSelections.length);
 }
 if (isolateTopics) {
@@ -660,7 +687,7 @@ for (const record of records) {
 if (shardCount >= 6 && groups.some((group) => group.capabilities.length === 0)) {
   throw new Error(`${shardCount} precheck shards require ${shardCount} populated selections`);
 }
-for (const ids of caseSelections) process.stdout.write(`cases:${ids}\n`);
+for (const selection of caseSelections) process.stdout.write(`${selection}\n`);
 if (isolateTopics && shardCount === 3) process.stdout.write("topics\n");
 for (const group of groups) {
   if (group.capabilities.length > 0) {
@@ -703,7 +730,13 @@ precheck() {
     capabilities="${selections[shard_index]}"
   fi
   if [[ -n "$capabilities" ]]; then
-    precheck_capability "$run_id" "$attempt" "$image_ref" "$source_dir" "$capabilities" "$bounded"
+    local -a stages=()
+    local stage
+    [[ "$capabilities" != \|* && "$capabilities" != *\| && "$capabilities" != *\|\|* ]] || fail "invalid precheck stage selection"
+    IFS='|' read -r -a stages <<<"$capabilities"
+    for stage in "${stages[@]}"; do
+      precheck_capability "$run_id" "$attempt" "$image_ref" "$source_dir" "$stage" "$bounded"
+    done
     return
   fi
 
