@@ -167,15 +167,18 @@ flowchart LR
 | `GET /control/api/topic-maintenance/runs` | Bounded run history. |
 | `POST /control/api/topic-maintenance/runs` | Explicit bounded run with retained `operation_key` and optional `max_batches`. |
 | `POST /control/api/topic-maintenance/runs/{runId}/retry` | Supported explicit retry of the selected run. |
+| `POST /control/api/teams/{teamId}/topic-maintenance/reassess` | Reassess 1–20 distinct, eligible, uncategorized shared Evidence IDs for this team. |
 | `POST /control/api/topic-maintenance/pause` or `/resume` | Idempotent admission control with retained operation key. |
 
-Inspect Topic assignment and Community placement counts, failed or ambiguous outcomes, and unreconciled or unavailable usage. Pause stops background admission and lets dispatched work finish. Foreground assignment and Topic reads continue while enabled and paused. Disabling organization defers assignments and Topic reads. Ordinary Recall remains available.
+The reassessment body contains `operation_key` and `evidence_ids`. The server resolves the team's current shared-space generation. An invalid, private, or out-of-team target rejects the whole request. Replaying the same operation key and input returns the first run; changing the input under that key conflicts. The action is audited. Ordinary run retry selects failed work from the selected run.
+
+Inspect Topic assignment, Community placement, and Evidence-equivalence counts, failed or ambiguous outcomes, and unreconciled or unavailable usage. One-member automatic Topics do not block Community coverage. Filter structured logs by team, run, and batch to inspect candidate degradation, provider failures, stale inputs, and retry outcomes; protected payload chunks carry indexes and hashes for reconstruction. Pause stops background admission and lets dispatched work finish. Foreground assignment and Topic reads continue while enabled and paused. Disabling organization defers assignments and Topic reads. Ordinary Recall remains available.
 
 See [Configuration]({{ '/Configuration/#topic-maintenance' | relative_url }}) and [Topics And Organization]({{ '/Topics-And-Organization/' | relative_url }}).
 
 ## Topic Storage Upgrade
 
-This procedure applies to images that include the relational Topics cutover. [Cutover migration](https://github.com/markhuangai/dense-mem/blob/8b94038237b7291fe5b1eb97958fa7b4cf4c3175/migrations/postgres/v2_8/20261125010002_relational_topics_cutover.sql)
+This procedure applies to images that include the relational Topics cutover and its later hybrid Topic migrations. [Cutover migration](https://github.com/markhuangai/dense-mem/blob/8b94038237b7291fe5b1eb97958fa7b4cf4c3175/migrations/postgres/v2_8/20261125010002_relational_topics_cutover.sql)
 
 1. Check the database version and source image. This upgrade supports v2.8.0 and later, including interrupted migrations within that range. For a database below the floor, use the released v2.8.0 upgrade procedure first.
 2. Close application ingress. Pause the old worker, drain requests and leases, and verify that provider usage has been reconciled. Stop every application service and confirm that writers have disconnected.
