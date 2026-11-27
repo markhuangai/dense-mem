@@ -119,15 +119,25 @@ func (s *MaintenanceService) executeEquivalence(ctx context.Context, work mainte
 	if s.deps.Decisions == nil || !settings.Effective.TopicAssignment {
 		assessor := *organizer
 		assessor.provider = organizer.provider.ForEquivalence()
+		assess := func(neighborhood contract.EquivalenceNeighborhood, suffix string) error {
+			input := contract.OrganizationInput{OperationKey: "equivalence:" + claim.ID + ":" + neighborhood.Seed.ID + suffix, Sources: neighborhood.Sources, EquivalenceOnly: true}
+			value, err := assessor.Organize(opCtx, claim.TeamID, input)
+			if err == nil && !value.Current {
+				return contract.ErrSourceStale
+			}
+			return err
+		}
+		refresh := make([]bool, len(ready))
 		var mu sync.Mutex
 		var group errgroup.Group
 		group.SetLimit(4)
-		for _, neighborhood := range ready {
+		for index, neighborhood := range ready {
 			group.Go(func() error {
-				input := contract.OrganizationInput{OperationKey: "equivalence:" + claim.ID + ":" + neighborhood.Seed.ID, Sources: neighborhood.Sources, EquivalenceOnly: true}
-				value, err := assessor.Organize(opCtx, claim.TeamID, input)
-				if err == nil && !value.Current {
-					err = contract.ErrSourceStale
+				err := assess(neighborhood, "")
+				var rejection *contract.FreshnessError
+				if errors.As(err, &rejection) {
+					refresh[index] = true
+					return nil
 				}
 				if err != nil {
 					mu.Lock()
@@ -139,6 +149,15 @@ func (s *MaintenanceService) executeEquivalence(ctx context.Context, work mainte
 			})
 		}
 		_ = group.Wait()
+		for index, neighborhood := range ready {
+			if !refresh[index] {
+				continue
+			}
+			if err := assess(neighborhood, ":refresh"); err != nil {
+				setFailure(neighborhood.Seed, err)
+				itemErrors = append(itemErrors, err)
+			}
+		}
 	} else {
 		prepared := make([]preparedEquivalence, 0, len(ready))
 		for _, neighborhood := range ready {

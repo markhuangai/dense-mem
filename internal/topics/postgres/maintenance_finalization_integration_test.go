@@ -74,7 +74,7 @@ func TestOntologyMaintenanceFinalizationCancellationAndDiscovery(t *testing.T) {
 			go func() {
 				finished <- f.store.CompleteMaintenanceBatch(completionCtx, *x.claim, x.result, x.result.FailureCode, time.Now().UTC())
 			}()
-			waitFor("transactionid", "%UPDATE topic_maintenance_sources SET status=%")
+			waitFor("transactionid", "%SELECT 1 FROM topic_maintenance_teams%FOR NO KEY UPDATE%")
 			expectedError := context.Canceled
 			if mode == "failed_unknown_usage" {
 				expectedError = context.DeadlineExceeded
