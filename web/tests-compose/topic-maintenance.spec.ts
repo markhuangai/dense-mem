@@ -220,8 +220,11 @@ retryTest("loaded older retry actions follow successful work and server eligibil
       if (expiredCapture) url.searchParams.set("attempt_id", randomUUID());
       await route.fulfill({ response: await route.fetch({ url: url.toString() }) });
     });
+    const diagnosticTrigger = row.getByRole("button", { name: "View failure diagnostics" });
+    const diagnosticsDialog = page.getByRole("dialog", { name: /Failure diagnostics/ });
     try {
-      await row.getByRole("button", { name: "View failure diagnostics" }).click();
+      await diagnosticTrigger.click();
+      await expect(diagnosticsDialog.getByRole("button", { name: "Close failure diagnostics" })).toBeFocused();
       const diagnostics = page.getByRole("region", { name: "Topic maintenance failure diagnostics" });
       const inspect = diagnostics.getByRole("button", { name: /View failed assessment/ }).first();
       await inspect.click();
@@ -248,8 +251,9 @@ retryTest("loaded older retry actions follow successful work and server eligibil
     } finally {
       await page.unroute(diagnosticRoute);
     }
-    await page.getByRole("button", { name: "Close failure diagnostics" }).click();
-    await expect(page.getByRole("dialog")).toBeHidden();
+    await page.keyboard.press("Escape");
+    await expect(diagnosticsDialog).toBeHidden();
+    await expect(diagnosticTrigger).toBeFocused();
     await control("/topic-maintenance/resume", { operation_key: randomUUID() });
     await page.getByRole("button", { name: "Refresh topic coverage" }).click();
     await expect(row.getByRole("button", { name: "Retry failed work" })).toBeEnabled();

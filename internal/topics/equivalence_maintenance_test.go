@@ -115,9 +115,10 @@ func (s *captureLogSink) WriteLog(_ context.Context, record observability.LogRec
 
 func TestExecuteEquivalenceParallelizesLogsCleanlyAndCapturesFailureDiagnostics(t *testing.T) {
 	const secret = "equiv-op-secret"
+	const neighborhoodCount = 8
 	teamID, runID, batchID, spaceID := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
-	sources := make([]contract.SourceHandle, 4)
-	neighborhoods := make([]contract.EquivalenceNeighborhood, 4)
+	sources := make([]contract.SourceHandle, neighborhoodCount)
+	neighborhoods := make([]contract.EquivalenceNeighborhood, neighborhoodCount)
 	for i := range sources {
 		seed := contract.SourceHandle{Kind: contract.EvidenceSource, ID: uuid.NewString(), Version: 1}
 		peer := contract.SourceHandle{Kind: contract.EvidenceSource, ID: uuid.NewString(), Version: 1}
@@ -159,7 +160,7 @@ func TestExecuteEquivalenceParallelizesLogsCleanlyAndCapturesFailureDiagnostics(
 		policy: domain.TopicMaintenanceConfig{Model: "fixture-model", ContextWindowTokens: 300000},
 	})
 	require.Error(t, err)
-	require.GreaterOrEqual(t, transport.maxInFlight.Load(), int32(2), "equivalence fallback must execute neighborhoods concurrently")
+	require.Equal(t, int32(4), transport.maxInFlight.Load(), "equivalence fallback must use four concurrent assessment slots")
 	require.NotContains(t, console.String(), secret)
 	require.NotContains(t, console.String(), "diagnostic_unavailable_reason")
 
@@ -174,12 +175,12 @@ func TestExecuteEquivalenceParallelizesLogsCleanlyAndCapturesFailureDiagnostics(
 			sawBatchCompleted = true
 			outcomes, ok := record.Attrs["outcomes"].([]any)
 			require.True(t, ok, "outcomes must be structured JSON array, got %T", record.Attrs["outcomes"])
-			require.Len(t, outcomes, 4)
+			require.Len(t, outcomes, neighborhoodCount)
 		case "topic_failure_capture":
 			sawFailureCapture = true
 			require.Equal(t, "equivalence", record.Attrs["stage"])
 			require.Equal(t, runID, record.Attrs["reference_id"])
-			require.GreaterOrEqual(t, record.Attrs["exchange_count"].(float64), float64(4))
+			require.GreaterOrEqual(t, record.Attrs["exchange_count"].(float64), float64(neighborhoodCount))
 			require.NotEmpty(t, record.Attrs["error"])
 		}
 	}

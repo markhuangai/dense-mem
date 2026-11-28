@@ -173,7 +173,7 @@ func PublicationDiagnostics(logger *slog.Logger, protector observability.Diagnos
 	}
 }
 
-func MaintenanceDiagnostics(sink observability.LogSink, protector observability.DiagnosticProtector, logger *slog.Logger) MaintenanceDiagnosticCapture {
+func MaintenanceDiagnostics(sink observability.LogSink, protector *observability.CredentialProtector, logger *slog.Logger) MaintenanceDiagnosticCapture {
 	return MaintenanceDiagnosticCapture{
 		protector:   protector,
 		Observe:     organizationAssessmentDiagnostics(logger, protector),

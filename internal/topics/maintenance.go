@@ -54,7 +54,7 @@ type MaintenanceDiagnosticCapture struct {
 	Observe       assessment.Observer
 	NewRecorder   func() modelprovider.SnapshotRecorder
 	RecordFailure func(context.Context, contract.MaintenanceClaim, contract.OrganizationResult, []modelprovider.ProviderExchange) error
-	protector     observability.DiagnosticProtector
+	protector     *observability.CredentialProtector
 }
 
 type MaintenanceService struct{ deps MaintenanceDependencies }

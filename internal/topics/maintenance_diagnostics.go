@@ -108,22 +108,25 @@ func (service *MaintenanceService) protectedDiagnosticErrorText(ctx context.Cont
 	if err == nil {
 		return ""
 	}
-	var protector observability.DiagnosticProtector
-	if service != nil {
-		protector = service.deps.Diagnostics.protector
+	if service == nil || service.deps.Diagnostics.protector == nil {
+		return fmt.Sprintf("diagnostic error unavailable (reason %d)", observability.CredentialProtectionUnsupported)
 	}
-	text, reason := observability.ProtectDiagnosticText(ctx, protector, []byte(err.Error()), observability.MaxOperationMetadataBytes)
-	if reason != observability.CredentialProtectionAvailable {
-		return fmt.Sprintf("diagnostic error unavailable (reason %d)", reason)
+	protected := service.deps.Diagnostics.protector.Snapshot(err, observability.MaxOperationMetadataBytes, observability.AuthenticationSecretsFromContext(ctx)...)
+	if protected.UnavailableReason != observability.CredentialProtectionAvailable {
+		return fmt.Sprintf("diagnostic error unavailable (reason %d)", protected.UnavailableReason)
+	}
+	text, ok := protected.Value.(string)
+	if !ok {
+		return fmt.Sprintf("diagnostic error unavailable (reason %d)", observability.CredentialProtectionFormattingFailed)
 	}
 	if len(text) <= maxDiagnosticErrorBytes {
-		return string(text)
+		return text
 	}
 	end := maxDiagnosticErrorBytes - len("...")
 	for end > 0 && !utf8.RuneStart(text[end]) {
 		end--
 	}
-	return string(text[:end]) + "..."
+	return text[:end] + "..."
 }
 
 func sqlStateOf(err error) string {
