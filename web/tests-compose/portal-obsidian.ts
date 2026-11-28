@@ -99,12 +99,13 @@ for (const theme of ["Light", "Dark"] as const) {
     await expect(palette).toBeHidden();
     await confirmation.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(teamName).toHaveValue(`${seedTeam} unsaved`);
-    await teamName.fill(seedTeam);
     await expect(confirmation).toBeHidden();
     await page.keyboard.press("Control+k");
     await input.fill("Logs");
     await input.press("Enter");
+    await confirmation.getByRole("button", { name: "Discard changes", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Operation Logs", exact: true })).toBeVisible();
+    await expect(teamName).toHaveCount(0);
     await expect(page.locator("#portal-content")).toBeFocused();
     await expect(page.locator(".filter-bar > label").first()).toHaveCSS("display", "grid");
     await checkAccess(page, "Operation Logs");
@@ -136,6 +137,13 @@ for (const theme of ["Light", "Dark"] as const) {
     await expect(result).toBeVisible();
     await expect(page.locator(".knowledge-results-panel")).toHaveCSS("border-radius", "6px");
     await checkAccess(page, "Knowledge Search");
+    await page.getByRole("button", { name: "Open details", exact: true }).focus();
+    await page.keyboard.press("Tab");
+    const selectedResult = page.getByRole("listbox", { name: "Recall result list" }).getByRole("option", { selected: true });
+    await expect(selectedResult).toBeFocused();
+    await expect(selectedResult).toHaveCSS("outline-width", "2px");
+    await expect(selectedResult).toHaveCSS("outline-color", theme === "Dark" ? "rgb(74, 138, 214)" : "rgb(30, 98, 181)");
+    await expect(selectedResult).toHaveCSS("box-shadow", /inset/);
     await result.press("Enter");
     await expect(page.getByRole("heading", { name: "Evidence details", exact: true })).toBeVisible();
     await checkAccess(page, "Knowledge Evidence Inspector");

@@ -97,7 +97,7 @@ describe("Command palette", () => {
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   });
 
-  it("hands focus to the unsaved changes confirmation and honors cancel", async () => {
+  it("hands focus to the unsaved changes confirmation and honors both decisions", async () => {
     render(<PortalEnvironment><PortalCommands dirty /></PortalEnvironment>);
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     await screen.findByRole("combobox");
@@ -110,6 +110,15 @@ describe("Command palette", () => {
     fireEvent.click(cancel);
     expect(window.location.search).toBe("");
     expect(await screen.findByText("Overview", { selector: "#portal-content" })).toBeVisible();
+    await waitFor(() => expect(dialog).not.toBeInTheDocument());
+
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    fireEvent.click(await screen.findByRole("option", { name: "Logs, Operations" }));
+    const reopened = await screen.findByRole("alertdialog", { name: "Discard unsaved changes?" });
+    fireEvent.click(within(reopened).getByRole("button", { name: "Discard changes" }));
+    const content = await screen.findByText("logs", { selector: "#portal-content" });
+    expect(window.location.search).toBe("?section=logs");
+    await waitFor(() => expect(content).toHaveFocus());
   });
 });
 

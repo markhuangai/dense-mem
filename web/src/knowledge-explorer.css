@@ -109,12 +109,6 @@
 
 .knowledge-result-option {
   cursor: pointer;
-  outline: none;
-}
-
-.knowledge-result-option:focus-visible {
-  border-color: color-mix(in srgb, var(--primary) 64%, var(--border));
-  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .knowledge-item-head {
