@@ -34,7 +34,7 @@ func (s *MaintenanceScheduler) Start(ctx context.Context) {
 func (s *MaintenanceScheduler) run(ctx context.Context) {
 	policy, err := s.service.policy(ctx)
 	if err != nil {
-		s.logFailure("configuration_unavailable", err)
+		s.logFailure(ctx, "configuration_unavailable", err)
 		return
 	}
 	if !policy.Enabled {
@@ -42,7 +42,7 @@ func (s *MaintenanceScheduler) run(ctx context.Context) {
 	}
 	window, err := s.service.ensureWindow(ctx, policy, s.service.deps.Now())
 	if err != nil {
-		s.logFailure("window_unavailable", err)
+		s.logFailure(ctx, "window_unavailable", err)
 		return
 	}
 	if window == nil {
@@ -60,7 +60,7 @@ func (s *MaintenanceScheduler) run(ctx context.Context) {
 	finish := func() {
 		result := <-completed
 		active--
-		s.logTurnFailure(result.err)
+		s.logTurnFailure(ctx, result.err)
 		if result.progress {
 			generation++
 		} else {
@@ -79,7 +79,7 @@ func (s *MaintenanceScheduler) run(ctx context.Context) {
 		remaining--
 		work, progress, err := s.service.prepareTurn(ctx)
 		if err != nil {
-			s.logTurnFailure(err)
+			s.logTurnFailure(ctx, err)
 			remaining = 0
 		} else if progress {
 			generation++
@@ -98,7 +98,7 @@ func (s *MaintenanceScheduler) run(ctx context.Context) {
 	}
 }
 
-func (s *MaintenanceScheduler) logTurnFailure(err error) {
+func (s *MaintenanceScheduler) logTurnFailure(ctx context.Context, err error) {
 	var finalization *contract.MaintenanceFinalizationError
 	if errors.As(err, &finalization) {
 		if s.logger != nil {
@@ -117,10 +117,10 @@ func (s *MaintenanceScheduler) logTurnFailure(err error) {
 	if code == "" || code == "maintenance_failure" {
 		code = "maintenance_turn_failed"
 	}
-	s.logFailure(code, err)
+	s.logFailure(ctx, code, err)
 }
 
-func (s *MaintenanceScheduler) logFailure(code string, err error) {
+func (s *MaintenanceScheduler) logFailure(ctx context.Context, code string, err error) {
 	if s.logger == nil {
 		return
 	}
@@ -145,7 +145,7 @@ func (s *MaintenanceScheduler) logFailure(code string, err error) {
 				attrs = append(attrs, slog.String("stage", turnErr.Stage))
 			}
 		}
-		attrs = append(attrs, slog.String("error", boundedDiagnosticErrorText(err)))
+		attrs = append(attrs, slog.String("error", s.service.protectedDiagnosticErrorText(ctx, err)))
 	}
-	s.logger.Error("topic maintenance failed", attrs...)
+	s.logger.ErrorContext(context.WithoutCancel(ctx), "topic maintenance failed", attrs...)
 }

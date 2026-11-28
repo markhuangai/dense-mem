@@ -94,7 +94,7 @@ func (s *MaintenanceService) executeTopicConsolidation(ctx context.Context, work
 		}
 		s.deps.Logger.Log(finishCtx, level, "topic_dedup.batch_completed", "team_id", claim.TeamID, "run_id", claim.RunID,
 			"batch_id", claim.ID, "stage", "topic_consolidation", "pair_count", len(work.pairs), "failure_code", failure,
-			"duration_ms", time.Since(started).Milliseconds(), "error", boundedDiagnosticErrorText(combined))
+			"duration_ms", time.Since(started).Milliseconds(), "error", s.protectedDiagnosticErrorText(finishCtx, combined))
 	}
 	if combined != nil {
 		s.recordFailureDiagnostics(ctx, claim, "topic_consolidation", contract.OrganizationResult{FailureCode: failure}, failure, combined, recorder)

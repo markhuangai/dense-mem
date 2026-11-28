@@ -101,3 +101,82 @@ func TestOntologyMaintenanceConcurrentAccountingAndCompletionAvoidsGlobalLockSta
 	require.EqualValues(t, 1200, status.Usage.ReportedOutputTokens)
 	require.NotNil(t, status.LastSuccessfulProgress, "per-team progress must surface in MaintenanceStatus")
 }
+
+func TestOntologyMaintenanceBatchDefersContendedTeamLease(t *testing.T) {
+	fixture := newOrganizationFixture(t)
+	maintenanceEvidence(t, fixture, "Pending assignment during team-row contention.")
+	config := maintenanceSettings(t, fixture)
+	window := maintenanceWindow(t, fixture, config)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	turn, err := fixture.store.ClaimMaintenanceTurn(ctx, window.ID, now, time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, turn)
+	for range 6 {
+		require.NoError(t, fixture.store.discoverMaintenanceError(ctx, *turn, topic.MaintenancePageSize))
+	}
+	fence := scope{TeamID: turn.TeamID, SpaceID: turn.SpaceID, Generation: turn.Generation}
+	require.NoError(t, fixture.store.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
+		if err := lockMaintenanceProgressTeam(tx, fence); err != nil {
+			return err
+		}
+		bounded, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		claim, err := fixture.store.ClaimMaintenanceBatch(bounded, *turn, window.ID, now)
+		require.NoError(t, err)
+		require.Nil(t, claim)
+		return nil
+	}))
+	claim, err := fixture.store.ClaimMaintenanceBatch(ctx, *turn, window.ID, time.Now().UTC())
+	require.NoError(t, err)
+	require.NotNil(t, claim)
+	_, err = fixture.store.admitMaintenanceBatch(ctx, *turn, claim, nil, time.Now().UTC())
+	require.ErrorIs(t, err, topic.ErrLeaseLost)
+}
+
+func TestOntologyMaintenanceEmptyPreviewUsesCurrentSources(t *testing.T) {
+	fixture := newOrganizationFixture(t)
+	source := maintenanceEvidence(t, fixture, "Assignment failure before eligibility changes.")
+	config := maintenanceSettings(t, fixture)
+	window := maintenanceWindow(t, fixture, config)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	turn, err := fixture.store.ClaimMaintenanceTurn(ctx, window.ID, now, time.Minute)
+	require.NoError(t, err)
+	require.NotNil(t, turn)
+	for range 6 {
+		require.NoError(t, fixture.store.discoverMaintenanceError(ctx, *turn, topic.MaintenancePageSize))
+	}
+	require.NoError(t, fixture.store.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
+		result := tx.Exec(`UPDATE topic_maintenance_sources SET status='failed',last_run_id=?::uuid
+			WHERE team_id=?::uuid AND source_id=?`, turn.RunID, turn.TeamID, source.ID)
+		require.EqualValues(t, 1, result.RowsAffected)
+		return result.Error
+	}))
+	require.NoError(t, fixture.store.ReleaseMaintenanceTurn(ctx, *turn))
+	preview, err := fixture.store.previewMaintenanceTurn(ctx, window.ID, now)
+	require.NoError(t, err)
+	require.NotNil(t, preview)
+	require.Empty(t, preview.candidates)
+	require.Zero(t, preview.active)
+	require.Equal(t, turn.RunID, preview.runID)
+	require.NoError(t, fixture.store.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
+		unresolved, err := maintenanceRunHasUnresolvedSources(tx, preview.runID, "", true)
+		require.NoError(t, err)
+		require.True(t, unresolved)
+		return tx.Exec(`UPDATE topic_maintenance_sources SET eligible=false,status='unavailable'
+			WHERE team_id=?::uuid AND source_id=?`, turn.TeamID, source.ID).Error
+	}))
+	require.NoError(t, fixture.store.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
+		if _, err := maintenanceState(tx); err != nil {
+			return err
+		}
+		bounded, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		return fixture.store.completeEmptyMaintenanceRun(bounded, *preview, window.ID, now)
+	}))
+	var status, code string
+	require.NoError(t, fixture.admin.Raw(`SELECT status,failure_code FROM topic_maintenance_runs WHERE run_id=?::uuid`, turn.RunID).Row().Scan(&status, &code))
+	require.Equal(t, "completed", status)
+	require.Empty(t, code)
+}

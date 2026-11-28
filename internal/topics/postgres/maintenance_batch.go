@@ -134,15 +134,20 @@ func admitMaintenanceBatchTx(tx *gorm.DB, turn topic.MaintenanceTurn, claim *top
 		return false, err
 	}
 	claim.RunID = runID
-	var valid bool
-	err = tx.Raw(`SELECT true FROM topic_maintenance_teams AS state JOIN teams AS team ON team.id=state.team_id
+	const liveTeamLease = `SELECT true FROM topic_maintenance_teams AS state JOIN teams AS team ON team.id=state.team_id
 		JOIN memory_spaces AS space ON space.team_id=state.team_id AND space.id=state.shared_space_id AND space.generation=state.space_generation
 		WHERE state.team_id=?::uuid AND state.shared_space_id=?::uuid AND state.space_generation=?
 		AND team.status='active' AND team.deleted_at IS NULL AND space.lifecycle_state='active'
-		AND state.lease_token=?::uuid AND state.lease_until>clock_timestamp() FOR NO KEY UPDATE OF state SKIP LOCKED`,
-		turn.TeamID, turn.SpaceID, turn.Generation, turn.LeaseToken).Row().Scan(&valid)
+		AND state.lease_token=?::uuid AND state.lease_until>clock_timestamp()`
+	var valid bool
+	leaseArgs := []any{turn.TeamID, turn.SpaceID, turn.Generation, turn.LeaseToken}
+	err = tx.Raw(liveTeamLease+` FOR NO KEY UPDATE OF state SKIP LOCKED`, leaseArgs...).Row().Scan(&valid)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, topic.ErrLeaseLost
+		err = tx.Raw(liveTeamLease, leaseArgs...).Row().Scan(&valid)
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, topic.ErrLeaseLost
+		}
+		return false, err
 	}
 	if err != nil {
 		return false, err

@@ -180,7 +180,6 @@ type maintenanceTurnPreview struct {
 	reassessEvidenceIDs               []string
 	runUpdatedAt                      time.Time
 	reopenScheduled                   bool
-	unresolved                        bool
 	active                            int
 	candidates                        []scope
 }
@@ -331,12 +330,6 @@ func (s *Store) previewMaintenanceTurn(ctx context.Context, windowID string, now
 		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 			return err
 		}
-		if len(next.candidates) == 0 && next.active == 0 && !next.reopenScheduled {
-			next.unresolved, err = maintenanceRunHasUnresolvedSources(tx, next.runID, next.retryRunID, next.retryRunID == "" && next.reassessTeamID == "")
-			if err != nil {
-				return err
-			}
-		}
 		preview = next
 		return nil
 	})
@@ -361,8 +354,11 @@ func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now t
 		if err != nil || preview == nil {
 			return nil, err
 		}
-		if len(preview.candidates) == 0 && (preview.active > 0 || preview.reopenScheduled) {
-			return nil, nil
+		if len(preview.candidates) == 0 {
+			if preview.active > 0 || preview.reopenScheduled {
+				return nil, nil
+			}
+			return nil, s.completeEmptyMaintenanceRun(ctx, *preview, windowID, now)
 		}
 		var result *topic.MaintenanceTurn
 		retryPreview := false
@@ -398,7 +394,7 @@ func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now t
 			candidate := &topic.MaintenanceTurn{LeaseToken: uuid.NewString(), LeaseUntil: now.Add(lease),
 				RetryRunID: preview.retryRunID, ReassessTeamID: preview.reassessTeamID, ReassessEvidenceIDs: preview.reassessEvidenceIDs}
 			reopen := false
-			err = tx.Raw(`SELECT run_id::text`+nextMaintenanceRun, windowID).Row().Scan(&candidate.RunID)
+			err = tx.Raw(`SELECT run_id::text`+nextMaintenanceRun+` FOR SHARE OF run SKIP LOCKED`, windowID).Row().Scan(&candidate.RunID)
 			if errors.Is(err, sql.ErrNoRows) && preview.reopenScheduled {
 				err = tx.Raw(`SELECT run_id::text FROM topic_maintenance_runs WHERE run_id=?::uuid AND status IN ('completed','incomplete')
 					FOR NO KEY UPDATE SKIP LOCKED`, preview.runID).Row().Scan(&candidate.RunID)
@@ -413,21 +409,6 @@ func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now t
 			if candidate.RunID != preview.runID {
 				retryPreview = true
 				return nil
-			}
-			if len(preview.candidates) == 0 {
-				if active > 0 {
-					return nil
-				}
-				var live bool
-				err := tx.Raw(`SELECT true FROM topic_maintenance_runs WHERE run_id=?::uuid AND updated_at=?
-					AND status IN ('pending','running') FOR NO KEY UPDATE SKIP LOCKED`, candidate.RunID, preview.runUpdatedAt).Row().Scan(&live)
-				if errors.Is(err, sql.ErrNoRows) {
-					return nil
-				}
-				if err != nil {
-					return err
-				}
-				return writeMaintenanceRunOutcome(tx, candidate.RunID, preview.unresolved, "")
 			}
 			limits, err := maintenanceTeamLimits(window.Policy)
 			if err != nil {
@@ -486,6 +467,29 @@ func (s *Store) ClaimMaintenanceTurn(ctx context.Context, windowID string, now t
 		return result, nil
 	}
 	return nil, nil
+}
+
+func (store *Store) completeEmptyMaintenanceRun(ctx context.Context, preview maintenanceTurnPreview, windowID string, now time.Time) error {
+	return store.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
+		var live bool
+		err := tx.Raw(`SELECT true FROM topic_maintenance_runs AS run JOIN topic_maintenance_windows AS win USING(window_id)
+			WHERE run.run_id=?::uuid AND run.window_id=?::uuid AND win.ends_at>? AND run.updated_at=?
+			AND run.status IN ('pending','running')
+			AND EXISTS(SELECT 1 FROM topic_maintenance_state WHERE singleton AND NOT paused)
+			AND EXISTS(SELECT 1 FROM app_config WHERE key=? AND value='true')
+			FOR NO KEY UPDATE OF run SKIP LOCKED`, preview.runID, windowID, now, preview.runUpdatedAt, domain.AppConfigTopicMaintenanceEnabled).Row().Scan(&live)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		active, err := activeMaintenanceWork(tx, now)
+		if err != nil || active > 0 {
+			return err
+		}
+		return completeMaintenanceRun(tx, preview.runID, preview.retryRunID, preview.retryRunID == "" && preview.reassessTeamID == "", "")
+	})
 }
 
 func activeMaintenanceWork(tx *gorm.DB, now time.Time) (int, error) {

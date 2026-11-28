@@ -3,11 +3,13 @@ package topics
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 	"unicode/utf8"
 
 	"github.com/markhuangai/dense-mem/internal/modelprovider"
+	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/topics/assignment"
 	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
 )
@@ -102,19 +104,26 @@ func maintenanceDiagnosticError(err error) string {
 	return "maintenance_failure"
 }
 
-func boundedDiagnosticErrorText(err error) string {
+func (service *MaintenanceService) protectedDiagnosticErrorText(ctx context.Context, err error) string {
 	if err == nil {
 		return ""
 	}
-	text := err.Error()
+	var protector observability.DiagnosticProtector
+	if service != nil {
+		protector = service.deps.Diagnostics.protector
+	}
+	text, reason := observability.ProtectDiagnosticText(ctx, protector, []byte(err.Error()), observability.MaxOperationMetadataBytes)
+	if reason != observability.CredentialProtectionAvailable {
+		return fmt.Sprintf("diagnostic error unavailable (reason %d)", reason)
+	}
 	if len(text) <= maxDiagnosticErrorBytes {
-		return text
+		return string(text)
 	}
 	end := maxDiagnosticErrorBytes - len("...")
 	for end > 0 && !utf8.RuneStart(text[end]) {
 		end--
 	}
-	return text[:end] + "..."
+	return string(text[:end]) + "..."
 }
 
 func sqlStateOf(err error) string {

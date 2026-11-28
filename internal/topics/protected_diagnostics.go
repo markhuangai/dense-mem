@@ -175,6 +175,7 @@ func PublicationDiagnostics(logger *slog.Logger, protector observability.Diagnos
 
 func MaintenanceDiagnostics(sink observability.LogSink, protector observability.DiagnosticProtector, logger *slog.Logger) MaintenanceDiagnosticCapture {
 	return MaintenanceDiagnosticCapture{
+		protector:   protector,
 		Observe:     organizationAssessmentDiagnostics(logger, protector),
 		NewRecorder: func() modelprovider.SnapshotRecorder { return observability.NewProviderExchangeRecorder(protector) },
 		RecordFailure: func(ctx context.Context, claim contract.MaintenanceClaim, result contract.OrganizationResult, exchanges []modelprovider.ProviderExchange) error {

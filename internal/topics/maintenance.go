@@ -54,6 +54,7 @@ type MaintenanceDiagnosticCapture struct {
 	Observe       assessment.Observer
 	NewRecorder   func() modelprovider.SnapshotRecorder
 	RecordFailure func(context.Context, contract.MaintenanceClaim, contract.OrganizationResult, []modelprovider.ProviderExchange) error
+	protector     observability.DiagnosticProtector
 }
 
 type MaintenanceService struct{ deps MaintenanceDependencies }
@@ -490,7 +491,7 @@ func (s *MaintenanceService) recordFailureDiagnostics(ctx context.Context, claim
 	}
 	diagnosticCtx, diagnosticCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	defer diagnosticCancel()
-	diagnosticCtx = withFailureDiagnosticDetail(diagnosticCtx, stage, boundedDiagnosticErrorText(runErr))
+	diagnosticCtx = withFailureDiagnosticDetail(diagnosticCtx, stage, s.protectedDiagnosticErrorText(diagnosticCtx, runErr))
 	captureStarted := time.Now()
 	if result.FailureCode == "" {
 		result.FailureCode = failure
