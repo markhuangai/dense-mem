@@ -95,6 +95,7 @@ test("operators inspect topic coverage and pause or resume durable admission", a
   await expect(page.getByRole("group", { name: "Processing", exact: true })).toBeVisible();
   await expect(page.getByRole("group", { name: "Model capacity", exact: true })).toBeVisible();
   await expectCompactNumberField(page, "Cadence (hours)");
+  await expectCompactNumberField(page, "Window start time");
   await expectCompactNumberField(page, "Concurrent assessments");
   await expectPageContained(page);
   await page.getByRole("button", { name: "Pause maintenance", exact: true }).click();
@@ -225,6 +226,8 @@ retryTest("loaded older retry actions follow successful work and server eligibil
     try {
       await diagnosticTrigger.click();
       await expect(diagnosticsDialog.getByRole("button", { name: "Close failure diagnostics" })).toBeFocused();
+      const diagnosticsWidth = Math.min(760, (await page.evaluate(() => window.innerWidth)) - 24);
+      await expect(diagnosticsDialog).toHaveCSS("width", `${diagnosticsWidth}px`);
       const diagnostics = page.getByRole("region", { name: "Topic maintenance failure diagnostics" });
       const inspect = diagnostics.getByRole("button", { name: /View failed assessment/ }).first();
       await inspect.click();

@@ -25,6 +25,7 @@ import {
   UserSession,
 } from "./api";
 import { FieldRow, AuthShell, LoadingState, PortalShell, SecretBox, SectionHeading, writeClipboardText } from "../ui/components";
+import { DenseMemMark } from "../ui/motion";
 import { SearchPanel } from "./SearchPanel";
 import { MemoryAccessSummary, memoryPermissionLabel } from "../credentialPermissions";
 import { PortalEnvironment, portalHref, usePortalNavigation, useUnsavedChanges } from "../ui/navigation";
@@ -180,7 +181,7 @@ function UserAuth() {
       <AuthShell
         theme={theme}
         title="Dense-Mem Knowledge"
-        icon={<span className="brand-initials" aria-hidden="true">DM</span>}
+        icon={<DenseMemMark />}
         onSubmit={submitToken}
         actions={themeMenu}
       >
@@ -330,20 +331,27 @@ function UserPortal({
     ] : []),
   ];
   const ssoTeamOptions = session?.teams ?? [];
+  const canSwitchTeams = authMode === "sso" && ssoTeamOptions.length > 1;
+  async function selectTeam(id: string) {
+    const changed = await transition(() => switchSSOTeam(id));
+    if (changed) await navigate({ section: "search", tab: null });
+    return changed;
+  }
 
   return (
     <PortalShell
       theme={theme}
       title="Knowledge"
-      icon={<span className="brand-initials" aria-hidden="true">DM</span>}
+      icon={<DenseMemMark />}
       topbarActions={<>{session && <UserContextBar session={session} />}{themeMenu}
         <Button variant="ghost" size="icon" className="icon-button" type="button" aria-label="Refresh session" disabled={switchingTeam || loading} onClick={() => void transition(() => { setTeamEditorResetVersion((version) => version + 1); return loadSession(); })}><RefreshCw size={17} aria-hidden="true" /></Button>
-        <Button variant="ghost" className="ghost-button" type="button" aria-label="Sign out" onClick={() => void transition(async () => { try { await onSignOut(); return true; } catch (err) { setError(readError(err)); return false; } })}><LogOut size={17} aria-hidden="true" /><span className="sign-out-label">Sign out</span></Button>
+        <Button variant="ghost" className="ghost-button max-md:size-8.5 max-md:has-[>svg]:px-0" type="button" aria-label="Sign out" onClick={() => void transition(async () => { try { await onSignOut(); return true; } catch (err) { setError(readError(err)); return false; } })}><LogOut size={17} aria-hidden="true" /><span className="sign-out-label">Sign out</span></Button>
       </>}
       navLabel="Knowledge navigation"
       navItemsLabel="Knowledge sections"
       navItems={navItems}
-      workspacePicker={session && <WorkspacePicker options={authMode === "sso" ? ssoTeamOptions.map((item) => item.team) : [session.team]} selectedID={session.team.id} disabled={authMode !== "sso" || ssoTeamOptions.length <= 1} loading={switchingTeam} onSelect={async (id) => { const changed = await transition(() => switchSSOTeam(id)); if (changed) await navigate({ section: "search", tab: null }); return changed; }} />}
+      commandItems={canSwitchTeams && !switchingTeam ? ssoTeamOptions.filter(({ team }) => team.id !== session?.team.id).map(({ team }) => ({ id: `team-${team.id}`, label: team.name, group: "Team", onSelect: () => selectTeam(team.id) })) : []}
+      workspacePicker={session && <WorkspacePicker options={authMode === "sso" ? ssoTeamOptions.map((item) => item.team) : [session.team]} selectedID={session.team.id} disabled={!canSwitchTeams} loading={switchingTeam} onSelect={selectTeam} />}
       contextBar={<span className="current-team" aria-label="Current workspace">{session?.team.name ?? "Knowledge"}</span>}
       detailLabel="Knowledge details"
       error={error || (session && requestedTab && !allowedTabs.includes(requestedTab as UserTab) ? "This section is unavailable for your current access." : "")}
@@ -584,8 +592,8 @@ function CredentialPanel({
           <h3>Owned API keys</h3>
           <div className="credential-list-items">
             {personalCredentials.map((credential) => (
-              <Button variant="ghost"
-                className={`credential-list-item${credential.id === personalCredential?.id ? " selected" : ""}`}
+              <button
+                className="interactive-card credential-list-item"
                 type="button"
                 key={credential.id}
                 aria-pressed={credential.id === personalCredential?.id}
@@ -593,7 +601,7 @@ function CredentialPanel({
               >
                 <span>{credential.name}</span>
                 <small>{displayKeySuffix(credential.key_suffix)}</small>
-              </Button>
+              </button>
             ))}
           </div>
         </div>

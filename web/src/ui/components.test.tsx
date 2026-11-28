@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { LoadingState, SecretBox, UsageMeter } from "./components";
+import { LoadingState, PortalShell, SecretBox, UsageMeter } from "./components";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -48,6 +48,25 @@ describe("LoadingState", () => {
     expect(status.querySelector(".loading-orbit")).toBeInTheDocument();
     expect(status.querySelectorAll(".loading-skeleton span")).toHaveLength(3);
   });
+});
+
+it("keeps collapsed links named and opens the shell command palette", async () => {
+  const { container } = render(<PortalShell theme="light" title="Dense-Mem Control" icon={null} topbarActions={null}
+    navLabel="Control navigation" navItemsLabel="Sections" detailLabel="Control workspace"
+    navItems={[{ id: "logs", label: "Logs", active: true, icon: null, onClick: () => {} }]}><p>Log entries</p></PortalShell>);
+  try {
+    fireEvent.click(screen.getByRole("button", { name: "Collapse navigation" }));
+    const expand = screen.getByRole("button", { name: "Expand navigation" });
+    const link = screen.getByRole("link", { name: "Logs" });
+    expect(expand).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".app-shell")).toHaveAttribute("data-sidebar-collapsed", "true");
+    expect(link).not.toHaveAttribute("title");
+    expect(link.querySelector("span")).toHaveClass("sr-only");
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    expect(await screen.findByRole("combobox", { name: "Find a section or team" })).toHaveFocus();
+  } finally {
+    localStorage.removeItem("denseMem.controlSidebar");
+  }
 });
 
 describe("UsageMeter", () => {

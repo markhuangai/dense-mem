@@ -55,11 +55,11 @@ export function SearchPanel({ api }: { api: UserApi }) {
     <section className="knowledge-results-panel" aria-label="Recall results">
       <form className="knowledge-commandbar" onSubmit={submit}>
         <Label className="sr-only" htmlFor="recall-query">Keyword</Label>
-        <div className="search-input-wrap large"><Search size={17} aria-hidden="true" /><Input id="recall-query" aria-label="Keyword" placeholder="Search evidence..." value={query} onChange={(event) => setQuery(event.target.value)} /></div>
+        <div className="search-input-wrap large"><Search size={17} aria-hidden="true" /><Input className="border-0 bg-transparent px-0 focus-visible:outline-none" id="recall-query" aria-label="Keyword" placeholder="Search evidence..." value={query} onChange={(event) => setQuery(event.target.value)} /></div>
         <Button type="submit" disabled={loading}><Search size={16} aria-hidden="true" />Search</Button>
       </form>
       <div className="knowledge-results-toolbar">
-        <div><h2>{results.length} results</h2><span>{topic ? `Topic: ${topic.name}` : "Search memory Evidence"}</span></div>
+        <div><h2>{results.length} results</h2>{topic && <p className="section-subtitle">Topic: {topic.name}</p>}</div>
         <div className="toolbar-actions">
           <NativeSelect aria-label="Source" value={source} onChange={(event) => setSource(event.target.value)}><NativeSelectOption value="all">All sources</NativeSelectOption>{sources.map((value) => <NativeSelectOption key={value} value={value}>{value}</NativeSelectOption>)}</NativeSelect>
           <NativeSelect aria-label="Sort" value={sort} onChange={(event) => setSort(event.target.value)}><NativeSelectOption value="relevance">Relevance</NativeSelectOption><NativeSelectOption value="date">Date</NativeSelectOption></NativeSelect>
@@ -84,7 +84,7 @@ export function SearchPanel({ api }: { api: UserApi }) {
     </section>
     <ResponsiveInspector compact={compact} open={inspectorOpen} onOpenChange={setInspectorOpen} title="Evidence details">
       {selected ? <div className="inspector-card"><h3>Evidence</h3><p>{selected.context}</p><dl className="evidence-list">
-        <div><dt>ID</dt><dd>{selected.evidence_id}</dd></div><div><dt>Source</dt><dd>{sourceLabel(selected)}</dd></div>
+        <div><dt>ID</dt><dd className="font-mono break-all">{selected.evidence_id}</dd></div><div><dt>Source</dt><dd>{sourceLabel(selected)}</dd></div>
         <div><dt>Destination</dt><dd>{selected.space_kind ?? "Unknown"}</dd></div><div><dt>Rank</dt><dd>{selected.rank}</dd></div>
         <div><dt>Equivalent Evidence</dt><dd>{selected.equivalent_evidence_ids.join(", ") || "None"}{selected.equivalents_truncated ? " (truncated)" : ""}</dd></div>
       </dl></div> : <div className="table-placeholder compact">Select a result</div>}

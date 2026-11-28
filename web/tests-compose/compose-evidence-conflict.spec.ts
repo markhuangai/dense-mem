@@ -1,4 +1,4 @@
-import { navigate, openNavigation, confirmAction, expectPageContained, expectConflictCardsContained } from "../tests-support/portal";
+import { navigate, openNavigation, confirmAction, expectPageContained, expectConflictCardsContained, expectPortalAccessible } from "../tests-support/portal";
 import { expect, test, type Page } from "@playwright/test";
 
 const controlUrl = requiredEnv("DENSE_MEM_CONTROL_URL").replace(/\/$/, "");
@@ -17,12 +17,18 @@ test("Evidence view resolves a case, handles stale review, and stays keyboard-sa
   const initial = await listOpenConflicts(page);
   expect(initial.length).toBeGreaterThanOrEqual(2);
   for (const width of [1440, 390]) for (const theme of ["Light", "Dark"]) {
-    await page.setViewportSize({ width, height: 1000 });
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
     await page.getByRole("button", { name: "Choose theme", exact: true }).click();
     await page.getByRole("menuitem", { name: theme, exact: true }).click();
     await expect(page.getByRole("button", { name: "Choose theme", exact: true })).toBeFocused();
     await expectConflictCardsContained(page);
     await expectPageContained(page);
+    await expectPortalAccessible(page, `${width} ${theme} evidence conflict queue`);
+    await caseCard(page, initial[0].conflict_id).click();
+    await expect(page.getByRole("heading", { name: "Cited evidence conflict" })).toBeVisible();
+    await expectPortalAccessible(page, `${width} ${theme} evidence conflict review`);
+    await page.getByRole("button", { name: "Close", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Cited evidence conflict" })).toBeHidden();
     await page.screenshot({ path: testInfo.outputPath(`evidence-conflicts-${width}-${theme.toLowerCase()}.png`), fullPage: true });
   }
   const successCase = initial[0];

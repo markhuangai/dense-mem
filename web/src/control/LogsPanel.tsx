@@ -127,7 +127,7 @@ export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api:
         )}
       />
       {error && <div className="banner error" role="alert">{error}</div>}
-      <div className="metrics-toolbar">
+      <div className="filter-bar">
         <Label>
           Severity
           <NativeSelect
@@ -321,7 +321,7 @@ export function LogsPanel({ api, teams, initialQuery = EMPTY_LOG_QUERY }: { api:
           </Table>
         </div>
       )}
-      <div className="table-actions">
+      <div className="pagination-bar">
         <span className="form-meta">{rangeStart}-{rangeEnd} of {total}</span>
         <Label className="table-page-size">
           Rows

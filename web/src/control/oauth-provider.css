@@ -1,11 +1,11 @@
+@layer components {
 .oauth-provider-config {
 	display: grid;
-	grid-template-columns: 150px minmax(0, 1fr);
-	gap: 10px;
+	grid-template-columns: minmax(0, 1fr);
 	min-width: 0;
 	padding: 14px;
 	border: 1px solid var(--border);
-	border-radius: 8px;
+	border-radius: var(--radius-panel);
 	background: var(--panel-muted);
 }
 
@@ -30,16 +30,15 @@
 
 .oauth-scope-mapping {
 	display: grid;
-	grid-template-columns: 110px minmax(160px, 1fr) minmax(220px, auto) 36px;
+	grid-template-columns: minmax(0, 1fr) auto;
 	padding: 10px;
 	border: 1px solid var(--border);
-	border-radius: 6px;
+	border-radius: var(--radius-panel);
 	background: var(--panel);
 }
 
-@media (max-width: 640px) {
-	.oauth-provider-config,
-	.oauth-scope-mapping {
-		grid-template-columns: minmax(0, 1fr);
-	}
+.oauth-scope-mapping > .setting-row {
+	padding-top: 0;
+	border: 0;
+}
 }

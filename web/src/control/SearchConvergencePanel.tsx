@@ -36,7 +36,7 @@ export function SearchConvergencePanel({ api }: { api: ControlApi }) {
     <section className="surface" aria-label="Search convergence">
       <SectionHeading
         title={
-          <span>
+          <span className="inline-flex items-center gap-2">
             <Search size={18} aria-hidden="true" /> Search convergence
           </span>
         }

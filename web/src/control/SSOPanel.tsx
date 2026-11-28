@@ -226,7 +226,7 @@ export function SSOPanel({ api, teams }: { api: ControlApi; teams: Team[] }) {
                       <Button variant="ghost" size="icon" className="icon-button" type="button" aria-label={`Edit ${provider.name}`} onClick={() => void transition(() => selectProvider(provider.id))}>
                         <Pencil size={16} aria-hidden="true" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="icon-button danger-icon" type="button" aria-label={`Delete ${provider.name}`} onClick={() => void deleteProvider(provider.id)}>
+                      <Button variant="ghost-destructive" size="icon" className="icon-button" type="button" aria-label={`Delete ${provider.name}`} onClick={() => void deleteProvider(provider.id)}>
                         <Trash2 size={16} aria-hidden="true" />
                       </Button>
                     </div>
@@ -402,7 +402,7 @@ function SSOProviderForm({
 								</Label>
 							))}
 						</div>
-						<Button variant="ghost" size="icon" className="icon-button danger-icon" type="button" aria-label={`Remove OAuth scope mapping ${index + 1}`} onClick={() => removeScopeMapping(index)}>
+						<Button variant="ghost-destructive" size="icon" className="icon-button" type="button" aria-label={`Remove OAuth scope mapping ${index + 1}`} onClick={() => removeScopeMapping(index)}>
 							<Trash2 size={15} aria-hidden="true" />
 						</Button>
 					</div>
@@ -515,7 +515,7 @@ function SSOMappingTable({ mappings, onDelete }: { mappings: SSOGroupMapping[]; 
               <TableCell>{membershipRoleLabel(mapping.role)}</TableCell>
               <TableCell><span className={mapping.enabled ? "status-pill neutral" : "status-pill warning"}>{mapping.enabled ? "enabled" : "disabled"}</span></TableCell>
               <TableCell className="actions-cell">
-                <Button variant="ghost" size="icon" className="icon-button danger-icon" type="button" aria-label="Delete group mapping" onClick={() => onDelete(mapping.id)}>
+                <Button variant="ghost-destructive" size="icon" className="icon-button" type="button" aria-label="Delete group mapping" onClick={() => onDelete(mapping.id)}>
                   <Trash2 size={16} aria-hidden="true" />
                 </Button>
               </TableCell>

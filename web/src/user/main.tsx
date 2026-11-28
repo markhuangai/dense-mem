@@ -5,7 +5,8 @@ import "../styles.css";
 import "../resource-explorer.css";
 import "../knowledge-explorer.css";
 import "../observability.css";
-import "../shell.css";
+import "../styles/topic-maintenance.css";
+import "../styles/shell.css";
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

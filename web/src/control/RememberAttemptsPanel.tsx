@@ -315,7 +315,7 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs, initialView = "at
         />
         <p className="panel-intro">Durable processing history. A call can replay an existing attempt or end without creating one. Captured diagnostic bodies are retained for up to seven days unless placed under legal hold.</p>
         {error && <div className="banner error" role="alert">{error}</div>}
-        <div className="metrics-toolbar submission-toolbar">
+        <div className="filter-bar submission-toolbar">
           <Label>
             Outcome
             <NativeSelect
@@ -353,14 +353,14 @@ export function RememberAttemptsPanel({ api, team, onOpenLogs, initialView = "at
                     <TableCell><span className={attemptOutcomeClass(item.outcome)}>{outcomeLabel(item.outcome)}</span></TableCell>
                     <TableCell><span>{item.failed_phase ? outcomeLabel(item.failed_phase) : "—"}</span>{item.error_code && <small className="table-subline">{outcomeLabel(item.error_code)}</small>}</TableCell>
                     <TableCell><span>{item.evidence_count} Evidence</span><small className="table-subline">{item.duration_ms} ms</small></TableCell>
-                    <TableCell><Button variant="ghost" className="text-button" type="button" aria-label={`Inspect Remember attempt ${item.attempt_id}`} onClick={() => { selectAttempt(item.attempt_id); void loadDetail(item.attempt_id); }}>Inspect <ArrowRight size={14} aria-hidden="true" /></Button></TableCell>
+                    <TableCell><Button variant="link" type="button" aria-label={`Inspect Remember attempt ${item.attempt_id}`} onClick={() => { selectAttempt(item.attempt_id); void loadDetail(item.attempt_id); }}>Inspect <ArrowRight size={14} aria-hidden="true" /></Button></TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </div>
         )}
-        <div className="table-actions">
+        <div className="pagination-bar">
           <span className="form-meta">{rangeStart}-{rangeEnd} of {total}</span>
           <Button variant="outline" className="ghost-button" type="button" disabled={loading || offset === 0} onClick={() => void loadAttempts(outcome, Math.max(0, offset - PAGE_SIZE))}>Previous</Button>
           <Button variant="outline" className="ghost-button" type="button" disabled={loading || offset + PAGE_SIZE >= total} onClick={() => void loadAttempts(outcome, offset + PAGE_SIZE)}>Next</Button>
@@ -432,14 +432,14 @@ function RememberCallsView({
                   <TableCell><span>{item.classification}</span><small className="table-subline">{item.retryable ? "Retryable" : "Not retryable"}</small></TableCell>
                   <TableCell><span className={attemptOutcomeClass(item.outcome)}>{outcomeLabel(item.outcome)}</span></TableCell>
                   <TableCell><span>{item.failed_phase ? outcomeLabel(item.failed_phase) : "Completed"}</span>{item.error_code && <small className="table-subline">{outcomeLabel(item.error_code)}</small>}</TableCell>
-                  <TableCell><code>{item.correlation_id || "No correlation"}</code><small className="table-subline">{item.canonical_attempt_id ? <Button variant="ghost" className="text-button" type="button" onClick={() => onOpenAttempt(item.canonical_attempt_id as string)}>Attempt {shortId(item.canonical_attempt_id)}</Button> : "No canonical attempt"}</small></TableCell>
-                  <TableCell><Button variant="ghost" className="text-button" type="button" disabled={loading} aria-label={`Inspect Remember call ${item.invocation_id}`} onClick={() => onSelect(item.invocation_id)}>Inspect <ArrowRight size={14} aria-hidden="true" /></Button></TableCell>
+                  <TableCell><code>{item.correlation_id || "No correlation"}</code><small className="table-subline">{item.canonical_attempt_id ? <Button variant="link" type="button" onClick={() => onOpenAttempt(item.canonical_attempt_id as string)}>Attempt {shortId(item.canonical_attempt_id)}</Button> : "No canonical attempt"}</small></TableCell>
+                  <TableCell><Button variant="link" type="button" disabled={loading} aria-label={`Inspect Remember call ${item.invocation_id}`} onClick={() => onSelect(item.invocation_id)}>Inspect <ArrowRight size={14} aria-hidden="true" /></Button></TableCell>
                 </TableRow>
               ))}</TableBody>
             </Table>
           </div>
         )}
-        <div className="table-actions">
+        <div className="pagination-bar">
           <span className="form-meta">{rangeStart}-{rangeEnd} of {total}</span>
           <Button variant="outline" className="ghost-button" type="button" disabled={loading || offset === 0} onClick={onPrevious}>Previous</Button>
           <Button variant="outline" className="ghost-button" type="button" disabled={loading || offset + items.length >= total} onClick={onNext}>Next</Button>

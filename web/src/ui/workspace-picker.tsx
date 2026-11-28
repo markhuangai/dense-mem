@@ -19,10 +19,10 @@ export function WorkspacePicker({ options, selectedID, onSelect, disabled = fals
   const selected = options.find((option) => option.id === selectedID);
   const filtered = options.filter((option) => `${option.name} ${option.id}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   return <Popover open={open} onOpenChange={setOpen}>
-    <PopoverTrigger asChild><Button variant="outline" className="workspace-trigger" disabled={disabled || loading} aria-label="Choose team" aria-expanded={open}><Users aria-hidden="true" /><span>{selected?.name ?? "Choose a team"}</span><ChevronsUpDown aria-hidden="true" /></Button></PopoverTrigger>
-    <PopoverContent className="workspace-picker" align="start">
+    <PopoverTrigger asChild><Button variant="outline" className="workspace-trigger w-full min-w-0 justify-between rounded-[6px] text-left [[data-sidebar-collapsed=true]_.primary-rail_&]:justify-center [[data-sidebar-collapsed=true]_.primary-rail_&]:px-0" disabled={disabled || loading} aria-label="Choose team" aria-expanded={open}><Users aria-hidden="true" /><span>{selected?.name ?? "Choose a team"}</span><ChevronsUpDown aria-hidden="true" /></Button></PopoverTrigger>
+    <PopoverContent className="workspace-picker w-[min(260px,calc(100vw-32px))] p-2" align="start">
       <Input aria-label="Find a team" placeholder="Find a team…" value={query} onChange={(event) => setQuery(event.target.value)} />
-      <div className="workspace-options" aria-label="Available teams">{filtered.map((option) => <Button variant={option.id === selectedID ? "secondary" : "ghost"} className="workspace-option" key={option.id} disabled={disabled || loading} onClick={async () => { const result = await onSelect(option.id); if (result !== false) { setOpen(false); setQuery(""); } }}><span>{option.name}</span>{option.id === selectedID && <Check className="ml-auto" aria-label="Selected" />}</Button>)}{!filtered.length && <p className="form-meta">No matching loaded teams.</p>}</div>
+      <div className="workspace-options" aria-label="Available teams">{filtered.map((option) => <Button variant={option.id === selectedID ? "secondary" : "ghost"} className="workspace-option w-full justify-start rounded-[6px] text-left" key={option.id} disabled={disabled || loading} onClick={async () => { const result = await onSelect(option.id); if (result !== false) { setOpen(false); setQuery(""); } }}><span>{option.name}</span>{option.id === selectedID && <Check className="ml-auto" aria-label="Selected" />}</Button>)}{!filtered.length && <p className="form-meta">No matching loaded teams.</p>}</div>
       {onLoadMore && <Button variant="ghost" className="w-full" disabled={loading} onClick={onLoadMore}>Load more teams</Button>}
     </PopoverContent>
   </Popover>;

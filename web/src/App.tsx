@@ -40,6 +40,7 @@ import { ThemeControl, usePortalTheme } from "./ui/theme";
 import type { ThemeName } from "./ui/theme";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "./ui/primitives/dialog";
 import { FieldRow, AuthShell, LoadingState, PortalShell, SectionHeading } from "./ui/components";
+import { DenseMemMark } from "./ui/motion";
 
 const SecurityPanel = lazy(() => import("./control/SecurityPanel").then((module) => ({ default: module.SecurityPanel })));
 const SSOPanel = lazy(() => import("./control/SSOPanel").then((module) => ({ default: module.SSOPanel })));
@@ -162,7 +163,7 @@ function ControlApp() {
       <AuthShell
         theme={theme}
         title="Dense-Mem Control"
-        icon={<span className="brand-initials" aria-hidden="true">DM</span>}
+        icon={<DenseMemMark />}
         onSubmit={submitToken}
         actions={themeMenu}
       >
@@ -303,11 +304,13 @@ function Portal({ api, theme, themeMenu, onSignOut }: { api: ControlApi; theme: 
   ];
   const rememberLink = readRememberLink(parameters);
   const unavailableTeam = activeTab === "teams" && !selectedTeam && loadState !== "loading";
-  return <PortalShell theme={theme} title="Dense-Mem Control" icon={<span className="brand-initials" aria-hidden="true">DM</span>}
+  const selectTeam = (id: string) => openTeamWorkspace(activeTab === "teams" ? teamWorkspaceTab : "overview", id);
+  return <PortalShell theme={theme} title="Dense-Mem Control" icon={<DenseMemMark />}
     navLabel="Control navigation" navItemsLabel="Control sections" navItems={navItems}
-    workspacePicker={<WorkspacePicker options={teams} selectedID={selectedTeamId} loading={loadState === "loading" && !teams.length} onSelect={(id) => openTeamWorkspace(activeTab === "teams" ? teamWorkspaceTab : "overview", id)} onLoadMore={nextOffset < totalTeams ? () => void loadMoreTeams() : undefined} />}
+    commandItems={teams.map((team) => ({ id: `team-${team.id}`, label: team.name, group: "Team", onSelect: () => selectTeam(team.id) }))}
+    workspacePicker={<WorkspacePicker options={teams} selectedID={selectedTeamId} loading={loadState === "loading" && !teams.length} onSelect={selectTeam} onLoadMore={nextOffset < totalTeams ? () => void loadMoreTeams() : undefined} />}
     contextBar={<span className="current-team" aria-label="Current workspace">{selectedTeam?.name ?? "Service"}</span>}
-    topbarActions={<>{themeMenu}<Button variant="ghost" size="icon" className="icon-button" type="button" aria-label="Refresh teams" disabled={loadState === "loading"} onClick={() => void transition(() => { setTeamEditorResetVersion((version) => version + 1); return loadTeams(); })}><RefreshCw size={17} aria-hidden="true" /></Button><Button variant="outline" className="ghost-button" type="button" aria-label="Sign out" onClick={onSignOut}><LogOut size={17} aria-hidden="true" /><span className="sign-out-label">Sign out</span></Button></>}
+    topbarActions={<>{themeMenu}<Button variant="ghost" size="icon" className="icon-button" type="button" aria-label="Refresh teams" disabled={loadState === "loading"} onClick={() => void transition(() => { setTeamEditorResetVersion((version) => version + 1); return loadTeams(); })}><RefreshCw size={17} aria-hidden="true" /></Button><Button variant="ghost" className="ghost-button max-md:size-8.5 max-md:has-[>svg]:px-0" type="button" aria-label="Sign out" onClick={onSignOut}><LogOut size={17} aria-hidden="true" /><span className="sign-out-label">Sign out</span></Button></>}
     detailLabel="Control details" error={error || (unavailableTeam ? "Linked team is unavailable or you do not have access." : requestedSection && !sections.includes(requestedSection as PortalTab) ? "This section is unavailable. Choose a destination from navigation." : "")}>
     <Suspense fallback={<LazyPanelFallback />}>
       {activeTab === "all-teams" && <TeamDirectory teams={teams} loading={loadState === "loading"} total={totalTeams} onCreate={() => setCreatingTeam(true)} onSelect={(id) => void openTeamWorkspace("overview", id)} onLoadMore={() => void loadMoreTeams()} />}

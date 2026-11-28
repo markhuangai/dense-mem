@@ -228,7 +228,7 @@ export function TopicMaintenancePanel({ api, onStatus }: { api: ControlApi; onSt
         {runs.next_cursor && <Button variant="outline" type="button" disabled={refreshing || loadingMore || busy} onClick={() => void loadMore()}>Load older runs</Button>}
       </section>
       <Sheet open={Boolean(diagnosticRun)} onOpenChange={(open) => { if (!open) setDiagnosticRun(""); }}>
-        <SheetContent className="contextual-sheet topic-diagnostics-sheet" showCloseButton={false} onCloseAutoFocus={(event) => {
+        <SheetContent className="contextual-sheet topic-diagnostics-sheet w-[min(760px,calc(100vw-24px))] overflow-auto sm:max-w-none" showCloseButton={false} onCloseAutoFocus={(event) => {
           event.preventDefault();
           diagnosticTrigger.current?.focus();
           diagnosticTrigger.current = null;

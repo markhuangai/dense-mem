@@ -1,4 +1,4 @@
-
+@layer components {
 
 .logs-table {
   min-width: 0;
@@ -17,10 +17,10 @@
   max-width: 100%;
   padding: 2px 7px;
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius-tag);
   background: var(--panel-strong);
   color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.4;
   overflow-wrap: anywhere;
@@ -37,7 +37,7 @@
   overflow: hidden;
   margin-bottom: 14px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-panel);
   background: var(--border);
 }
 
@@ -73,7 +73,7 @@
   margin-bottom: 10px;
   padding: 12px;
   border: 1px solid color-mix(in srgb, var(--danger) 32%, var(--border));
-  border-radius: 10px;
+  border-radius: var(--radius-panel);
   background: var(--danger-soft);
 }
 
@@ -82,7 +82,7 @@
   width: 30px;
   height: 30px;
   place-items: center;
-  border-radius: 8px;
+  border-radius: var(--radius-panel);
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
@@ -200,7 +200,7 @@
   margin-top: 16px;
   padding: 12px;
   border: 1px solid color-mix(in srgb, var(--danger) 32%, var(--border));
-  border-radius: 10px;
+  border-radius: var(--radius-panel);
   background: var(--danger-soft);
 }
 
@@ -222,10 +222,10 @@
   padding: 9px;
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--radius-panel);
   color: var(--text);
   background: var(--panel-strong);
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   line-height: 1.4;
   white-space: pre-wrap;
@@ -236,7 +236,7 @@
   margin-top: 10px;
   padding: 12px;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: var(--radius-panel);
   background: var(--panel-strong);
 }
 
@@ -302,4 +302,5 @@
 .logs-table th:nth-child(6),
 .logs-table td:nth-child(6) {
   width: 72px;
+}
 }

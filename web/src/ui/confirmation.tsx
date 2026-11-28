@@ -28,7 +28,7 @@ export function ConfirmationProvider({ children }: { children: ReactNode }) {
         <AlertDialogHeader><AlertDialogTitle>{options?.title}</AlertDialogTitle><AlertDialogDescription>{options?.description}</AlertDialogDescription></AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel onClick={() => finish(false)}>Cancel</AlertDialogCancel>
-          <AlertDialogAction className={options?.destructive ? "destructive-action" : undefined} onClick={() => finish(true)}>{options?.confirmLabel ?? "Continue"}</AlertDialogAction>
+          <AlertDialogAction variant={options?.destructive ? "destructive" : "default"} onClick={() => finish(true)}>{options?.confirmLabel ?? "Continue"}</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

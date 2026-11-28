@@ -322,8 +322,8 @@ function CredentialRow({
           >
             <RefreshCw size={16} aria-hidden="true" />
           </Button>
-          <Button variant="ghost" size="icon"
-            className="icon-button danger"
+          <Button variant="ghost-destructive" size="icon"
+            className="icon-button"
             type="button"
             aria-label={`Delete credential ${credential.name}`}
             title="Delete credential"

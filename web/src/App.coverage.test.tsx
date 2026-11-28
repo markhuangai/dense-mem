@@ -8,6 +8,7 @@ import {
   mockPortalFetch,
   page,
   profileA,
+  telemetrySnapshot,
 } from "./App.test-helpers";
 
 beforeEach(() => {
@@ -79,6 +80,7 @@ describe("App coverage additions", () => {
       if (url.endsWith("/teams") && method === "POST") return jsonResponse({ message: "team create failed" }, 500);
       if (url.includes("/credentials") && method === "GET") return jsonResponse(page([]));
       if (url.includes("/metrics")) return jsonResponse({ data: metricsSnapshot });
+      if (url.startsWith("/control/api/telemetry?") && method === "GET") return jsonResponse({ data: telemetrySnapshot });
       if (method === "PATCH") return jsonResponse({ message: "team update failed" }, 500);
       if (method === "DELETE") return jsonResponse({ message: "team delete failed" }, 500);
       return jsonResponse({ data: {} });

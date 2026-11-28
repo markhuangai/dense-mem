@@ -196,8 +196,8 @@ function SecurityBanTable({
               <TableCell>{ban.last_failed_at ? formatDate(ban.last_failed_at) : "Never"}</TableCell>
               <TableCell>{ban.expires_at ? formatDate(ban.expires_at) : "Never"}</TableCell>
               <TableCell className="actions-cell">
-                <Button variant="ghost" size="icon"
-                  className="icon-button danger"
+                <Button variant="ghost-destructive" size="icon"
+                  className="icon-button"
                   type="button"
                   aria-label={`Clear IP ban and reset strikes for ${ban.ip}`}
                   title="Clear ban and reset strikes"
