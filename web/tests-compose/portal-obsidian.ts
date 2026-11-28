@@ -137,7 +137,9 @@ for (const theme of ["Light", "Dark"] as const) {
     await expect(result).toBeVisible();
     await expect(page.locator(".knowledge-results-panel")).toHaveCSS("border-radius", "6px");
     await checkAccess(page, "Knowledge Search");
-    await page.getByRole("button", { name: "Open details", exact: true }).focus();
+    const openDetails = page.getByRole("button", { name: "Open details", exact: true });
+    const lastToolbarControl = await openDetails.isVisible() ? openDetails : page.getByRole("combobox", { name: "Sort", exact: true });
+    await lastToolbarControl.focus({ timeout: 5_000 });
     await page.keyboard.press("Tab");
     const selectedResult = page.getByRole("listbox", { name: "Recall result list" }).getByRole("option", { selected: true });
     await expect(selectedResult).toBeFocused();
@@ -154,6 +156,32 @@ for (const theme of ["Light", "Dark"] as const) {
     await checkAccess(page, "Knowledge Connect");
   });
 }
+
+test("Control palette opens an idle team and explains its empty telemetry window", async ({ page, request }) => {
+  const name = `Obsidian idle team ${randomUUID()}`;
+  const created = await request.post(`${controlURL}/control/api/teams`, {
+    headers: { Authorization: `Bearer ${controlToken}` }, data: { name },
+  });
+  expect(created.status()).toBe(201);
+  const { data: team } = await created.json() as { data: { id: string } };
+
+  await page.goto(`${controlURL}/`);
+  await page.getByLabel("Control token", { exact: true }).fill(controlToken);
+  await page.getByRole("button", { name: "Unlock", exact: true }).click();
+  await page.getByRole("button", { name: "Command", exact: true }).click();
+  const palette = page.getByRole("dialog", { name: "Command palette" });
+  const input = palette.getByRole("combobox");
+  await input.fill(name);
+  await expect(palette.getByRole("option", { name: `${name}, Team`, exact: true })).toBeVisible();
+  await input.press("Enter");
+
+  await expect(page).toHaveURL(new RegExp(`[?&]team_id=${team.id}(?:&|$)`));
+  await expect(page.locator(".team-workspace-header").getByRole("heading", { name, exact: true })).toBeVisible();
+  const telemetry = page.getByRole("region", { name: "Team telemetry", exact: true });
+  await expect(telemetry.getByText("No samples recorded in this window.", { exact: true })).toBeVisible();
+  await expect(telemetry.getByText(/Telemetry series inactive/)).toBeVisible();
+  await expect(telemetry.getByRole("group", { name: "HTTP requests samples" })).toHaveCount(0);
+});
 
 async function pickTheme(page: Page, theme: "Light" | "Dark") {
   const trigger = page.getByRole("button", { name: "Choose theme", exact: true });
