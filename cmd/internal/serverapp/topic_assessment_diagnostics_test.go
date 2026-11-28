@@ -1,6 +1,7 @@
 package serverapp
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -11,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/markhuangai/dense-mem/internal/modelprovider"
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/topics"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
@@ -132,4 +134,62 @@ func TestOntologySemanticAssessmentDefinitionVersionRejection(t *testing.T) {
 	require.NoError(t, json.Unmarshal(payload, &body))
 	require.Equal(t, &rejection, body.Result.FreshnessRejection)
 	require.Nil(t, body.Result.Publication)
+}
+
+func TestTopicDiagnosticLogsNeverTriggerCredentialProtectionUnsupported(t *testing.T) {
+	const secret = "topic-log-operational-secret"
+	team, id, recordID := uuid.NewString(), uuid.NewString(), uuid.NewString()
+	var console bytes.Buffer
+	sink := &ontologyDiagnosticTestSink{}
+	protector := observability.NewCredentialProtector(secret)
+	root := observability.NewConsoleWithProtector(slog.LevelDebug, protector, &console)
+	require.NoError(t, root.AttachSink(sink))
+	logger := root.ContextSlog()
+	ctx := observability.WithExchangeScope(context.Background(), observability.ExchangeScope{TeamID: team, OperationID: uuid.NewString(), RunID: uuid.NewString(), BatchID: uuid.NewString()})
+
+	httpMS := int64(42)
+	expectedCount, actualCount := 2, 1
+	observe := topics.MaintenanceDiagnostics(sink, protector, logger).Observe
+	observe(ctx, assessment.Diagnostic{
+		Stage: "completed", TeamID: team, Model: "test-model",
+		Result: &contract.OrganizationResult{
+			AssessmentID: id, FailureCode: "response_invalid",
+			Attempts: []contract.AssessmentAttempt{{
+				Number: 1, EstimatedInputTokens: 100, EstimatedOutputTokens: 20, FailureCode: "response_invalid",
+				Diagnostics: &modelprovider.CallDiagnostics{HTTPMS: &httpMS},
+				Validation:  &contract.AssessmentValidation{Stage: "schema", Code: "missing_item", FieldFamily: "items", ExpectedCount: &expectedCount, ActualCount: &actualCount},
+			}},
+		},
+		Error: errors.New("assessment failed with " + secret),
+	})
+
+	publishObserve := topics.PublicationDiagnostics(logger, protector)
+	publishObserve(ctx, contract.PublicationDiagnostic{
+		TeamID: team, OperationID: uuid.NewString(), Action: "publish_automatic", InputState: "captured", Input: []byte(`{}`),
+		Result: &contract.PublicationResult{ID: uuid.NewString(), Revision: 3, Records: []contract.RevisionRef{{ID: recordID, Version: 2}}},
+	})
+
+	require.NotContains(t, console.String(), secret)
+	require.NotContains(t, console.String(), "diagnostic_unavailable_reason")
+	var sawAssessmentFailed, sawPublicationCommitted bool
+	for _, record := range sink.records {
+		require.NotContains(t, record.Attrs, "diagnostic_unavailable_reason", "record %s should not hit CredentialProtectionUnsupported", record.Message)
+		encoded, err := json.Marshal(record.Attrs)
+		require.NoError(t, err)
+		require.NotContains(t, string(encoded), secret)
+		switch record.Message {
+		case "topic_semantic_assessment_failed":
+			sawAssessmentFailed = true
+			attempts, ok := record.Attrs["attempts"].([]any)
+			require.True(t, ok, "attempts must remain structured array, got %T", record.Attrs["attempts"])
+			require.Len(t, attempts, 1)
+		case "topic_semantic_publication_committed":
+			sawPublicationCommitted = true
+			revisions, ok := record.Attrs["revisions"].([]any)
+			require.True(t, ok, "revisions must remain structured array, got %T", record.Attrs["revisions"])
+			require.Len(t, revisions, 1)
+		}
+	}
+	require.True(t, sawAssessmentFailed)
+	require.True(t, sawPublicationCommitted)
 }

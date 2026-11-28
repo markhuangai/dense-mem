@@ -242,7 +242,11 @@ func (s *Service) finish(ctx context.Context, teamID string, receipt contract.Or
 
 func (s *Service) recordCancellation(ctx context.Context, teamID string, receipt contract.OrganizationReceipt, cause error) (contract.OrganizationResult, error) {
 	markFailure(&receipt, cause)
-	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	timeout := 5 * time.Second
+	if _, ok := contract.MaintenanceClaimFromContext(ctx); ok {
+		timeout = 15 * time.Second
+	}
+	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
 	defer cancel()
 	result, err := s.repository.CommitOrganization(recordCtx, teamID, receipt, contract.Publication{})
 	if err != nil {

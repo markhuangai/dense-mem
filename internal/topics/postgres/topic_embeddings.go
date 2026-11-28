@@ -98,7 +98,7 @@ func (s *Store) CompleteTopicEmbeddingBatch(ctx context.Context, turn topic.Main
 	sort.Slice(vectors, func(i, j int) bool { return vectors[i].item.ID < vectors[j].item.ID })
 	count := 0
 	err := s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
-		paused, err := maintenanceState(tx)
+		paused, err := maintenanceStateShared(tx)
 		if err != nil {
 			return err
 		}
@@ -120,20 +120,20 @@ func (s *Store) CompleteTopicEmbeddingBatch(ctx context.Context, turn topic.Main
 			return topic.ErrLeaseLost
 		}
 		var valid bool
-		err = tx.Raw(`SELECT lease_until>clock_timestamp() FROM topic_maintenance_teams
-			WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND lease_token=?::uuid FOR UPDATE`,
-			turn.TeamID, turn.SpaceID, turn.Generation, turn.LeaseToken).Row().Scan(&valid)
-		if errors.Is(err, sql.ErrNoRows) || (err == nil && !valid) {
-			return topic.ErrLeaseLost
-		}
-		if err != nil {
-			return err
-		}
 		err = tx.Raw(`SELECT true FROM topic_maintenance_runs AS run JOIN topic_maintenance_windows AS maintenance_window USING(window_id)
 			WHERE run.run_id=?::uuid AND run.status IN ('pending','running') AND maintenance_window.ends_at>clock_timestamp()
 			FOR SHARE OF run,maintenance_window`, turn.RunID).Row().Scan(&valid)
 		if errors.Is(err, sql.ErrNoRows) {
 			return topic.ErrWindowClosed
+		}
+		if err != nil {
+			return err
+		}
+		err = tx.Raw(`SELECT lease_until>clock_timestamp() FROM topic_maintenance_teams
+			WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND lease_token=?::uuid FOR NO KEY UPDATE`,
+			turn.TeamID, turn.SpaceID, turn.Generation, turn.LeaseToken).Row().Scan(&valid)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && !valid) {
+			return topic.ErrLeaseLost
 		}
 		if err != nil {
 			return err
@@ -188,7 +188,7 @@ func (s *Store) CompleteTopicEmbeddingBatch(ctx context.Context, turn topic.Main
 			return err
 		}
 		if count > 0 {
-			return tx.Exec(`UPDATE topic_maintenance_state SET last_successful_progress=clock_timestamp() WHERE singleton`).Error
+			return recordTeamMaintenanceProgress(tx, fence.TeamID, fence.SpaceID, fence.Generation)
 		}
 		return nil
 	})

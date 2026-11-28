@@ -265,6 +265,14 @@ func newMigrationProviderWithFilesystem(
 			&goose.GoFunc{RunDB: topicHybridBackfillDown, Mode: goose.TransactionDisabled},
 		))
 	}
+	if _, ok := filesystem[topicMaintenanceIndexesFile]; ok {
+		excludedNames = append(excludedNames, topicMaintenanceIndexesFile)
+		goMigrations = append(goMigrations, goose.NewGoMigration(
+			topicMaintenanceIndexesVersion,
+			&goose.GoFunc{RunDB: topicMaintenanceIndexesUp, Mode: goose.TransactionDisabled},
+			&goose.GoFunc{RunDB: topicMaintenanceIndexesDown, Mode: goose.TransactionDisabled},
+		))
+	}
 	if _, ok := filesystem[relationalTopicDataFile]; ok {
 		excludedNames = append(excludedNames, relationalTopicDataFile)
 		goMigrations = append(goMigrations, relationalTopicDataMigration())

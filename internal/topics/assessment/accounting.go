@@ -43,7 +43,7 @@ func AccountDecisions(ctx context.Context, accounting AttemptAccounting, id stri
 }
 
 func reconcileAttempt(ctx context.Context, accounting AttemptAccounting, id string, record topic.AssessmentAttempt, success bool) error {
-	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	defer cancel()
 	return accounting.AfterAttempt(recordCtx, id, record, success)
 }

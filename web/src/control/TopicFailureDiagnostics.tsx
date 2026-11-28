@@ -12,7 +12,7 @@ type Chunk = { index: number; count: number; body: string; sha256: string; state
 export async function reconstructTopicExchanges(manifest: OperationLog, rows: OperationLog[]): Promise<Exchange[]> {
   const expected = Number(manifest.attrs?.record_count);
   const exchangeCount = Number(manifest.attrs?.exchange_count);
-  if (!Number.isInteger(expected) || expected < 0 || rows.length !== expected || !Number.isInteger(exchangeCount) || exchangeCount < 0 || exchangeCount > 3) throw new Error("The capture is incomplete or expired; complete bodies are unavailable.");
+  if (!Number.isInteger(expected) || expected < 0 || rows.length !== expected || !Number.isInteger(exchangeCount) || exchangeCount < 0 || exchangeCount > 200) throw new Error("The capture is incomplete or expired; complete bodies are unavailable.");
   const result: Exchange[] = [];
   for (let exchange = 0; exchange < exchangeCount; exchange += 1) {
     const parts = rows.filter((row) => row.attrs?.exchange === exchange);
@@ -98,10 +98,11 @@ export function TopicFailureDiagnostics({ api, runId }: { api: ControlApi; runId
     {error && <div className="banner error" role="alert">{error}</div>}
     {loading && <LoadingState label="Loading topic captures" compact />}
     {!loading && failures.length === 0 && <p>No retained failure captures are available for this run. Earlier failures may predate capture or have expired.</p>}
-    {failures.map((failure) => <div className="button-row" key={failure.id}><span>{formatDate(failure.timestamp)} · {String(failure.attrs?.failure_code || "failure")} · {failure.team_id}</span><Button variant="outline" type="button" disabled={loading} onClick={() => void open(failure)}>View failed assessment {String(failure.attrs?.assessment_id || failure.attrs?.batch_id).slice(0, 8)}</Button></div>)}
+    {failures.map((failure) => <div className="button-row" key={failure.id}><span>{formatDate(failure.timestamp)} · {String(failure.attrs?.failure_code || "failure")}{failure.attrs?.stage ? ` · ${String(failure.attrs.stage)}` : ""} · {failure.team_id}</span><Button variant="outline" type="button" disabled={loading} onClick={() => void open(failure)}>View failed assessment {String(failure.attrs?.assessment_id || failure.attrs?.batch_id || failure.id).slice(0, 8)}</Button></div>)}
     {failures.length < total && <Button variant="outline" disabled={loading} onClick={() => void more()}>Load older failures</Button>}
     {selected && !loading && <>
-      <p>Assessment {String(selected.attrs?.assessment_id || "unavailable")} · Batch {String(selected.attrs?.batch_id || "unavailable")}</p>
+      <p>{selected.attrs?.stage ? `Stage ${String(selected.attrs.stage)} · ` : ""}Assessment {String(selected.attrs?.assessment_id || "unavailable")} · Batch {String(selected.attrs?.batch_id || "unavailable")}</p>
+      {typeof selected.attrs?.error === "string" && selected.attrs.error && <p className="banner error">{selected.attrs.error}</p>}
       <details><summary>Validation and provider attempts</summary><pre>{JSON.stringify(selected.attrs?.attempts ?? [], null, 2)}</pre></details>
       {!error && exchanges.length === 0 && <p>No provider exchanges were captured for this failed operation.</p>}
       {exchanges.map((exchange) => <article className="remember-diagnostic-exchange" key={exchange.index}>

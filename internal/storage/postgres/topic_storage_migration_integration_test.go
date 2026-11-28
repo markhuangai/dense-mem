@@ -13,6 +13,48 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestTopicMaintenanceIndexMigrationRepairsInvalidIndexAndRestoresTimeout(t *testing.T) {
+	ctx := t.Context()
+	db, cleanup := openMigrationSQLDB(t, ctx)
+	defer cleanup()
+	migrator := NewMigratorWithDB(db)
+	require.NoError(t, migrator.RunUpTo(ctx, 20261127010000))
+	const index = "topic_maintenance_sources_failed_run_idx"
+	createCanceledRelationshipTelemetryIndex(t, ctx, db, index, "topic_maintenance_sources", "last_run_id")
+	require.False(t, indexIsValid(t, ctx, db, index))
+
+	db.SetMaxOpenConns(2)
+	db.SetMaxIdleConns(2)
+	first, err := db.Conn(ctx)
+	require.NoError(t, err)
+	defer first.Close()
+	second, err := db.Conn(ctx)
+	require.NoError(t, err)
+	defer second.Close()
+	for _, conn := range []*sql.Conn{first, second} {
+		_, err := conn.ExecContext(ctx, `SET lock_timeout='175ms'`)
+		require.NoError(t, err)
+		require.NoError(t, conn.Close())
+	}
+
+	require.NoError(t, migrator.RunUp(ctx))
+	require.True(t, indexIsValid(t, ctx, db, index))
+	var applied bool
+	require.NoError(t, db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM goose_db_version WHERE version_id=$1 AND is_applied)`, topicMaintenanceIndexesVersion).Scan(&applied))
+	require.True(t, applied)
+	first, err = db.Conn(ctx)
+	require.NoError(t, err)
+	defer first.Close()
+	second, err = db.Conn(ctx)
+	require.NoError(t, err)
+	defer second.Close()
+	for _, conn := range []*sql.Conn{first, second} {
+		var timeout string
+		require.NoError(t, conn.QueryRowContext(ctx, `SHOW lock_timeout`).Scan(&timeout))
+		require.Equal(t, "175ms", timeout)
+	}
+}
+
 func testTopicStorageUpgrade(t *testing.T) {
 	ctx := t.Context()
 	db, fixture := featureStorageFixture(t, 1)

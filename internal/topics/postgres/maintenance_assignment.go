@@ -15,9 +15,6 @@ import (
 func (s *Store) CommitMaintenanceAssignments(ctx context.Context, claim topic.MaintenanceClaim, publications []assignment.Publication) ([]topic.OrganizationOutcome, error) {
 	var outcomes []topic.OrganizationOutcome
 	err := s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
-		if _, err := maintenanceState(tx); err != nil {
-			return err
-		}
 		fence, err := sharedScope(ctx, tx, claim.TeamID)
 		if err != nil {
 			return err
@@ -25,7 +22,13 @@ func (s *Store) CommitMaintenanceAssignments(ctx context.Context, claim topic.Ma
 		if fence.SpaceID != claim.SpaceID || fence.Generation != claim.Generation {
 			return topic.ErrLeaseLost
 		}
-		if err := maintenancePublicationFence(ctx, tx, fence); err != nil {
+		if err := maintenancePublicationFence(topic.WithMaintenanceClaim(ctx, claim), tx, fence); err != nil {
+			return err
+		}
+		if err := lockMaintenanceRun(tx, claim.RunID); err != nil {
+			return err
+		}
+		if err := lockMaintenanceProgressTeam(tx, fence); err != nil {
 			return err
 		}
 		input := assignment.Scope{TeamID: fence.TeamID, SpaceID: fence.SpaceID, Generation: fence.Generation, OperationID: claim.ID}
@@ -78,9 +81,6 @@ func (s *Store) CommitMaintenanceItemAssignment(ctx context.Context, claim topic
 	source := topic.SourceHandle{Kind: topic.EvidenceSource, ID: publication.EvidenceID, Version: 1}
 	outcome := topic.OrganizationOutcome{Source: source}
 	err := s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
-		if _, err := maintenanceState(tx); err != nil {
-			return err
-		}
 		fence, err := sharedScope(ctx, tx, claim.TeamID)
 		if err != nil {
 			return err
@@ -88,7 +88,10 @@ func (s *Store) CommitMaintenanceItemAssignment(ctx context.Context, claim topic
 		if fence.SpaceID != claim.SpaceID || fence.Generation != claim.Generation {
 			return topic.ErrLeaseLost
 		}
-		if err := maintenancePublicationFence(ctx, tx, fence); err != nil {
+		if err := maintenancePublicationFence(topic.WithMaintenanceClaim(ctx, claim), tx, fence); err != nil {
+			return err
+		}
+		if err := lockMaintenanceProgressTeam(tx, fence); err != nil {
 			return err
 		}
 		snapshot, err := readSource(tx, fence, source)
@@ -142,7 +145,7 @@ func (s *Store) CommitMaintenanceItemAssignment(ctx context.Context, claim topic
 			return &topic.PublicationRejection{Cause: topic.ErrSourceStale, Reason: "maintenance_source_revision_or_state", RecordID: source.ID,
 				Expected: fmt.Sprintf("%d:pending_or_failed", claim.Revisions[topic.SourceKey(source)]), Observed: observed}
 		}
-		return tx.Exec(`UPDATE topic_maintenance_state SET last_successful_progress=clock_timestamp() WHERE singleton`).Error
+		return recordTeamMaintenanceProgress(tx, fence.TeamID, fence.SpaceID, fence.Generation)
 	})
 	return outcome, err
 }

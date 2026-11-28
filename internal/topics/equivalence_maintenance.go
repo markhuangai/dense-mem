@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +14,7 @@ import (
 	"github.com/markhuangai/dense-mem/internal/observability"
 	"github.com/markhuangai/dense-mem/internal/topics/assessment"
 	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
+	"golang.org/x/sync/errgroup"
 )
 
 type preparedEquivalence struct {
@@ -30,6 +32,7 @@ func (s *MaintenanceService) executeEquivalence(ctx context.Context, work mainte
 	opCtx = contract.WithMaintenanceClaim(opCtx, claim)
 	opCtx = observability.WithAIOperation(opCtx, observability.AIOperationEvidenceEquivalence, len(claim.Sources))
 	opCtx = observability.WithExchangeScope(opCtx, observability.ExchangeScope{TeamID: claim.TeamID, RunID: claim.RunID, BatchID: claim.ID, OperationID: claim.ID})
+	opCtx, recorder := s.attachDiagnosticRecorder(opCtx)
 	result := contract.OrganizationResult{IsolatedOutcomes: true, Current: true}
 	started := time.Now()
 	defer func() {
@@ -40,7 +43,7 @@ func (s *MaintenanceService) executeEquivalence(ctx context.Context, work mainte
 		if runErr != nil {
 			failure = maintenanceDiagnosticError(runErr)
 		}
-		finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 		defer finishCancel()
 		runErr = errors.Join(runErr, s.deps.Repository.CompleteMaintenanceBatch(finishCtx, claim, result, failure, s.deps.Now()))
 		if runErr != nil {
@@ -56,8 +59,14 @@ func (s *MaintenanceService) executeEquivalence(ctx context.Context, work mainte
 			}
 			s.deps.Logger.Log(finishCtx, level, "topic_equivalence.batch_completed", "team_id", claim.TeamID,
 				"space_id", claim.SpaceID, "space_generation", claim.Generation, "run_id", claim.RunID,
-				"batch_id", claim.ID, "stage", "equivalence", "outcomes", result.Outcomes,
+				"batch_id", claim.ID, "stage", "equivalence", "outcomes", organizationOutcomesLogValue(result.Outcomes),
 				"failure_code", failure, "duration_ms", time.Since(started).Milliseconds(), "error", runErr)
+		}
+		if runErr != nil || result.FailureCode != "" {
+			s.recordFailureDiagnostics(ctx, claim, "equivalence", result, failure, runErr, recorder)
+		}
+		if runErr != nil {
+			runErr = wrapMaintenanceTurnError(claim.RunID, claim.ID, claim.TeamID, "equivalence", runErr)
 		}
 	}()
 	organizer := s.deps.Organizer(work.policy.Model, work.policy.ContextWindowTokens, accounting)
@@ -110,13 +119,41 @@ func (s *MaintenanceService) executeEquivalence(ctx context.Context, work mainte
 	if s.deps.Decisions == nil || !settings.Effective.TopicAssignment {
 		assessor := *organizer
 		assessor.provider = organizer.provider.ForEquivalence()
-		for _, neighborhood := range ready {
-			input := contract.OrganizationInput{OperationKey: "equivalence:" + claim.ID + ":" + neighborhood.Seed.ID, Sources: neighborhood.Sources, EquivalenceOnly: true}
+		assess := func(neighborhood contract.EquivalenceNeighborhood, suffix string) error {
+			input := contract.OrganizationInput{OperationKey: "equivalence:" + claim.ID + ":" + neighborhood.Seed.ID + suffix, Sources: neighborhood.Sources, EquivalenceOnly: true}
 			value, err := assessor.Organize(opCtx, claim.TeamID, input)
 			if err == nil && !value.Current {
-				err = contract.ErrSourceStale
+				return contract.ErrSourceStale
 			}
-			if err != nil {
+			return err
+		}
+		refresh := make([]bool, len(ready))
+		var mu sync.Mutex
+		var group errgroup.Group
+		group.SetLimit(4)
+		for index, neighborhood := range ready {
+			group.Go(func() error {
+				err := assess(neighborhood, "")
+				var rejection *contract.FreshnessError
+				if errors.As(err, &rejection) {
+					refresh[index] = true
+					return nil
+				}
+				if err != nil {
+					mu.Lock()
+					setFailure(neighborhood.Seed, err)
+					itemErrors = append(itemErrors, err)
+					mu.Unlock()
+				}
+				return nil
+			})
+		}
+		_ = group.Wait()
+		for index, neighborhood := range ready {
+			if !refresh[index] {
+				continue
+			}
+			if err := assess(neighborhood, ":refresh"); err != nil {
 				setFailure(neighborhood.Seed, err)
 				itemErrors = append(itemErrors, err)
 			}

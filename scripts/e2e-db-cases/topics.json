@@ -710,6 +710,27 @@
       "source": "internal/topics/postgres/maintenance_concurrency_integration_test.go"
     },
     {
+      "id": "repository/TestOntologyMaintenanceConcurrentAccountingAndCompletionAvoidsGlobalLockStarvation",
+      "package": "./internal/topics/postgres",
+      "run": "^TestOntologyMaintenanceConcurrentAccountingAndCompletionAvoidsGlobalLockStarvation$",
+      "phase": "precheck",
+      "source": "internal/topics/postgres/maintenance_lock_contention_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceBatchDefersContendedTeamLease",
+      "package": "./internal/topics/postgres",
+      "run": "^TestOntologyMaintenanceBatchDefersContendedTeamLease$",
+      "phase": "precheck",
+      "source": "internal/topics/postgres/maintenance_lock_contention_integration_test.go"
+    },
+    {
+      "id": "repository/TestOntologyMaintenanceEmptyPreviewUsesCurrentSources",
+      "package": "./internal/topics/postgres",
+      "run": "^TestOntologyMaintenanceEmptyPreviewUsesCurrentSources$",
+      "phase": "precheck",
+      "source": "internal/topics/postgres/maintenance_lock_contention_integration_test.go"
+    },
+    {
       "id": "repository/TestOntologyMaintenanceParallelIndependentPublication",
       "package": "./internal/topics/postgres",
       "run": "^TestOntologyMaintenanceParallelIndependentPublication$",

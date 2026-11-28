@@ -15,20 +15,36 @@ import (
 	"gorm.io/gorm"
 )
 
+const availableConsolidationSeeds = `WITH available AS MATERIALIZED (
+	SELECT embedding.topic_id FROM topic_embeddings AS embedding JOIN topics AS current
+	USING(team_id,shared_space_id,space_generation,topic_id)
+	JOIN unnest(?::uuid[],?::bigint[]) AS expected(topic_id,topic_version)
+	ON expected.topic_id=embedding.topic_id AND expected.topic_version=embedding.topic_version
+	JOIN embedding_contracts AS contract ON contract.embedding_contract_id=embedding.embedding_contract_id
+	JOIN search_index_generations AS generation ON generation.embedding_contract_id=contract.embedding_contract_id
+	WHERE embedding.team_id=?::uuid AND embedding.shared_space_id=?::uuid AND embedding.space_generation=?
+	AND embedding.embedding_contract_id=?::uuid AND contract.lifecycle_state='active'
+	AND generation.search_index_generation_id=?::uuid AND generation.activation_state='active'
+	AND current.definition_version=embedding.topic_version AND NOT current.retired AND embedding.consolidation_pending
+	AND (embedding.consolidation_lease_until IS NULL OR embedding.consolidation_lease_until<=statement_timestamp())
+	ORDER BY embedding.topic_id FOR NO KEY UPDATE OF embedding SKIP LOCKED
+) `
+
+const updateAvailableConsolidationSeeds = ` FROM available WHERE embedding.topic_id=available.topic_id
+	AND embedding.team_id=?::uuid AND embedding.shared_space_id=?::uuid AND embedding.space_generation=? AND embedding.embedding_contract_id=?::uuid`
+
 func (s *Store) ClaimTopicConsolidation(ctx context.Context, turn topic.MaintenanceTurn, windowID string, now time.Time) ([]topic.TopicConsolidationPair, *topic.MaintenanceClaim, error) {
+	if err := requireAutomatic(ctx); err != nil {
+		return nil, nil, err
+	}
 	claim := &topic.MaintenanceClaim{ID: uuid.NewString(), Kind: "consolidation", WindowID: windowID, TeamID: turn.TeamID,
 		SpaceID: turn.SpaceID, Generation: turn.Generation, LeaseToken: turn.LeaseToken, LeaseUntil: turn.LeaseUntil,
 		Sources: []topic.SourceHandle{}, Revisions: map[string]int64{}}
 	var pairs []topic.TopicConsolidationPair
-	admitted := false
-	err := s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
-		if _, err := maintenanceState(tx); err != nil {
-			return err
-		}
-		fence, err := sharedScope(ctx, tx, turn.TeamID)
-		if err != nil {
-			return err
-		}
+	var seedIDs []string
+	var seedVersions []int64
+	var activeContractID, activeGenerationID string
+	err := s.withScope(ctx, turn.TeamID, true, func(tx *gorm.DB, fence scope) error {
 		if fence.SpaceID != turn.SpaceID || fence.Generation != turn.Generation {
 			return topic.ErrLeaseLost
 		}
@@ -52,7 +68,7 @@ func (s *Store) ClaimTopicConsolidation(ctx context.Context, turn topic.Maintena
 			WHERE embedding.team_id=?::uuid AND embedding.shared_space_id=?::uuid AND embedding.space_generation=?
 			AND NOT current.retired AND current.definition_version=embedding.topic_version AND embedding.consolidation_pending
 			AND (embedding.consolidation_lease_until IS NULL OR embedding.consolidation_lease_until<=statement_timestamp())
-			ORDER BY embedding.topic_id LIMIT 2 FOR UPDATE OF embedding SKIP LOCKED`, fence.TeamID, fence.SpaceID, fence.Generation).Rows()
+			ORDER BY embedding.topic_id LIMIT 2`, fence.TeamID, fence.SpaceID, fence.Generation).Rows()
 		if err != nil {
 			return err
 		}
@@ -71,9 +87,12 @@ func (s *Store) ClaimTopicConsolidation(ctx context.Context, turn topic.Maintena
 		if len(seeds) == 0 {
 			return nil
 		}
+		activeContractID, activeGenerationID = seeds[0].active.ID, seeds[0].active.GenerationID
 		seen := map[string]bool{}
 		for _, seed := range seeds {
 			claim.Revisions[seed.id] = seed.version
+			seedIDs = append(seedIDs, seed.id)
+			seedVersions = append(seedVersions, seed.version)
 			ids, err := s.assignmentVectorCandidates(tx, fence, seed.active, seed.vector)
 			if err != nil {
 				return err
@@ -122,28 +141,42 @@ func (s *Store) ClaimTopicConsolidation(ctx context.Context, turn topic.Maintena
 				pairs = append(pairs, pair)
 			}
 		}
-		ids := make([]string, 0, len(seeds))
-		for _, seed := range seeds {
-			ids = append(ids, seed.id)
-		}
-		if len(pairs) == 0 {
-			return tx.Exec(`UPDATE topic_embeddings AS embedding SET consolidation_pending=false
-				FROM topics AS current WHERE (current.team_id,current.shared_space_id,current.space_generation,current.topic_id,current.definition_version)=
-				(embedding.team_id,embedding.shared_space_id,embedding.space_generation,embedding.topic_id,embedding.topic_version)
-				AND embedding.team_id=?::uuid AND embedding.shared_space_id=?::uuid AND embedding.space_generation=?
-				AND embedding.topic_id=ANY(?::uuid[]) AND embedding.embedding_contract_id=?::uuid AND NOT current.retired`, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(ids), seeds[0].active.ID).Error
-		}
+		return nil
+	})
+	if err != nil || len(seedIDs) == 0 {
+		return nil, nil, err
+	}
+	if len(pairs) == 0 {
+		err = s.withScope(ctx, turn.TeamID, false, func(tx *gorm.DB, fence scope) error {
+			if fence.SpaceID != turn.SpaceID || fence.Generation != turn.Generation {
+				return topic.ErrLeaseLost
+			}
+			if err := lockMaintenanceProgressTeam(tx, fence); err != nil {
+				return err
+			}
+			if err := checkMaintenanceTurn(tx, turn); err != nil {
+				return err
+			}
+			return tx.Exec(availableConsolidationSeeds+`UPDATE topic_embeddings AS embedding SET consolidation_pending=false`+updateAvailableConsolidationSeeds,
+				pq.Array(seedIDs), pq.Array(seedVersions), fence.TeamID, fence.SpaceID, fence.Generation, activeContractID, activeGenerationID,
+				fence.TeamID, fence.SpaceID, fence.Generation, activeContractID).Error
+		})
+		return nil, nil, err
+	}
+	admitted := false
+	err = s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
+		var err error
 		admitted, err = admitMaintenanceBatchTx(tx, turn, claim, nil, now)
 		if err != nil || !admitted {
 			return err
 		}
-		updated := tx.Exec(`UPDATE topic_embeddings SET consolidation_batch_id=?::uuid,consolidation_lease_until=?
-			WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=? AND topic_id=ANY(?::uuid[]) AND embedding_contract_id=?::uuid`,
-			claim.ID, claim.LeaseUntil, fence.TeamID, fence.SpaceID, fence.Generation, pq.Array(ids), seeds[0].active.ID)
+		updated := tx.Exec(availableConsolidationSeeds+`UPDATE topic_embeddings AS embedding SET consolidation_batch_id=?::uuid,consolidation_lease_until=?`+updateAvailableConsolidationSeeds,
+			pq.Array(seedIDs), pq.Array(seedVersions), claim.TeamID, claim.SpaceID, claim.Generation, activeContractID, activeGenerationID,
+			claim.ID, claim.LeaseUntil, claim.TeamID, claim.SpaceID, claim.Generation, activeContractID)
 		if updated.Error != nil {
 			return updated.Error
 		}
-		if updated.RowsAffected != int64(len(ids)) {
+		if updated.RowsAffected != int64(len(seedIDs)) {
 			return topic.ErrSourceStale
 		}
 		return nil
@@ -168,9 +201,6 @@ func (s *Store) CompleteTopicConsolidationPair(ctx context.Context, claim topic.
 		return result, topic.ErrInvalid
 	}
 	err = s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
-		if _, err := maintenanceState(tx); err != nil {
-			return err
-		}
 		fence, err := sharedScope(ctx, tx, claim.TeamID)
 		if err != nil {
 			return err
@@ -587,9 +617,6 @@ func reparentConsolidationChildren(tx *gorm.DB, fence scope, children []consolid
 
 func (s *Store) FinishTopicConsolidation(ctx context.Context, claim topic.MaintenanceClaim, completed bool) error {
 	return s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
-		if _, err := maintenanceState(tx); err != nil {
-			return err
-		}
 		fence := scope{TeamID: claim.TeamID, SpaceID: claim.SpaceID, Generation: claim.Generation}
 		if err := maintenancePublicationFence(topic.WithMaintenanceClaim(ctx, claim), tx, fence); err != nil {
 			return err

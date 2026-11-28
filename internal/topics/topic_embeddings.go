@@ -29,13 +29,20 @@ func (s *MaintenanceService) backfillTopicEmbeddings(ctx context.Context, turn c
 	opCtx, cancel := context.WithDeadline(ctx, turn.LeaseUntil.Add(-5*time.Second))
 	defer cancel()
 	opCtx = observability.WithExchangeScope(opCtx, observability.ExchangeScope{TeamID: turn.TeamID, RunID: turn.RunID, BatchID: batchID, OperationID: batchID})
+	opCtx, recorder := s.attachDiagnosticRecorder(opCtx)
 	defer func() {
-		finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 		defer finishCancel()
 		if runErr != nil {
 			runErr = errors.Join(runErr, s.deps.Repository.RecordMaintenanceFailure(finishCtx, turn.RunID, "topic_embedding_failed", s.deps.Now()))
 		}
 		runErr = errors.Join(runErr, s.deps.Repository.ReleaseMaintenanceTurn(finishCtx, turn))
+		if runErr != nil {
+			s.recordFailureDiagnostics(ctx, contract.MaintenanceClaim{
+				ID: batchID, Kind: "topic_embedding", RunID: turn.RunID, TeamID: turn.TeamID, SpaceID: turn.SpaceID, Generation: turn.Generation,
+			}, "topic_embedding_backfill", contract.OrganizationResult{FailureCode: "topic_embedding_failed"}, "topic_embedding_failed", runErr, recorder)
+			runErr = wrapMaintenanceTurnError(turn.RunID, batchID, turn.TeamID, "topic_embedding_backfill", runErr)
+		}
 	}()
 	plan := semanticwrite.Plan{Fence: batch.Fence, Timeout: s.deps.EmbeddingTimeout}
 	ids := make([]string, 0, len(batch.Topics))
