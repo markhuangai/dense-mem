@@ -702,7 +702,7 @@ test("prerelease publication waits for the staging migration rehearsal", async (
   assert.equal(rehearsalCall.secrets, "inherit");
   assert.doesNotMatch(JSON.stringify(rehearsalCall), /PGVECTOR_STAGE_DSN|sync\.sh|go test/);
   assert.deepEqual(new Set(rehearsal["runs-on"]), new Set(["home-server", "bash", "non-root"]));
-  assert.equal(rehearsal["timeout-minutes"], 90);
+  assert.equal(rehearsal["timeout-minutes"], 110);
   assert.equal(rehearsal.environment, "staging-migration");
   assert.equal(String(actionStep(rehearsal, "actions/checkout").with["persist-credentials"]), "false");
   const execution = runStep(rehearsal, "go test -tags=staging_rehearsal");
@@ -711,7 +711,7 @@ test("prerelease publication waits for the staging migration rehearsal", async (
   const script = jobScripts(rehearsal);
   assert.match(script, /"\$\{HOME\}\/dense-mem-stage\/sync\.sh"/);
   assert.match(script, /flock --wait 600 9/);
-  assert.match(script, /timeout --signal=TERM --kill-after=30s 20m/);
+  assert.match(script, /timeout --signal=TERM --kill-after=30s 40m/);
   assert.doesNotMatch(JSON.stringify(rehearsal), /\b(?:docker|testcontainers)\b/i);
   assert.match(script, /go test -tags=staging_rehearsal \.\/cmd\/internal\/migrationapp[\s\S]*-timeout=40m/);
   assert.ok(script.indexOf("timeout --signal=TERM") < script.indexOf("go test -tags=staging_rehearsal"));
