@@ -111,13 +111,9 @@ func (service *MaintenanceService) protectedDiagnosticErrorText(ctx context.Cont
 	if service == nil || service.deps.Diagnostics.protector == nil {
 		return fmt.Sprintf("diagnostic error unavailable (reason %d)", observability.CredentialProtectionUnsupported)
 	}
-	protected := service.deps.Diagnostics.protector.Snapshot(err, observability.MaxOperationMetadataBytes, observability.AuthenticationSecretsFromContext(ctx)...)
-	if protected.UnavailableReason != observability.CredentialProtectionAvailable {
-		return fmt.Sprintf("diagnostic error unavailable (reason %d)", protected.UnavailableReason)
-	}
-	text, ok := protected.Value.(string)
-	if !ok {
-		return fmt.Sprintf("diagnostic error unavailable (reason %d)", observability.CredentialProtectionFormattingFailed)
+	text, reason := service.deps.Diagnostics.protector.ProtectErrorText(err, observability.MaxOperationMetadataBytes, observability.AuthenticationSecretsFromContext(ctx)...)
+	if reason != observability.CredentialProtectionAvailable {
+		return fmt.Sprintf("diagnostic error unavailable (reason %d)", reason)
 	}
 	if len(text) <= maxDiagnosticErrorBytes {
 		return text

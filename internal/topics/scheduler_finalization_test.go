@@ -13,7 +13,10 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/markhuangai/dense-mem/internal/assessor"
+	"github.com/markhuangai/dense-mem/internal/domain"
 	"github.com/markhuangai/dense-mem/internal/observability"
+	"github.com/markhuangai/dense-mem/internal/topics/assessment"
 	contract "github.com/markhuangai/dense-mem/internal/topics/contract"
 	"github.com/stretchr/testify/require"
 )
@@ -129,6 +132,97 @@ func TestMaintenanceFailureDiagnosticsProtectErrorBeforeTruncation(t *testing.T)
 			require.Len(t, sink.records, 1)
 			require.Equal(t, "topic_failure_capture", sink.records[0].Message)
 			require.Equal(t, expected, sink.records[0].Attrs["error"])
+		})
+	}
+}
+
+type maintenancePreparationRepository struct {
+	contract.MaintenanceRepository
+	turn         contract.MaintenanceTurn
+	discoveryErr error
+	batchErr     error
+}
+
+func (*maintenancePreparationRepository) CurrentMaintenanceWindow(context.Context, time.Time) (*contract.MaintenanceWindow, error) {
+	return nil, nil
+}
+
+func (*maintenancePreparationRepository) EnsureMaintenanceWindow(_ context.Context, policy domain.TopicMaintenanceConfig, _ time.Time) (*contract.MaintenanceWindow, error) {
+	return &contract.MaintenanceWindow{ID: uuid.NewString(), Policy: policy}, nil
+}
+
+func (repository *maintenancePreparationRepository) ClaimMaintenanceTurn(context.Context, string, time.Time, time.Duration) (*contract.MaintenanceTurn, error) {
+	return &repository.turn, nil
+}
+
+func (repository *maintenancePreparationRepository) DiscoverMaintenance(context.Context, contract.MaintenanceTurn, int) (contract.MaintenanceDiscoveryResult, error) {
+	return contract.MaintenanceDiscoveryResult{}, repository.discoveryErr
+}
+
+func (repository *maintenancePreparationRepository) ClaimMaintenanceBatch(context.Context, contract.MaintenanceTurn, string, time.Time) (*contract.MaintenanceClaim, error) {
+	return nil, repository.batchErr
+}
+
+func (*maintenancePreparationRepository) ReleaseMaintenanceTurn(context.Context, contract.MaintenanceTurn) error {
+	return nil
+}
+
+func (*maintenancePreparationRepository) RecordMaintenanceFailure(context.Context, string, string, time.Time) error {
+	return nil
+}
+
+func TestMaintenancePreparationFailureDiagnostics(t *testing.T) {
+	const secret = "synthetic-preparation-credential"
+	storageErr := errors.New("database preparation failed: " + secret)
+	for _, test := range []struct {
+		name       string
+		failure    error
+		batchClaim bool
+		capture    bool
+	}{
+		{name: "discovery", failure: storageErr, capture: true},
+		{name: "batch claim", failure: storageErr, batchClaim: true, capture: true},
+		{name: "paused", failure: contract.ErrMaintenancePaused, batchClaim: true},
+		{name: "disabled", failure: contract.ErrMaintenanceDisabled},
+		{name: "window closed", failure: contract.ErrWindowClosed, batchClaim: true},
+		{name: "canceled", failure: context.Canceled},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			turn := contract.MaintenanceTurn{RunID: uuid.NewString(), TeamID: uuid.NewString()}
+			repository := &maintenancePreparationRepository{turn: turn}
+			if test.batchClaim {
+				repository.batchErr = test.failure
+			} else {
+				repository.discoveryErr = test.failure
+			}
+			sink := &captureLogSink{}
+			service := NewMaintenanceService(MaintenanceDependencies{
+				Repository:   repository,
+				Config:       testConfig(true),
+				DefaultModel: "fixture-model",
+				Diagnostics:  MaintenanceDiagnostics(sink, observability.NewCredentialProtector(secret), nil),
+				Organizer: func(model string, contextWindowTokens int64, _ assessment.AttemptAccounting) *Service {
+					return NewService(nil, assessment.NewProvider(nil, model, assessor.DefaultSemanticAssessmentLimits(), int(contextWindowTokens)))
+				},
+			})
+			work, progress, err := service.prepareTurn(t.Context())
+			require.ErrorIs(t, err, test.failure)
+			require.Nil(t, work)
+			require.True(t, progress)
+			if !test.capture {
+				require.Empty(t, sink.records)
+				return
+			}
+			require.Len(t, sink.records, 1)
+			record := sink.records[0]
+			require.Equal(t, "topic_failure_capture", record.Message)
+			require.Equal(t, turn.TeamID, record.TeamID)
+			require.Equal(t, turn.RunID, record.Attrs["run_id"])
+			require.Equal(t, turn.RunID, record.Attrs["reference_id"])
+			require.Equal(t, "", record.Attrs["batch_id"])
+			require.Equal(t, "preparation", record.Attrs["stage"])
+			require.Equal(t, "maintenance_failure", record.Attrs["failure_code"])
+			require.Equal(t, "database preparation failed: "+observability.CredentialProtectionRedacted, record.Attrs["error"])
 		})
 	}
 }

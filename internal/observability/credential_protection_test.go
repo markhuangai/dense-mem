@@ -117,6 +117,9 @@ func TestCredentialProtectorProtectsJSONByteContentAndErrors(t *testing.T) {
 	require.Equal(t, "provider failed: "+CredentialProtectionRedacted, errorValue.Value)
 	_, retainsError := errorValue.Value.(error)
 	require.False(t, retainsError)
+	text, reason := protector.ProtectErrorText(errors.New("provider failed: provider-secret, %72equest-secret"), 256, "request-secret")
+	require.Equal(t, CredentialProtectionAvailable, reason)
+	require.Equal(t, "provider failed: "+CredentialProtectionRedacted+", "+CredentialProtectionRedacted, text)
 
 	budgeted := protector.Snapshot([]byte(`{"x":"1234567890"}`), 18)
 	require.Empty(t, budgeted.UnavailableReason)
@@ -950,6 +953,9 @@ func TestCredentialProtectorBoundsRedactionExpansion(t *testing.T) {
 	got = NewCredentialProtector("secret").Snapshot("secret", len(encoded)-1)
 	require.Equal(t, CredentialProtectionEncodedBudgetExceeded, got.UnavailableReason)
 	require.Nil(t, got.Value)
+	text, reason := NewCredentialProtector("secret").ProtectErrorText(errors.New("secret"), len(encoded)-1)
+	require.Equal(t, CredentialProtectionEncodedBudgetExceeded, reason)
+	require.Empty(t, text)
 }
 
 type panicDiagnosticError struct{}
@@ -964,6 +970,9 @@ func TestCredentialProtectorConvertsFormattingPanicsToBoundedFailure(t *testing.
 	got = NewCredentialProtector("formatting_failed").Snapshot(panicDiagnosticError{}, 256)
 	require.Equal(t, CredentialProtectionFormattingFailed, got.UnavailableReason)
 	require.Nil(t, got.Value)
+	text, reason := NewCredentialProtector("formatting_failed").ProtectErrorText(panicDiagnosticError{}, 256)
+	require.Equal(t, CredentialProtectionFormattingFailed, reason)
+	require.Empty(t, text)
 }
 
 func TestCredentialProtectorOmitsUnavailableMetadataFromJSON(t *testing.T) {

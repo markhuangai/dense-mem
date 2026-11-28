@@ -16,7 +16,7 @@ if (outcome === 'topic-upgrade-cleanup') {
   assert.equal(cleanup.level, 'WARN');
   assert.equal(cleanup.relation_prefix, 'topic');
   assert.equal(cleanup.current_version, 20261124010004);
-  assert.equal(cleanup.target_version, 20261127010000);
+  assert.equal(cleanup.target_version, 20261128010000);
   assert.ok(cleanup.migration_execution_id);
   assert.ok(cleanup.elapsed_ms >= 0);
   assert.equal(cleanup.transaction_outcome, 'committed');
