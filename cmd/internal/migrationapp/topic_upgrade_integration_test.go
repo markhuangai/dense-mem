@@ -35,6 +35,7 @@ const (
 	topicUpgradeV290           int64 = 20261124010004
 	topicUpgradeV291RC2        int64 = 20261126010001
 	topicUpgradeCleanupVersion int64 = 20261127010000
+	topicUpgradeTargetVersion  int64 = 20261128010000
 )
 
 func TestRunUpAutomaticallyRecoversStoppedOntology(t *testing.T) {
@@ -128,7 +129,7 @@ func testTopicMaintenanceUpgradeCleanup(t *testing.T) {
 			require.NotEmpty(t, event["migration_execution_id"])
 			require.Equal(t, tc.prefix, event["relation_prefix"])
 			require.Equal(t, float64(tc.version), event["current_version"])
-			require.Equal(t, float64(topicUpgradeCleanupVersion), event["target_version"])
+			require.Equal(t, float64(topicUpgradeTargetVersion), event["target_version"])
 			require.Equal(t, "committed", event["transaction_outcome"])
 			require.Equal(t, float64(2), event["discarded_batches"])
 			require.Equal(t, float64(1), event["cleared_team_leases"])
@@ -338,7 +339,7 @@ func testTopicMaintenanceCleanupRollback(t *testing.T) {
 			require.NotEmpty(t, event["migration_execution_id"])
 			require.Equal(t, "topic", event["relation_prefix"])
 			require.Equal(t, float64(topicUpgradeV290), event["current_version"])
-			require.Equal(t, float64(topicUpgradeCleanupVersion), event["target_version"])
+			require.Equal(t, float64(topicUpgradeTargetVersion), event["target_version"])
 			require.Equal(t, "cleanup_tx", event["phase"])
 			require.Equal(t, "55P03", event["sqlstate"])
 			require.Equal(t, "topic_maintenance_upgrade_cleanup: table lock unavailable (SQLSTATE 55P03)", event["failure_reason"])
@@ -407,6 +408,7 @@ func testTopicMaintenanceCleanupForwardMigration(t *testing.T) {
 	require.NoError(t, err)
 	_, err = provider.ApplyVersion(t.Context(), topicUpgradeCleanupVersion, true)
 	require.NoError(t, err)
+	require.NoError(t, migrator.RunUp(t.Context()))
 	assertCompletedTopicMaintenanceCleanup(t, db, admin)
 }
 

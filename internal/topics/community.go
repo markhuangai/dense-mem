@@ -255,7 +255,7 @@ func (s CommunityAssessor) decide(ctx context.Context, id string, settings domai
 	probability := answer.Probabilities[answer.Choice]
 	if s.Logger != nil {
 		s.Logger.InfoContext(ctx, "community_placement.decision_routing", "team_id", observability.ExchangeScopeFromContext(ctx).TeamID, "operation_id", id, "policy_mode", "authoritative_closed_set", "threshold", DerivedCommunityPlaceThreshold, "candidate_count", len(input.Candidates), "choice", answer.Choice, "winner_probability", probability, "generation_triggered", false, "settings_version", settings.Revision, "exchange_count", len(result.Receipts))
-		s.Logger.DebugContext(ctx, "community_placement.decision_answers", "operation_id", id, "answer", answer)
+		s.Logger.DebugContext(ctx, "community_placement.decision_answers", "operation_id", id, "answer", decisionAnswerLogValue(answer))
 	}
 	if answer.Choice == "standalone" || probability < DerivedCommunityPlaceThreshold {
 		return "", true, nil
@@ -269,6 +269,7 @@ func (s *MaintenanceService) placeCommunity(ctx context.Context, work maintenanc
 	defer cancel()
 	opCtx = observability.WithAIOperation(opCtx, observability.AIOperationCommunityPlacement, 1)
 	opCtx = observability.WithExchangeScope(opCtx, observability.ExchangeScope{TeamID: claim.TeamID, RunID: claim.RunID, BatchID: claim.ID, OperationID: claim.ID})
+	opCtx, recorder := s.attachDiagnosticRecorder(opCtx)
 	if s.deps.Logger != nil {
 		candidates := make([]string, 0, len(input.Candidates))
 		for _, candidate := range input.Candidates {
@@ -290,7 +291,7 @@ func (s *MaintenanceService) placeCommunity(ctx context.Context, work maintenanc
 		outcome.Status, outcome.ParentID = "failed", ""
 		failure = maintenanceDiagnosticError(err)
 	}
-	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	defer finishCancel()
 	status := outcome.Status
 	var persistErr error
@@ -331,6 +332,7 @@ func (s *MaintenanceService) placeCommunity(ctx context.Context, work maintenanc
 		}
 		fields := []slog.Attr{
 			slog.String("team_id", claim.TeamID), slog.String("run_id", claim.RunID),
+			slog.String("batch_id", claim.ID), slog.String("stage", "community_placement"),
 			slog.String("job_id", claim.ID), slog.String("topic_id", input.Topic.ID),
 			slog.Int64("topic_version", input.Topic.Version), slog.String("parent_topic_id", outcome.ParentID),
 			slog.String("method", outcome.Method), slog.String("status", status), slog.String("failure_code", failure),
@@ -342,7 +344,12 @@ func (s *MaintenanceService) placeCommunity(ctx context.Context, work maintenanc
 		}
 		s.deps.Logger.LogAttrs(finishCtx, level, "community_placement.outcome", fields...)
 	}
-	return errors.Join(err, persistErr)
+	combined := errors.Join(err, persistErr)
+	if combined != nil {
+		s.recordFailureDiagnostics(ctx, claim, "community_placement", contract.OrganizationResult{AssessmentID: outcome.AssessmentID, FailureCode: failure}, failure, combined, recorder)
+		return wrapMaintenanceTurnError(claim.RunID, claim.ID, claim.TeamID, "community_placement", combined)
+	}
+	return nil
 }
 
 func (s *MaintenanceService) placeCommunityBatch(ctx context.Context, work maintenanceWork) error {
@@ -352,6 +359,7 @@ func (s *MaintenanceService) placeCommunityBatch(ctx context.Context, work maint
 	defer cancel()
 	opCtx = observability.WithAIOperation(opCtx, observability.AIOperationCommunityPlacement, len(work.communities))
 	opCtx = observability.WithExchangeScope(opCtx, observability.ExchangeScope{TeamID: claim.TeamID, RunID: claim.RunID, BatchID: claim.ID, OperationID: claim.ID})
+	opCtx, recorder := s.attachDiagnosticRecorder(opCtx)
 	placement := s.deps.Placement
 	placement.accounting = accounting
 	placement.contextWindow = work.policy.ContextWindowTokens
@@ -369,7 +377,7 @@ func (s *MaintenanceService) placeCommunityBatch(ctx context.Context, work maint
 		}
 	}
 	outcomes, itemErrors, batchErr := placement.AssessBatch(opCtx, claim.ID, work.communities, work.policy.Model)
-	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+	finishCtx, finishCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	defer finishCancel()
 	var failures []error
 	hasOtherFailure := false
@@ -454,5 +462,9 @@ func (s *MaintenanceService) placeCommunityBatch(ctx context.Context, work maint
 			"stage", "community_placement", "claimed_count", len(work.communities), "committed_count", committed,
 			"failure_code", failure, "duration_ms", time.Since(started).Milliseconds(), "error", combined)
 	}
-	return combined
+	if combined != nil {
+		s.recordFailureDiagnostics(ctx, claim, "community_placement", contract.OrganizationResult{FailureCode: failure}, failure, combined, recorder)
+		return wrapMaintenanceTurnError(claim.RunID, claim.ID, claim.TeamID, "community_placement", combined)
+	}
+	return nil
 }

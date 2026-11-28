@@ -10,6 +10,20 @@ ADR 0014 supersedes token reservations as a spending/admission requirement.
 Concurrency, fair rotation, source exclusion, publication fencing and historical
 accounting preservation remain in force under its bounded transition.
 
+**2026-11-27 refinement (maintainer-approved):** The exclusive row lock on
+`topic_maintenance_state` (`FOR UPDATE`) is scoped strictly to global admission,
+pause/resume, and window transitions (`ClaimMaintenanceTurn` claim phase,
+`admitMaintenanceBatchTx`, `MaintenanceCommand`, `EnsureMaintenanceWindow`).
+Heavy candidate discovery and retrieval run in read-only transactions before
+admission. Per-call attempt admission uses a shared row lock (`FOR SHARE`) on
+`topic_maintenance_state` while keeping pause/disable/upgrade fencing intact;
+attempt reconciliation locks only the target `topic_maintenance_attempts` row;
+batch finalization, per-item commits, expiry, and recovery synchronize on
+per-batch/per-team rows under a strict acyclic lock order; and
+`last_successful_progress` is recorded per team on `topic_maintenance_teams`
+(combined with historical `topic_maintenance_state.last_successful_progress` on
+status reads).
+
 ## Decision
 
 Operators configure a deployment per-team concurrency default of one and bounded

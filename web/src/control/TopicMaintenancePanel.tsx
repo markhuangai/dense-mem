@@ -3,8 +3,9 @@ import { Table, TableHeader, TableRow, TableHead, TableBody, TableCell } from ".
 import { Label } from "../ui/primitives/label";
 import { Input } from "../ui/primitives/input";
 import { Textarea } from "../ui/primitives/textarea";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "../ui/primitives/sheet";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, X } from "lucide-react";
 import type { ControlApi, TopicMaintenanceRunPage, TopicMaintenanceStatus } from "../api";
 import { LoadingState, SectionHeading, UsageMeter } from "../ui/components";
 import { formatDate, readError } from "./utils";
@@ -22,8 +23,10 @@ export function TopicMaintenancePanel({ api, onStatus }: { api: ControlApi; onSt
   const [retryKey, setRetryKey] = useState<{ intent: string; key: string } | null>(null);
   const [reassessTeam, setReassessTeam] = useState("");
   const [reassessEvidence, setReassessEvidence] = useState("");
+  const diagnosticTrigger = useRef<HTMLButtonElement | null>(null);
 
-  const [historyLoading, setHistoryLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const historyLoad = useRef<Promise<void> | null>(null);
   const loadedPages = useRef(1);
   const currentRuns = useRef<TopicMaintenanceRunPage>({ runs: [] });
@@ -31,7 +34,8 @@ export function TopicMaintenancePanel({ api, onStatus }: { api: ControlApi; onSt
   const loadHistory = useCallback((more = false): Promise<void> => {
     if (historyLoad.current) return more ? historyLoad.current.then(() => loadHistory(true)) : historyLoad.current;
     if (more && !currentRuns.current.next_cursor) return Promise.resolve();
-    setHistoryLoading(true);
+    if (more) setLoadingMore(true);
+    else setRefreshing(true);
     const request = Promise.resolve().then(async () => {
       try {
         let nextRuns: TopicMaintenanceRunPage;
@@ -58,7 +62,8 @@ export function TopicMaintenancePanel({ api, onStatus }: { api: ControlApi; onSt
       }
     }).finally(() => {
       historyLoad.current = null;
-      setHistoryLoading(false);
+      if (more) setLoadingMore(false);
+      else setRefreshing(false);
     });
     historyLoad.current = request;
     return request;
@@ -132,7 +137,7 @@ export function TopicMaintenancePanel({ api, onStatus }: { api: ControlApi; onSt
     <section className="surface topic-coverage" aria-label="Topic assignment coverage">
       <SectionHeading title="Topic assignment coverage" actions={<div className="button-row">
         {status && <span className={`status-pill ${status.paused || !status.enabled ? "neutral" : "success"}`}>{status.paused ? "Paused" : status.enabled ? "Enabled" : "Disabled"}</span>}
-        <Button variant="ghost" size="icon" className="icon-button" type="button" aria-label="Refresh topic coverage" disabled={historyLoading} onClick={() => void refresh()}><RefreshCw size={16} aria-hidden="true" /></Button>
+        <Button variant="ghost" size="icon" className="icon-button" type="button" aria-label="Refresh topic coverage" disabled={refreshing || loadingMore} onClick={() => void refresh()}><RefreshCw size={16} aria-hidden="true" /></Button>
       </div>} />
       {error && <div className="banner error" role="alert">{error}</div>}
       {refreshError && <div className="banner error" role="alert">{refreshError}</div>}
@@ -203,7 +208,7 @@ export function TopicMaintenancePanel({ api, onStatus }: { api: ControlApi; onSt
           <Button variant="outline" type="submit" disabled={busy || !status.enabled || status.paused || Boolean(status.configuration_error) || !validReassessment}>Reassess selected Evidence</Button>
         </form>
       </section>
-      <section className="surface" aria-label="Topic maintenance usage">
+      <section className="surface topic-usage" aria-label="Topic maintenance usage">
         <SectionHeading title="Recorded model usage" />
         <p>{status.usage.reported_input_tokens.toLocaleString()} reported input tokens · {status.usage.reported_output_tokens.toLocaleString()} reported output tokens</p>
         <p className="form-meta">Usage unavailable for {status.usage.unavailable_usage_attempts.toLocaleString()} attempts; partial usage for {status.usage.partial_usage_attempts.toLocaleString()} attempts. Historical budget-era attempts with unavailable usage: {status.historical_usage.unavailable_usage_attempts.toLocaleString()}.</p>
@@ -211,15 +216,37 @@ export function TopicMaintenancePanel({ api, onStatus }: { api: ControlApi; onSt
       <section className="surface topic-history" aria-label="Topic maintenance runs">
         <SectionHeading title="Recent runs" subtitle="Recorded processing outcomes and historical allowance grants." />
         <div className="table-wrap"><Table className="data-table"><TableHeader><TableRow><TableHead>Run</TableHead><TableHead>Kind</TableHead><TableHead>Status</TableHead><TableHead>Batches / historical tokens</TableHead><TableHead>Reason</TableHead><TableHead>Action</TableHead></TableRow></TableHeader><TableBody>
-          {runs.runs.map((run) => <TableRow key={run.id}>
+          {runs.runs.map((run) => <TableRow key={run.id} className={diagnosticRun === run.id ? "selected-row" : undefined}>
             <TableCell title={run.id}>{run.id.slice(0, 8)}</TableCell><TableCell>{run.kind === "allowance" ? "Historical allowance" : run.kind}</TableCell><TableCell><span className={`status-pill ${run.status === "completed" ? "success" : run.status === "failed" ? "error" : run.retryable ? "warning" : "neutral"}`}>{run.status}</span></TableCell><TableCell>{run.kind === "allowance" ? `${(run.input_tokens ?? 0).toLocaleString()} input / ${(run.output_tokens ?? 0).toLocaleString()} output` : `${run.completed_batches}${run.max_batches ? ` / ${run.max_batches}` : ""}`}</TableCell><TableCell>{run.failure_code ?? "—"}</TableCell>
-            <TableCell>{run.retryable && <Button variant="outline" type="button" disabled={busy || historyLoading || Boolean(refreshError) || !status.enabled || status.paused || Boolean(status.configuration_error)} onClick={() => void command("run", run.id)}>Retry failed work</Button>}{(run.failure_code || run.status === "failed") && <Button variant="outline" type="button" onClick={() => setDiagnosticRun(run.id)}>View failure diagnostics</Button>}</TableCell>
+            <TableCell><div className="button-row">{run.retryable && <Button variant="outline" type="button" disabled={busy || loadingMore || Boolean(refreshError) || !status.enabled || status.paused || Boolean(status.configuration_error)} onClick={() => void command("run", run.id)}>Retry failed work</Button>}{(run.failure_code || run.status === "failed") && <Button variant="outline" type="button" onClick={(event) => {
+              diagnosticTrigger.current = event.currentTarget;
+              setDiagnosticRun(run.id);
+            }}>View failure diagnostics</Button>}</div></TableCell>
           </TableRow>)}
         </TableBody></Table></div>
         {!runs.runs.length && <p className="form-meta">No maintenance runs recorded.</p>}
-        {runs.next_cursor && <Button variant="outline" type="button" disabled={historyLoading || busy} onClick={() => void loadMore()}>Load older runs</Button>}
+        {runs.next_cursor && <Button variant="outline" type="button" disabled={refreshing || loadingMore || busy} onClick={() => void loadMore()}>Load older runs</Button>}
       </section>
-      {diagnosticRun && <TopicFailureDiagnostics api={api} runId={diagnosticRun} key={diagnosticRun} />}
+      <Sheet open={Boolean(diagnosticRun)} onOpenChange={(open) => { if (!open) setDiagnosticRun(""); }}>
+        <SheetContent className="contextual-sheet topic-diagnostics-sheet w-[min(760px,calc(100vw-24px))] overflow-auto sm:max-w-none" showCloseButton={false} onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          diagnosticTrigger.current?.focus();
+          diagnosticTrigger.current = null;
+        }}>
+          <SheetHeader>
+            <div className="inspector-head">
+              <SheetTitle>Failure diagnostics{diagnosticRun ? ` · ${diagnosticRun.slice(0, 8)}` : ""}</SheetTitle>
+              <Button variant="ghost" size="icon" type="button" aria-label="Close failure diagnostics" onClick={() => setDiagnosticRun("")}>
+                <X size={16} aria-hidden="true" />
+              </Button>
+            </div>
+            <SheetDescription className="sr-only">Captured failure metadata and provider exchanges for the selected topic maintenance run.</SheetDescription>
+          </SheetHeader>
+          <div className="contextual-sheet-body">
+            {diagnosticRun && <TopicFailureDiagnostics api={api} runId={diagnosticRun} key={diagnosticRun} />}
+          </div>
+        </SheetContent>
+      </Sheet>
     </>}
   </div>;
 }

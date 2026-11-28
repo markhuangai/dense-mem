@@ -169,7 +169,7 @@ func (p *Provider) Assess(ctx context.Context, request Request) (Response, []top
 			if attempt.Provider.Diagnostics == nil {
 				attempt.Provider.Diagnostics = &modelprovider.CallDiagnostics{}
 			}
-			recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 			defer cancel()
 			started := time.Now()
 			accountingErr := p.accounting.AfterAttempt(recordCtx, request.RequestID, organizationAttempt(*attempt), transportErr == nil)

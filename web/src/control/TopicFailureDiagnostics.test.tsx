@@ -80,4 +80,29 @@ describe("Topic failure exchanges", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("incomplete or expired");
     expect(screen.queryByText("AI response")).not.toBeInTheDocument();
   });
+
+  it("reconstructs multi-item batch captures with more than 3 exchanges and displays stage errors", async () => {
+    const base: OperationLog = { id: "manifest-5", timestamp: "2026-11-27T20:00:00Z", severity: "DEBUG", severity_rank: 10, message: "topic_failure_capture", team_id: "team-a", profile_id: null, correlation_id: "", error: "", attrs: { record_count: 10, exchange_count: 5, attempt_id: "capture-5", reference_id: "run", assessment_id: "", batch_id: "batch1234", stage: "equivalence", failure_code: "accounting_unavailable", error: "topic maintenance accounting unavailable: timeout", attempts: [] } };
+    const rows: OperationLog[] = [];
+    for (let i = 0; i < 5; i += 1) {
+      const req = `{"item":${i}}`;
+      const res = `{"ok":false,"item":${i}}`;
+      rows.push(
+        { ...base, id: `req-${i}`, message: "topic_failure_payload", attrs: { ...base.attrs, exchange: i, direction: "request", component: "equivalence", model: "configured-model", status_code: 200, capture_state: "captured", payload_chunk: { index: 0, count: 1, body: req, state: "captured", sha256: createHash("sha256").update(req).digest("hex") } } },
+        { ...base, id: `res-${i}`, message: "topic_failure_payload", attrs: { ...base.attrs, exchange: i, direction: "response", component: "equivalence", model: "configured-model", status_code: 500, capture_state: "captured", payload_chunk: { index: 0, count: 1, body: res, state: "captured", sha256: createHash("sha256").update(res).digest("hex") } } },
+      );
+    }
+    const exchanges = await reconstructTopicExchanges(base, rows);
+    expect(exchanges).toHaveLength(5);
+    expect(exchanges[4].response.body).toBe(`{"ok":false,"item":4}`);
+
+    const noExchangeManifest: OperationLog = { ...base, id: "manifest-0", attrs: { ...base.attrs, record_count: 0, exchange_count: 0 } };
+    const api = { listOperationLogs: vi.fn().mockResolvedValue({ data: [noExchangeManifest], pagination: { total: 1 } }) } as unknown as ControlApi;
+    render(<TopicFailureDiagnostics api={api} runId="run" />);
+    expect(await screen.findByText(/accounting_unavailable · equivalence · team-a/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "View failed assessment batch123" }));
+    expect(await screen.findByText(/Stage equivalence · Assessment unavailable · Batch batch1234/)).toBeVisible();
+    expect(screen.getByText("topic maintenance accounting unavailable: timeout")).toBeVisible();
+    expect(screen.getByText("No provider exchanges were captured for this failed operation.")).toBeVisible();
+  });
 });

@@ -119,13 +119,14 @@ func admitMaintenanceBatchTx(tx *gorm.DB, turn topic.MaintenanceTurn, claim *top
 	if !enabled {
 		return false, topic.ErrMaintenanceDisabled
 	}
-	if err := checkMaintenanceTurn(tx, turn); err != nil {
-		return false, err
+	if claim.TeamID != turn.TeamID || claim.SpaceID != turn.SpaceID || claim.Generation != turn.Generation || claim.LeaseToken != turn.LeaseToken {
+		return false, topic.ErrLeaseLost
 	}
 	var runID string
-	err = tx.Raw(`SELECT run.run_id::text FROM topic_maintenance_runs AS run WHERE run.run_id=?::uuid AND run.window_id=?::uuid AND run.kind IN ('scheduled','run','retry','reassess') AND run.status IN ('pending','running')
+	err = tx.Raw(`SELECT run.run_id::text FROM topic_maintenance_runs AS run JOIN topic_maintenance_windows AS win USING(window_id)
+		WHERE run.run_id=?::uuid AND run.window_id=?::uuid AND win.ends_at>? AND run.kind IN ('scheduled','run','retry','reassess') AND run.status IN ('pending','running')
 		 AND (run.max_batches=0 OR run.completed_batches+(SELECT count(*) FROM topic_maintenance_batches AS batch WHERE batch.run_id=run.run_id AND batch.status='running')<run.max_batches)
-		 ORDER BY run.created_at,run.run_id LIMIT 1 FOR UPDATE`, turn.RunID, claim.WindowID).Row().Scan(&runID)
+		 FOR NO KEY UPDATE OF run SKIP LOCKED`, turn.RunID, claim.WindowID, now).Row().Scan(&runID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -133,13 +134,33 @@ func admitMaintenanceBatchTx(tx *gorm.DB, turn topic.MaintenanceTurn, claim *top
 		return false, err
 	}
 	claim.RunID = runID
+	const liveTeamLease = `SELECT true FROM topic_maintenance_teams AS state JOIN teams AS team ON team.id=state.team_id
+		JOIN memory_spaces AS space ON space.team_id=state.team_id AND space.id=state.shared_space_id AND space.generation=state.space_generation
+		WHERE state.team_id=?::uuid AND state.shared_space_id=?::uuid AND state.space_generation=?
+		AND team.status='active' AND team.deleted_at IS NULL AND space.lifecycle_state='active'
+		AND state.lease_token=?::uuid AND state.lease_until>clock_timestamp()`
+	var valid bool
+	leaseArgs := []any{turn.TeamID, turn.SpaceID, turn.Generation, turn.LeaseToken}
+	err = tx.Raw(liveTeamLease+` FOR NO KEY UPDATE OF state SKIP LOCKED`, leaseArgs...).Row().Scan(&valid)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = tx.Raw(liveTeamLease, leaseArgs...).Row().Scan(&valid)
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, topic.ErrLeaseLost
+		}
+		return false, err
+	}
+	if err != nil {
+		return false, err
+	}
 
 	var communityTopicID string
 	if community != nil {
-		err := tx.Raw(`SELECT topic_id::text FROM topic_maintenance_community_work
-			WHERE team_id=?::uuid AND shared_space_id=?::uuid AND space_generation=?
-			AND topic_id=?::uuid AND topic_version=? AND work_id=?::uuid
-			AND ready_at<=statement_timestamp() FOR UPDATE`, claim.TeamID, claim.SpaceID, claim.Generation,
+		err := tx.Raw(`SELECT work.topic_id::text FROM topic_maintenance_community_work AS work JOIN topics AS current
+			USING(team_id,shared_space_id,space_generation,topic_id)
+			WHERE work.team_id=?::uuid AND work.shared_space_id=?::uuid AND work.space_generation=?
+			AND work.topic_id=?::uuid AND work.topic_version=? AND work.work_id=?::uuid
+			AND work.topic_version=current.definition_version AND NOT current.retired AND `+communityWorkReady+`
+			FOR NO KEY UPDATE OF work SKIP LOCKED`, claim.TeamID, claim.SpaceID, claim.Generation,
 			community.Topic.ID, community.Topic.Version, community.WorkID).Row().Scan(&communityTopicID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, topic.ErrSourceStale
@@ -305,11 +326,8 @@ func collectMaintenanceRevisions(tx *gorm.DB, fence scope, claim *topic.Maintena
 }
 
 func (s *Store) CompleteMaintenanceBatch(ctx context.Context, claim topic.MaintenanceClaim, result topic.OrganizationResult, failure string, now time.Time) error {
-	started, phase := time.Now(), "accounting_lock"
+	started, phase := time.Now(), "batch_fence"
 	err := s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
-		if _, err := maintenanceState(tx); err != nil {
-			return err
-		}
 		if err := completeMaintenanceBatch(tx, claim, result, failure, now, &phase); err != nil {
 			return err
 		}
@@ -337,6 +355,10 @@ func completeMaintenanceBatch(tx *gorm.DB, claim topic.MaintenanceClaim, result 
 	if status != "running" || !live {
 		return topic.ErrLeaseLost
 	}
+	*phase = "run_fence"
+	if err := lockMaintenanceRun(tx, claim.RunID); err != nil {
+		return err
+	}
 	*phase = "receipt_revalidation"
 	receipt, revisions, err := currentMaintenanceCompletion(tx, claim, result, failure)
 	if err != nil {
@@ -356,6 +378,11 @@ func completeMaintenanceBatch(tx *gorm.DB, claim topic.MaintenanceClaim, result 
 		outcomes[topic.SourceKey(outcome.Source)] = outcome
 	}
 	*phase = "source_updates"
+	if len(claim.Sources) > 0 {
+		if err := lockMaintenanceProgressTeam(tx, scope{TeamID: claim.TeamID, SpaceID: claim.SpaceID, Generation: claim.Generation}); err != nil {
+			return err
+		}
+	}
 	for _, source := range claim.Sources {
 		key := topic.SourceKey(source)
 		if claim.Kind == "equivalence" {
@@ -443,7 +470,7 @@ func completeMaintenanceBatch(tx *gorm.DB, claim topic.MaintenanceClaim, result 
 		}
 	}
 	if progress && failure == "" && result.FailureCode == "" && result.Current {
-		return tx.Exec(`UPDATE topic_maintenance_state SET last_successful_progress=clock_timestamp() WHERE singleton`).Error
+		return recordTeamMaintenanceProgress(tx, claim.TeamID, claim.SpaceID, claim.Generation)
 	}
 	return nil
 }

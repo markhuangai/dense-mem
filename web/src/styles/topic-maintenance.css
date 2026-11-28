@@ -1,11 +1,12 @@
 @layer components {
-  .topic-maintenance-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); grid-template-areas: "coverage policy" "window policy" "manual manual" "history history"; gap: 20px; align-items: start; }
+  .topic-maintenance-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); grid-template-areas: "coverage policy" "window policy" "manual manual" "usage usage" "history history"; gap: 20px; align-items: start; }
   .topic-policy { grid-area: policy; min-width: 0; }
   .topic-operations { display: grid; gap: 20px; min-width: 0; }
   .topic-maintenance-layout > .topic-operations { display: contents; }
   .topic-coverage { grid-area: coverage; }
   .topic-window { grid-area: window; }
   .topic-manual { grid-area: manual; }
+  .topic-usage { grid-area: usage; }
   .topic-history { grid-area: history; }
   .topic-operations > .surface > .form-meta { margin: 16px 0 0; }
   .topic-coverage .usage-meter-heading { align-items: end; }
@@ -22,6 +23,8 @@
   .topic-reassess h3, .topic-reassess p { margin: 0; }
   .topic-reassess button { justify-self: start; }
   .topic-history .data-table td:first-child { font-family: var(--font-mono); font-size: 12px; }
+  .topic-history .selected-row td { background: var(--accent); }
+  .topic-diagnostics-sheet .surface { border: 0; padding: 0; box-shadow: none; background: transparent; }
   .topic-team-coverage { padding: 20px; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--panel); }
   .topic-team-coverage > .section-heading { margin-bottom: 10px; }
   .topic-team-coverage .usage-meter-heading strong { font-size: 26px; letter-spacing: -.04em; }
@@ -42,7 +45,7 @@
   .pending-policy dt { color: var(--muted); }
   .pending-policy dd { margin: 0; overflow-wrap: anywhere; }
   @media (max-width: 1150px) {
-    .topic-maintenance-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "coverage" "policy" "window" "manual" "history"; }
+    .topic-maintenance-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "coverage" "policy" "window" "manual" "usage" "history"; }
   }
   @media (max-width: 767px) {
     .topic-manual { align-items: start; }

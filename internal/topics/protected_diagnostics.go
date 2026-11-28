@@ -159,7 +159,7 @@ func PublicationDiagnostics(logger *slog.Logger, protector observability.Diagnos
 			logger.LogAttrs(ctx, level, event, append(base, slog.String("transaction_outcome", "not_committed"), slog.String("error", diagnostic.Failure.Error()))...)
 		} else {
 			if diagnostic.Result != nil && diagnostic.Result.ID != "" {
-				base = append(base, slog.String("publication_id", diagnostic.Result.ID), slog.Int64("revision", diagnostic.Result.Revision), slog.Bool("existing", diagnostic.Result.Existing), slog.Any("revisions", diagnostic.Result.Records))
+				base = append(base, slog.String("publication_id", diagnostic.Result.ID), slog.Int64("revision", diagnostic.Result.Revision), slog.Bool("existing", diagnostic.Result.Existing), slog.Any("revisions", revisionRefsLogValue(diagnostic.Result.Records)))
 			} else if diagnostic.Draft == nil && diagnostic.Preview == nil {
 				return
 			}
@@ -173,8 +173,9 @@ func PublicationDiagnostics(logger *slog.Logger, protector observability.Diagnos
 	}
 }
 
-func MaintenanceDiagnostics(sink observability.LogSink, protector observability.DiagnosticProtector, logger *slog.Logger) MaintenanceDiagnosticCapture {
+func MaintenanceDiagnostics(sink observability.LogSink, protector *observability.CredentialProtector, logger *slog.Logger) MaintenanceDiagnosticCapture {
 	return MaintenanceDiagnosticCapture{
+		protector:   protector,
 		Observe:     organizationAssessmentDiagnostics(logger, protector),
 		NewRecorder: func() modelprovider.SnapshotRecorder { return observability.NewProviderExchangeRecorder(protector) },
 		RecordFailure: func(ctx context.Context, claim contract.MaintenanceClaim, result contract.OrganizationResult, exchanges []modelprovider.ProviderExchange) error {
@@ -239,6 +240,18 @@ func MaintenanceDiagnostics(sink observability.LogSink, protector observability.
 				}
 			}
 			manifest := map[string]any{"failure_code": result.FailureCode, "exchange_count": len(exchanges), "record_count": records, "attempts": result.Attempts}
+			detail := failureDiagnosticDetailFromContext(ctx)
+			stage := detail.Stage
+			if stage == "" {
+				stage = claim.Kind
+			}
+			if stage == "" {
+				stage = "assignment"
+			}
+			manifest["stage"] = stage
+			if detail.Error != "" {
+				manifest["error"] = detail.Error
+			}
 			if result.FreshnessRejection != nil {
 				if !result.FreshnessRejection.Valid() {
 					return errors.New("topic freshness diagnostics invalid")

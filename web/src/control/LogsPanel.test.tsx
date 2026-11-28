@@ -220,4 +220,32 @@ describe("LogsPanel", () => {
       vi.useRealTimers();
     }
   });
+
+  it("renders event and stage log details as distinct detail chips", async () => {
+    const api = {
+      listOperationLogs: vi.fn().mockResolvedValue({
+        data: [{
+          id: "equiv-log",
+          timestamp: "2026-11-27T20:43:53Z",
+          severity: "ERROR",
+          severity_rank: 40,
+          message: "topic_equivalence.batch_completed",
+          source: "internal/topics/equivalence_maintenance.go:57",
+          team_id: "team-1",
+          profile_id: null,
+          correlation_id: "",
+          error: "topic organization failed: accounting_unavailable",
+          attrs: { stage: "equivalence", failure_code: "accounting_unavailable" },
+        }],
+        pagination: { limit: 100, offset: 0, total: 1 },
+      }),
+    } as unknown as ControlApi;
+
+    render(<LogsPanel api={api} teams={[]} />);
+    const details = await screen.findByLabelText("Log details");
+    expect(details).toHaveClass("log-detail-list");
+    const chips = Array.from(details.querySelectorAll(".log-detail-chip")).map((el) => el.textContent);
+    expect(chips).toContain("event=topic_equivalence.batch_completed");
+    expect(chips).toContain("stage=equivalence");
+  });
 });

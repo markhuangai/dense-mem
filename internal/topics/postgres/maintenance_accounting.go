@@ -16,7 +16,7 @@ func (s *Store) AdmitMaintenanceAttempt(ctx context.Context, claim topic.Mainten
 		return topic.ErrInvalid
 	}
 	return s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
-		paused, err := maintenanceState(tx)
+		paused, err := maintenanceStateShared(tx)
 		if err != nil {
 			return err
 		}
@@ -30,7 +30,7 @@ func (s *Store) AdmitMaintenanceAttempt(ctx context.Context, claim topic.Mainten
 		if !enabled {
 			return topic.ErrMaintenanceDisabled
 		}
-		window, err := scanMaintenanceWindow(tx.Raw(`SELECT `+maintenanceWindowColumns+` FROM topic_maintenance_windows WHERE window_id=?::uuid FOR UPDATE`, claim.WindowID).Row())
+		window, err := scanMaintenanceWindow(tx.Raw(`SELECT `+maintenanceWindowColumns+` FROM topic_maintenance_windows WHERE window_id=?::uuid`, claim.WindowID).Row())
 		if err != nil {
 			return err
 		}
@@ -81,19 +81,16 @@ func (s *Store) ReconcileMaintenanceAttempt(ctx context.Context, claim topic.Mai
 		return topic.ErrInvalid
 	}
 	return s.withMaintenanceSystem(ctx, func(tx *gorm.DB) error {
-		if _, err := maintenanceState(tx); err != nil {
+		var windowExists bool
+		if err := tx.Raw(`SELECT EXISTS(SELECT 1 FROM topic_maintenance_windows WHERE window_id=?::uuid)`, claim.WindowID).Row().Scan(&windowExists); err != nil {
 			return err
 		}
-		window, err := scanMaintenanceWindow(tx.Raw(`SELECT `+maintenanceWindowColumns+` FROM topic_maintenance_windows WHERE window_id=?::uuid FOR UPDATE`, claim.WindowID).Row())
-		if err != nil {
-			return err
-		}
-		if window == nil {
+		if !windowExists {
 			return topic.ErrAccounting
 		}
 		var reportedInput, reportedOutput, reportedTotal sql.NullInt64
 		var reconciled sql.NullTime
-		err = tx.Raw(`SELECT reported_input,reported_output,reported_total,reconciled_at FROM topic_maintenance_attempts WHERE batch_id=?::uuid AND assessment_id=?::uuid AND attempt=? AND window_id=?::uuid FOR UPDATE`, claim.ID, assessmentID, attempt.Number, claim.WindowID).Row().Scan(&reportedInput, &reportedOutput, &reportedTotal, &reconciled)
+		err := tx.Raw(`SELECT reported_input,reported_output,reported_total,reconciled_at FROM topic_maintenance_attempts WHERE batch_id=?::uuid AND assessment_id=?::uuid AND attempt=? AND window_id=?::uuid FOR UPDATE`, claim.ID, assessmentID, attempt.Number, claim.WindowID).Row().Scan(&reportedInput, &reportedOutput, &reportedTotal, &reconciled)
 		if err != nil {
 			return err
 		}

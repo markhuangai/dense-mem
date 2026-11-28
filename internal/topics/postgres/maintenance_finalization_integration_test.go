@@ -74,7 +74,7 @@ func TestOntologyMaintenanceFinalizationCancellationAndDiscovery(t *testing.T) {
 			go func() {
 				finished <- f.store.CompleteMaintenanceBatch(completionCtx, *x.claim, x.result, x.result.FailureCode, time.Now().UTC())
 			}()
-			waitFor("transactionid", "%UPDATE topic_maintenance_sources SET status=%")
+			waitFor("transactionid", "%SELECT 1 FROM topic_maintenance_teams%FOR NO KEY UPDATE%")
 			expectedError := context.Canceled
 			if mode == "failed_unknown_usage" {
 				expectedError = context.DeadlineExceeded
@@ -218,8 +218,12 @@ func TestOntologyMaintenanceFinalizationRacesAndFences(t *testing.T) {
 			release := sync.OnceFunc(func() { close(resume) })
 			var blocked atomic.Bool
 			callback := "completion_time_" + uuid.NewString()
+			barrierSQL := "SELECT status,lease_until>"
+			if testCase.recovery {
+				barrierSQL = "SELECT batch.batch_id::text AS id,"
+			}
 			require.NoError(t, f.app.Callback().Row().Before("gorm:row").Register(callback, func(tx *gorm.DB) {
-				if tx.Statement.Context.Value(barrierKey{}) != true || tx.Statement.SQL.String() != "SELECT paused FROM topic_maintenance_state WHERE singleton FOR UPDATE" || !blocked.CompareAndSwap(false, true) {
+				if tx.Statement.Context.Value(barrierKey{}) != true || !strings.HasPrefix(tx.Statement.SQL.String(), barrierSQL) || !blocked.CompareAndSwap(false, true) {
 					return
 				}
 				close(reached)
